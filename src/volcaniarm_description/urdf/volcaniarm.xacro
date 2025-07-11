@@ -194,9 +194,9 @@
     <!-- End effector platform -->
     <link name="end_effector_link">
         <visual>
-            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <origin xyz="-0.05 0 0" rpy="0 0 0"/>
             <geometry>
-                <box size="0.1 0.25 0.02"/>
+                <box size="0.1 0.05 0.02"/>
             </geometry>
             <material name="blue">
             </material>
@@ -215,16 +215,14 @@
     </link>
 
     <!-- Connect end effector to forearm 1 -->
-    <joint name="end_effector_joint_1" type="revolute">
+    <joint name="end_effector_joint_1" type="fixed">
         <parent link="forearm_1_link"/>
         <child link="end_effector_link"/>
         <origin xyz="0 0 -0.3" rpy="0 0 0"/>
-        <axis xyz="0 1 0"/>
-        <limit lower="-1.57" upper="1.57" effort="50" velocity="2.0"/>
     </joint>
 
-    <!-- Closing link for the second connection -->
-    <link name="closing_link">
+    <!-- Virtual connection point for the second forearm -->
+    <link name="virtual_connection_link">
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
@@ -240,21 +238,75 @@
         </inertial>
     </link>
 
-    <!-- Connect forearm 2 to closing link -->
-    <joint name="forearm_2_closing_joint" type="revolute">
+    <!-- Connect forearm 2 to virtual connection -->
+    <joint name="forearm_2_virtual_joint" type="fixed">
         <parent link="forearm_2_link"/>
-        <child link="closing_link"/>
+        <child link="virtual_connection_link"/>
         <origin xyz="0 0 -0.3" rpy="0 0 0"/>
-        <axis xyz="0 1 0"/>
-        <limit lower="-1.57" upper="1.57" effort="50" velocity="2.0"/>
     </joint>
+
+    <!-- Gazebo material configurations -->
+    <gazebo>
+        <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+        </plugin>
+    </gazebo>
+
+    <!-- Apply Joint Force System for manual control -->
+    <gazebo>
+        <plugin filename="gz-sim-apply-joint-force-system" name="gz::sim::systems::ApplyJointForce">
+            <joint_name>linear_rail_joint</joint_name>
+        </plugin>
+    </gazebo>
+
+    <gazebo>
+        <plugin filename="gz-sim-apply-joint-force-system" name="gz::sim::systems::ApplyJointForce">
+            <joint_name>upper_arm_1_joint</joint_name>
+        </plugin>
+    </gazebo>
+
+    <gazebo>
+        <plugin filename="gz-sim-apply-joint-force-system" name="gz::sim::systems::ApplyJointForce">
+            <joint_name>upper_arm_2_joint</joint_name>
+        </plugin>
+    </gazebo>
+
+    <gazebo reference="base_link">
+        <material>Gazebo/Blue</material>
+    </gazebo>
+
+    <gazebo reference="linear_rail_link">
+        <material>Gazebo/Green</material>
+    </gazebo>
+
+    <gazebo reference="upper_arm_1_link">
+        <material>Gazebo/Blue</material>
+    </gazebo>
+
+    <gazebo reference="upper_arm_2_link">
+        <material>Gazebo/Blue</material>
+    </gazebo>
+
+    <gazebo reference="forearm_1_link">
+        <material>Gazebo/Green</material>
+    </gazebo>
+
+    <gazebo reference="forearm_2_link">
+        <material>Gazebo/Green</material>
+    </gazebo>
+
+    <gazebo reference="end_effector_link">
+        <material>Gazebo/Blue</material>
+    </gazebo>
+
+    <gazebo reference="virtual_connection_link">
+        <material>Gazebo/Red</material>
+    </gazebo>
 
     <!-- Gazebo detachable joint to close the loop -->
     <gazebo>
         <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint">
-            <parent_link>end_effector_link</parent_link>
-            <child_model>volcaniarm</child_model>
-            <child_link>closing_link</child_link>
+            <parent_link>virtual_connection_link</parent_link>
+            <child_link>end_effector_link</child_link>
             <joint_type>fixed</joint_type>
             <initial_attached>true</initial_attached>
             <suppress_child_warning>true</suppress_child_warning>
