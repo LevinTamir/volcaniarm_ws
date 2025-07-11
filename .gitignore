@@ -1,0 +1,22 @@
+/*
+
+!.gitignore
+!/src/
+
+# ROS 2 build artifacts
+/build/
+/install/
+/log/
+
+# Editor junk
+.vscode/
+.idea/
+*.swp
+*~
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Colcon
+.colcon/
