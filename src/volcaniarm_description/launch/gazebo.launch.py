@@ -1,88 +1,118 @@
-#!/usr/bin/env python3
-
 import os
+from os import pathsep
+from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    SetEnvironmentVariable,
+)
+from launch.substitutions import (
+    Command,
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
-    pkg_name = "volcaniarm_description"
-    pkg_share = get_package_share_directory(pkg_name)
+    volcaniarm_description = get_package_share_directory("volcaniarm_description")
 
-    # Paths
-    urdf_file = os.path.join(pkg_share, "urdf", "volcaniarm.xacro")
-    world_file = os.path.join(pkg_share, "worlds", "volcaniarm.world")
-
-    # Launch arguments
-    use_sim_time = LaunchConfiguration("use_sim_time", default="true")
-    world_arg = DeclareLaunchArgument(
-        "world", default_value=world_file, description="Full path to world file to load"
+    model_arg = DeclareLaunchArgument(
+        name="model",
+        default_value=os.path.join(volcaniarm_description, "urdf", "volcaniarm.xacro"),
+        description="Absolute path to robot urdf file",
     )
 
-    # Robot State Publisher
-    robot_state_publisher = Node(
+    world_name_arg = DeclareLaunchArgument(name="world_name", default_value="empty")
+
+    world_path = PathJoinSubstitution(
+        [
+            volcaniarm_description,
+            "worlds",
+            PythonExpression(
+                expression=["'", LaunchConfiguration("world_name"), "'", " + '.world'"]
+            ),
+        ]
+    )
+
+    model_path = str(Path(volcaniarm_description).parent.resolve())
+    model_path += pathsep + volcaniarm_description
+
+    gazebo_resource_path = SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", model_path)
+
+    ros_distro = os.environ["ROS_DISTRO"]
+    is_ignition = "True" if ros_distro == "humble" else "False"
+
+    robot_description = ParameterValue(
+        Command(
+            ["xacro ", LaunchConfiguration("model"), " is_ignition:=", is_ignition]
+        ),
+        value_type=str,
+    )
+
+    robot_state_publisher_node = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
-        name="robot_state_publisher",
-        output="screen",
-        parameters=[
-            {"use_sim_time": use_sim_time, "robot_description": open(urdf_file).read()}
-        ],
+        parameters=[{"robot_description": robot_description, "use_sim_time": True}],
     )
 
-    # Gazebo launch
-    gazebo_launch = IncludeLaunchDescription(
+    gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            [get_package_share_directory("ros_gz_sim"), "/launch/gz_sim.launch.py"]
+            [
+                os.path.join(get_package_share_directory("ros_gz_sim"), "launch"),
+                "/gz_sim.launch.py",
+            ]
         ),
         launch_arguments={
-            "gz_args": ["-r ", LaunchConfiguration("world")],
-            "on_exit_shutdown": "true",
+            "gz_args": PythonExpression(["' ", world_path, " -v 4 -r'"])
         }.items(),
     )
 
-    # Spawn robot
-    spawn_robot = Node(
+    gz_spawn_entity = Node(
         package="ros_gz_sim",
         executable="create",
-        name="spawn_robot",
+        output="screen",
         arguments=[
             "-topic",
             "robot_description",
             "-name",
             "volcaniarm",
             "-x",
-            "0.0",
+            "0",
             "-y",
-            "0.0",
+            "0",
             "-z",
-            "0.0",
+            "0",
+            "-r",
+            "0",
+            "-p",
+            "0",
+            "-Y",
+            "0",
         ],
-        output="screen",
     )
 
-    # Bridge for joint states
-    joint_state_bridge = Node(
+    gz_ros2_bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
-        name="joint_state_bridge",
         arguments=[
-            "/world/default/model/volcaniarm/joint_state@sensor_msgs/msg/JointState[gz.msgs.Model"
+            "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
         ],
-        output="screen",
     )
 
     return LaunchDescription(
         [
-            world_arg,
-            robot_state_publisher,
-            gazebo_launch,
-            spawn_robot,
-            joint_state_bridge,
+            gazebo_resource_path,
+            model_arg,
+            world_name_arg,
+            robot_state_publisher_node,
+            gazebo,
+            gz_spawn_entity,
+            gz_ros2_bridge,
         ]
     )
