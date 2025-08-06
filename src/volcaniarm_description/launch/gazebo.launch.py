@@ -41,7 +41,9 @@ def generate_launch_description():
     )
 
     model_path = str(Path(volcaniarm_description).parent.resolve())
-    model_path += pathsep + volcaniarm_description
+    model_path += pathsep + os.path.join(
+        get_package_share_directory("volcaniarm_description"), "models"
+    )
 
     gazebo_resource_path = SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", model_path)
 
@@ -83,9 +85,9 @@ def generate_launch_description():
             "-name",
             "volcaniarm",
             "-x",
-            "0",
+            "0.0",
             "-y",
-            "0",
+            "2.0",
             "-z",
             "0",
             "-r",
@@ -93,7 +95,7 @@ def generate_launch_description():
             "-p",
             "0",
             "-Y",
-            "0",
+            "3.14",
         ],
     )
 
@@ -102,15 +104,19 @@ def generate_launch_description():
         executable="parameter_bridge",
         arguments=[
             "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
+            # "/camera/camera_info@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo",
+            # "/camera/image@sensor_msgs/msg/Image@gz.msgs.Image",
+            # "/camera/depth_image@sensor_msgs/msg/Image@gz.msgs.Image",
+            # "/camera/points@sensor_msgs/msg/PointCloud2@gz.msgs.PointCloudPacked",
         ],
     )
 
     return LaunchDescription(
         [
-            gazebo_resource_path,
             model_arg,
             world_name_arg,
             robot_state_publisher_node,
+            gazebo_resource_path,
             gazebo,
             gz_spawn_entity,
             gz_ros2_bridge,
