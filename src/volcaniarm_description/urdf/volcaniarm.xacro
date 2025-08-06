@@ -2,6 +2,9 @@
 
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm">
 
+  <!-- Include materials -->
+  <xacro:include filename="$(find volcaniarm_description)/urdf/materials.xacro"/>
+
   <!-- World link (fixed reference frame) -->
   <link name="world"/>
 
@@ -25,9 +28,7 @@
       <geometry>
         <mesh filename="package://volcaniarm_description/meshes/volcaniarm_base_link.STL"/>
       </geometry>
-      <material name="">
-        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
-      </material>
+      <material name="grey"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -50,9 +51,7 @@
       <geometry>
         <mesh filename="package://volcaniarm_description/meshes/delta_arm_base_link.STL"/>
       </geometry>
-      <material name="">
-        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
-      </material>
+      <material name="grey"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -83,9 +82,7 @@
       <geometry>
         <mesh filename="package://volcaniarm_description/meshes/right_elbow_link.STL"/>
       </geometry>
-      <material name="">
-        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
-      </material>
+      <material name="grey"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -116,9 +113,7 @@
       <geometry>
         <mesh filename="package://volcaniarm_description/meshes/left_elbow_link.STL"/>
       </geometry>
-      <material name="">
-        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
-      </material>
+      <material name="grey"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -136,7 +131,7 @@
     <limit lower="-1.57" upper="1.57" effort="0" velocity="0"/>
   </joint>
 
-  <!-- right_arm_link
+  <!-- right_arm_link -->
   <link name="right_arm_link">
     <inertial>
       <origin xyz="-0.00171452755479162 1.13797860024079E-12 0.23102414279737" rpy="0 0 0"/>
@@ -149,9 +144,7 @@
       <geometry>
         <mesh filename="package://volcaniarm_description/meshes/right_arm_link.STL"/>
       </geometry>
-      <material name="">
-        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
-      </material>
+      <material name="grey"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -167,10 +160,10 @@
     <child link="right_arm_link"/>
     <axis xyz="-1 0 0"/>
     <limit lower="-1.57" upper="1.57" effort="10" velocity="10"/>
-  </joint> -->
+  </joint>
 
   <!-- left_arm_link -->
-  <!-- <link name="left_arm_link">
+  <link name="left_arm_link">
     <inertial>
       <origin xyz="0.0017145275657231 2.87547763377916E-13 0.231024142798437" rpy="0 0 0"/>
       <mass value="0.348231414720761"/>
@@ -182,9 +175,7 @@
       <geometry>
         <mesh filename="package://volcaniarm_description/meshes/left_arm_link.STL"/>
       </geometry>
-      <material name="">
-        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
-      </material>
+      <material name="grey"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -200,6 +191,6 @@
     <child link="left_arm_link"/>
     <axis xyz="1 0 0"/>
     <limit lower="-1.57" upper="1.57" effort="0" velocity="0"/>
-  </joint> -->
+  </joint>
 
 </robot>
