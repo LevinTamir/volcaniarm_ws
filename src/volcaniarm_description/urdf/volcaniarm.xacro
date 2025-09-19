@@ -132,7 +132,7 @@
   </joint>
 
   <!-- right_arm_link -->
-  <link name="right_arm_link">
+  <!-- <link name="right_arm_link">
     <inertial>
       <origin xyz="-0.00171452755479162 1.13797860024079E-12 0.23102414279737" rpy="0 0 0"/>
       <mass value="0.348231414720761"/>
@@ -160,10 +160,10 @@
     <child link="right_arm_link"/>
     <axis xyz="-1 0 0"/>
     <limit lower="-1.57" upper="1.57" effort="10" velocity="10"/>
-  </joint>
+  </joint> -->
 
   <!-- left_arm_link -->
-  <link name="left_arm_link">
+  <!-- <link name="left_arm_link">
     <inertial>
       <origin xyz="0.0017145275657231 2.87547763377916E-13 0.231024142798437" rpy="0 0 0"/>
       <mass value="0.348231414720761"/>
@@ -191,6 +191,6 @@
     <child link="left_arm_link"/>
     <axis xyz="1 0 0"/>
     <limit lower="-1.57" upper="1.57" effort="0" velocity="0"/>
-  </joint>
+  </joint> -->
 
 </robot>
