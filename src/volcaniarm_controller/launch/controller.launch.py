@@ -70,6 +70,20 @@ def generate_launch_description():
         arguments=["volcaniarm_controller", "--controller-manager", "/controller_manager"],
     )
 
+    # --- end-effector marker node ---
+    end_effector_marker = Node(
+        package="volcaniarm_controller",
+        executable="volcaniarm_end_effector_marker.py",
+        name="volcaniarm_end_effector_marker",
+        output="screen",
+        parameters=[{
+            "joints": ["delta_arm_base_joint", "right_elbow_joint", "left_elbow_joint"],
+            "link_lengths": [0.20, 0.15],
+            "base_frame": "world"
+        }],
+    )
+    # -------------------------------------
+
     return LaunchDescription(
         [
             is_sim_arg,
@@ -77,5 +91,6 @@ def generate_launch_description():
             controller_manager,
             joint_state_broadcaster_spawner,
             volcaniarm_controller_spawner,
+            end_effector_marker,
         ]
     )
