@@ -7,6 +7,7 @@
   <!-- Include materials -->
   <xacro:include filename="$(find volcaniarm_description)/urdf/materials.xacro"/>
   <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_gazebo.xacro"/>
+  <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_ros2_control.xacro"/>
 
   <!-- World link (fixed reference frame) -->
   <link name="world"/>
@@ -131,7 +132,7 @@
     <parent link="delta_arm_base_link"/>
     <child link="left_elbow_link"/>
     <axis xyz="1 0 0"/>
-    <limit lower="-1.57" upper="1.57" effort="0" velocity="0"/>
+    <limit lower="-1.57" upper="1.57" effort="10" velocity="10"/>
   </joint>
 
   <!-- right_arm_link -->

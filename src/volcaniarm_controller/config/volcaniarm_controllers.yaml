@@ -1,0 +1,36 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 1000 # Match Gazebo's simulation period of 0.001 s
+    use_sim_time: true
+
+    volcaniarm_controller:
+      # type: joint_trajectory_controller/JointTrajectoryController
+      type: forward_command_controller/ForwardCommandController
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+
+volcaniarm_controller:
+  ros__parameters:
+    joints:
+      - delta_arm_base_joint
+      - right_elbow_joint
+      - left_elbow_joint
+    
+    pid:
+      delta_arm_base_joint:
+        p: 100.0
+        i: 0.0
+        d: 10.0
+
+    interface_name: position
+
+    # command_interfaces:
+    #  - position
+
+    # state_interfaces:
+    #  - position
+
+    # open_loop_control: true
+    # allow_integration_in_goal_trajectories: true

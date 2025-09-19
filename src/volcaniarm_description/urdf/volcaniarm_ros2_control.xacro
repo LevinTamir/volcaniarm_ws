@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm">
+
+    <ros2_control name="RobotSystem" type="system">
+
+    <!-- ros2_control Gazebo -->
+        <!-- ROS 2 Humble -->
+        <xacro:if value="$(arg is_ignition)">
+            <hardware>
+                <plugin>ign_ros2_control/IgnitionSystem</plugin>
+            </hardware>
+        </xacro:if>
+
+        <!-- ROS 2 Iron or above -->
+        <xacro:unless value="$(arg is_ignition)">
+            <hardware>
+                <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+            </hardware>
+        </xacro:unless>
+        
+        <!-- ros2_control Common Interfaces -->
+        <joint name="delta_arm_base_joint">
+            <command_interface name="position">
+              <param name="min">-0.5</param>
+              <param name="max">0.3</param>
+            </command_interface>
+            <state_interface name="position" />
+            <state_interface name="velocity" />
+        </joint>
+
+        <joint name="right_elbow_joint">
+            <command_interface name="position">
+              <param name="min">-2</param>
+              <param name="max">2</param>
+            </command_interface>
+            <state_interface name="position" />
+            <state_interface name="velocity" />
+        </joint>
+
+        <joint name="left_elbow_joint">
+            <command_interface name="position">
+              <param name="min">-2</param>
+              <param name="max">2</param>
+            </command_interface>
+            <state_interface name="position" />
+            <state_interface name="velocity" />
+        </joint>
+           
+    </ros2_control>
+
+</robot>
