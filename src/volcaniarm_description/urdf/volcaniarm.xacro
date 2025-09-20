@@ -201,7 +201,7 @@
 
   <!-- Depth Camera -->
   <joint type="fixed" name="camera_joint">
-    <origin xyz="0.65 0 -0.14" rpy="0 2.1 0"/>
+    <origin xyz="0.65 0 -0.14" rpy="3.14 2.1 0"/>
     <child link="camera_link"/>
     <parent link="volcaniarm_base_link"/>
     <axis xyz="0 1 0" />
