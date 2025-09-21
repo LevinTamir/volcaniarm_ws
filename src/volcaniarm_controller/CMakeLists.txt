@@ -14,7 +14,7 @@ install(
 )
 
 install(PROGRAMS
-  src/volcaniarm_end_effector_marker.py
+  ${PROJECT_NAME}/volcaniarm_end_effector_marker.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
