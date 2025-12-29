@@ -77,8 +77,9 @@ class EndEffectorMarker(Node):
             ee_y = mx - h * dz / d
             ee_z = mz + h * dy / d
         
-        # Offset marker further along X axis (away from base)
-        ee_x = 0.15
+        
+        ee_x = 0.15 # Offset marker along X axis
+
         return ee_x, ee_y, ee_z
 
     def joint_cb(self, msg: JointState):
