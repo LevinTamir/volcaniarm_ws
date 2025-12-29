@@ -1,6 +1,6 @@
 controller_manager:
   ros__parameters:
-    update_rate: 1000 # Match Gazebo's simulation period of 0.001 s
+    update_rate: 100 # Hz
     use_sim_time: true
 
     volcaniarm_controller:
@@ -14,17 +14,8 @@ controller_manager:
 volcaniarm_controller:
   ros__parameters:
     joints:
-      - delta_arm_base_joint
       - right_elbow_joint
       - left_elbow_joint
-    
-    # pid:
-    #   delta_arm_base_joint:
-    #     p: 100.0
-    #     i: 0.0
-    #     d: 10.0
-
-    # interface_name: position
 
     command_interfaces:
      - position

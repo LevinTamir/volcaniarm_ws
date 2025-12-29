@@ -38,20 +38,17 @@ class EndEffectorMarker(Node):
         super().__init__('volcaniarm_end_effector_marker')
 
         # Parameters
-        self.declare_parameter('joints', ['delta_arm_base_joint','right_elbow_joint','left_elbow_joint'])
+        self.declare_parameter('joints', ['left_elbow_joint','right_elbow_joint'])
         self.declare_parameter('link_lengths', [0.20, 0.15])   # [L1, L2] (meters)
-        self.declare_parameter('base_frame', 'world')
+        self.declare_parameter('base_frame', 'delta_arm_base_link')
         self.declare_parameter('marker_ns', 'volcaniarm_ee')
         self.declare_parameter('marker_scale', 0.03)           # sphere diameter (m)
         self.declare_parameter('trail_length', 300)
-        # NEW: control rail direction & offset; orient zero-angle
-        self.declare_parameter('rail_scale', -1.0)              # set -1.0 if X moves opposite
-        self.declare_parameter('rail_offset', 0.0)             # meters
         self.declare_parameter('zero_along_z', True)           # if False, zero points along +Y
 
         # Robust param reads
         self.joint_names: List[str] = _as_str_list(self.get_parameter('joints').value,
-                                                   ['delta_arm_base_joint','right_elbow_joint','left_elbow_joint'])
+                                                   ['left_elbow_joint','right_elbow_joint'])
         self.link_lengths: List[float] = _as_float_list(self.get_parameter('link_lengths').value, [0.20, 0.15])
         if len(self.link_lengths) != 2:
             self.get_logger().warn('Expected 2 link lengths; padding/truncating to 2.')
@@ -61,8 +58,6 @@ class EndEffectorMarker(Node):
         self.marker_ns   = str(self.get_parameter('marker_ns').value)
         self.marker_scale= float(self.get_parameter('marker_scale').value)
         self.trail_len   = int(self.get_parameter('trail_length').value)
-        self.rail_scale  = float(self.get_parameter('rail_scale').value)
-        self.rail_offset = float(self.get_parameter('rail_offset').value)
         self.zero_along_z = bool(self.get_parameter('zero_along_z').value)
 
         # State & pubs/subs
@@ -74,14 +69,13 @@ class EndEffectorMarker(Node):
 
         orient = 'Z' if self.zero_along_z else 'Y'
         self.get_logger().info(
-            f'EE marker up. plane=YZ, rail->X (scale={self.rail_scale}, offset={self.rail_offset}), '
-            f'joints={self.joint_names}, L={self.link_lengths}, zero_along={orient}, frame="{self.base_frame}"'
+            f'EE marker up. 2R planar FK, joints={self.joint_names}, L={self.link_lengths}, zero_along={orient}, frame="{self.base_frame}"'
         )
 
-    # Planar FK in the YZ plane:
-    # joint order: [rail_x (m), q_right (rad), q_left (rad)]
-    # X is the prismatic rail; Y/Z come from 2R FK.
-    def fk_prismaticX_plus_2R_YZ(self, rail_x: float, q_right: float, q_left: float):
+    # Planar 2R FK in the YZ plane:
+    # joint order: [q_left (rad), q_right (rad)]
+    # Y/Z come from 2R FK, X is always 0
+    def fk_2R_YZ(self, q_left: float, q_right: float):
         L1, L2 = self.link_lengths
         th1 = q_right
         th2 = q_right + q_left
@@ -96,21 +90,22 @@ class EndEffectorMarker(Node):
             y = L1*math.cos(th1) + L2*math.cos(th2)
             z = L1*math.sin(th1) + L2*math.sin(th2)
 
-        x = self.rail_offset + self.rail_scale * rail_x
+        x = 0.0
         return x, y, z
 
     def joint_cb(self, msg: JointState):
+        self.get_logger().debug(f'Joint callback triggered. Received {len(msg.name)} joints: {msg.name}')
         for name, pos in zip(msg.name, msg.position):
             self.state[name] = pos
 
         try:
-            rail_x = float(self.state[self.joint_names[0]])  # meters (prismatic X)
-            q_r    = float(self.state[self.joint_names[1]])  # radians
-            q_l    = float(self.state[self.joint_names[2]])  # radians
-        except KeyError:
+            q_l = float(self.state[self.joint_names[0]])  # radians (left_elbow_joint)
+            q_r = float(self.state[self.joint_names[1]])  # radians (right_elbow_joint)
+        except KeyError as e:
+            self.get_logger().debug(f'Missing joint: {e}. Available: {list(self.state.keys())}, Need: {self.joint_names}')
             return  # wait until all are available
 
-        x, y, z = self.fk_prismaticX_plus_2R_YZ(rail_x, q_r, q_l)
+        x, y, z = self.fk_2R_YZ(q_l, q_r)
         self.publish_markers(x, y, z)
 
     def publish_markers(self, x: float, y: float, z: float):
