@@ -31,26 +31,19 @@ def generate_launch_description():
         ],
     )
 
-    # --- end-effector marker node ---
-    # end_effector_marker = Node(
-    #     package="volcaniarm_controller",
-    #     executable="volcaniarm_end_effector_marker.py",
-    #     name="volcaniarm_end_effector_marker",
-    #     output="screen",
-    #     parameters=[{
-    #         "joints": ["left_elbow_joint", "right_elbow_joint"],
-    #         "link_lengths": [0.30, 0.2227],
-    #         "base_frame": "delta_arm_base_link",
-    #         "zero_along_z": False
-    #     }],
-    # )
-    # -------------------------------------
+    # End-effector marker node
+    end_effector_marker = Node(
+        package="volcaniarm_controller",
+        executable="volcaniarm_end_effector_marker.py",
+        name="volcaniarm_end_effector_marker",
+        output="screen",
+    )
 
     return LaunchDescription(
         [
             use_sim_time_arg,
             joint_state_broadcaster_spawner,
             volcaniarm_controller_spawner,
-            # end_effector_marker,
+            end_effector_marker,
         ]
     )
