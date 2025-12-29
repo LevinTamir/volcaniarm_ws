@@ -15,7 +15,7 @@ class EndEffectorMarker(Node):
 
         # Parameters
         joints = self.declare_parameter('joints', ['left_elbow_joint', 'right_elbow_joint']).value
-        link_lengths = self.declare_parameter('link_lengths', [0.3, 0.2227]).value
+        link_lengths = self.declare_parameter('link_lengths', [0.50, 0.75]).value
         base_frame = self.declare_parameter('base_frame', 'delta_arm_base_link').value
 
         self.joint_names = joints
@@ -34,15 +34,52 @@ class EndEffectorMarker(Node):
         self.trail = deque(maxlen=300)
 
     def fk_2R_YZ(self, q_left: float, q_right: float):
-        """2-link planar FK in YZ plane."""
+        """
+        Closed-loop 2D delta FK.
+        Solves for the intersection of two 2-link arms meeting at end-effector.
+        """
         L1, L2 = self.link_lengths
-        th1 = q_right
-        th2 = q_right + q_left
         
-        y = L1 * math.sin(th1) + L2 * math.sin(th2)
-        z = -(L1 * math.cos(th1) + L2 * math.cos(th2))
+        # Fixed joints in base frame
+        right_elbow_y = -0.215
+        left_elbow_y = 0.215
+        base_z = -0.0582
         
-        return 0.0, y, z
+        # Compute elbow A position (left side, using left_elbow_joint angle)
+        A_y = left_elbow_y + L1 * math.sin(q_left)
+        A_z = base_z - L1 * math.cos(q_left)
+        
+        # Compute elbow B position (right side, using right_elbow_joint angle)
+        B_y = right_elbow_y + L1 * math.sin(q_right)
+        B_z = base_z - L1 * math.cos(q_right)
+        
+        # Solve for intersection of two circles:
+        # Circle 1: center A, radius L2
+        # Circle 2: center B, radius L2
+        dy = B_y - A_y
+        dz = B_z - A_z
+        d = math.sqrt(dy**2 + dz**2)
+        
+        if d > 2 * L2 or d < 0.001:  # No solution or coincident
+            # Fallback: midpoint
+            ee_y = (A_y + B_y) / 2.0
+            ee_z = (A_z + B_z) / 2.0
+        else:
+            # Intersection of two circles
+            a = d / 2.0
+            h = math.sqrt(L2**2 - a**2)
+            
+            # Midpoint between A and B
+            mx = A_y + a * dy / d
+            mz = A_z + a * dz / d
+            
+            # Perpendicular offset (take lower solution)
+            ee_y = mx - h * dz / d
+            ee_z = mz + h * dy / d
+        
+        # Offset marker further along X axis (away from base)
+        ee_x = 0.15
+        return ee_x, ee_y, ee_z
 
     def joint_cb(self, msg: JointState):
         """Update state and publish marker."""
@@ -72,7 +109,7 @@ class EndEffectorMarker(Node):
         m.action = Marker.ADD
         m.pose.position.x, m.pose.position.y, m.pose.position.z = x, y, z
         m.pose.orientation.w = 1.0
-        m.scale.x = m.scale.y = m.scale.z = 0.03
+        m.scale.x = m.scale.y = m.scale.z = 0.05
         m.color.r, m.color.g, m.color.b, m.color.a = 1.0, 0.2, 0.2, 1.0
         self.marker_pub.publish(m)
 
