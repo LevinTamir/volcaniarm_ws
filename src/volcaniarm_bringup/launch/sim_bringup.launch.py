@@ -19,6 +19,7 @@ def generate_launch_description():
     # Get package paths
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
+    volcaniarm_motion_share = get_package_share_directory("volcaniarm_motion")
 
     # Gazebo launch
     gazebo_launch = IncludeLaunchDescription(
@@ -63,11 +64,26 @@ def generate_launch_description():
         ],
     )
 
+    # Motion launch
+    motion_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_motion_share,
+                "launch",
+                "motion.launch.py",
+            )
+        ),
+        launch_arguments=[
+            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ],
+    )
+
     return LaunchDescription(
         [
             use_sim_time_arg,
             gazebo_launch,
             controller_launch,
             display_launch,
+            motion_launch,
         ]
     )
