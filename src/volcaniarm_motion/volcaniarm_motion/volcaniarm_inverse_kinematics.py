@@ -21,6 +21,7 @@ class InverseKinematicsService(Node):
 
     def compute_ik_callback(self, request, response):
         """Service callback to compute inverse kinematics"""
+
         try:
             # X is fixed for now, use Y and Z for planar IK calculation
             theta1, theta2 = self.inverse_kinematics(request.y, request.z)

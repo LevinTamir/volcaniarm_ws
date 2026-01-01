@@ -9,6 +9,7 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(volcaniarm_interfaces REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 install(
   DIRECTORY launch
@@ -17,7 +18,7 @@ install(
 
 install(PROGRAMS
   volcaniarm_motion/volcaniarm_inverse_kinematics.py
-  volcaniarm_motion/volcaniarm_motion_planing.py
+  volcaniarm_motion/volcaniarm_motion_planning.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

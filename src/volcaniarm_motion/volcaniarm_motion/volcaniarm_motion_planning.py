@@ -7,6 +7,7 @@ from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from volcaniarm_interfaces.srv import ComputeIK
 from builtin_interfaces.msg import Duration
+from geometry_msgs.msg import PointStamped
 
 
 class MotionPlanningNode(Node):
@@ -22,59 +23,73 @@ class MotionPlanningNode(Node):
         self.action_client = ActionClient(
             self,
             FollowJointTrajectory,
-            '/arm_controller/follow_joint_trajectory'
+            '/volcaniarm_controller/follow_joint_trajectory'
         )
         
-        self.joint_names = ['joint_1', 'joint_2']
-        self.get_logger().info('Motion Planning Node initialized')
+        # Subscribe to weed position topic
+        self.weed_position_sub = self.create_subscription(
+            PointStamped,
+            '/weed_position',
+            self.weed_position_callback,
+            10
+        )
         
-    def call_ik_service(self, x, y, z):
-        """Call the inverse kinematics service"""
+        self.joint_names = ['right_elbow_joint', 'left_elbow_joint']
+        self.get_logger().info('Motion Planning Node initialized')
+        self.get_logger().info('Waiting for weed positions on /weed_position...')
+    
+    def call_ik_service_async(self, x, y, z):
+        """Call IK service asynchronously with callback"""
         request = ComputeIK.Request()
         request.x = x
         request.y = y
         request.z = z
         
         future = self.ik_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future)
-        
-        if future.result() is not None:
+        # Add done callback - will be called when response arrives
+        future.add_done_callback(lambda f: self.ik_service_callback(f, x, y, z))
+    
+    def ik_service_callback(self, future, x, y, z):
+        """Callback when IK service response arrives"""
+        try:
             response = future.result()
             if response.success:
-                return response.theta1, response.theta2
+                self.get_logger().info(f'IK result: theta1={response.theta1:.3f}, theta2={response.theta2:.3f}')
+                # Now execute trajectory with these joint angles
+                self.execute_trajectory_with_angles([(response.theta1, response.theta2)])
             else:
                 self.get_logger().error(f"IK failed: {response.message}")
-                return None
-        else:
-            self.get_logger().error('IK service call failed')
-            return None
+        except Exception as e:
+            self.get_logger().error(f'IK service call failed: {e}')
     
-    def execute_trajectory(self, waypoints):
+    def weed_position_callback(self, msg):
+        """Callback when a new weed position is received"""
+        x = msg.point.x
+        y = msg.point.y
+        z = msg.point.z
+        
+        self.get_logger().info(f'Received weed position: ({x:.3f}, {y:.3f}, {z:.3f})')
+        
+        # Spawn async task to compute IK and execute trajectory
+        # Don't block in the callback!
+        self.call_ik_service_async(x, y, z)
+        
+    def call_ik_service(self, x, y, z):
+        """DEPRECATED - Use call_ik_service_async instead"""
+        pass
+    
+    def execute_trajectory_with_angles(self, joint_positions):
         """
-        Execute a trajectory through multiple waypoints.
+        Execute trajectory with pre-computed joint angles.
         
         Parameters
         ----------
-        waypoints : list of tuples
-            List of (x, y, z) positions for the end effector to go through
-            Example: [(0.0, 0.3, 0.2), (0.0, 0.4, 0.3), (0.0, 0.35, 0.25)]
+        joint_positions : list of tuples
+            List of (theta1, theta2) joint angles
         """
-        if not waypoints:
-            self.get_logger().warn('No waypoints provided')
-            return
         
-        self.get_logger().info(f'Planning trajectory through {len(waypoints)} waypoint(s)')
-        
-        # Compute IK for all waypoints
-        joint_positions = []
-        for i, (x, y, z) in enumerate(waypoints):
-            self.get_logger().info(f'Computing IK for waypoint {i+1}: ({x}, {y}, {z})')
-            result = self.call_ik_service(x, y, z)
-            if result is None:
-                self.get_logger().error(f'Failed to compute IK for waypoint {i+1}')
-                return
-            joint_positions.append(result)
-        
+
+
         # Create trajectory message
         trajectory = JointTrajectory()
         trajectory.joint_names = self.joint_names
@@ -134,19 +149,8 @@ def main(args=None):
     rclpy.init(args=args)
     motion_planner = MotionPlanningNode()
     
-    # Example usage: Move through 3 waypoints
-    # Format: (x, y, z) - X is fixed at 0.0 for now
-    waypoints = [
-        (0.0, 0.3, 0.2),
-        (0.0, 0.4, 0.3),
-        (0.0, 0.35, 0.15)
-    ]
-    
-    # Or single point:
-    # waypoints = [(0.0, 0.4, 0.2)]
-    
     try:
-        motion_planner.execute_trajectory(waypoints)
+        rclpy.spin(motion_planner)
     except KeyboardInterrupt:
         pass
     
