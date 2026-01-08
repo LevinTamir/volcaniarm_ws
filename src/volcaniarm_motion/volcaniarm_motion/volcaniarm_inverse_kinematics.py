@@ -5,6 +5,72 @@ from rclpy.node import Node
 from volcaniarm_interfaces.srv import ComputeIK
 import math
 
+def ik_2R_YZ_test( y, z, l0=0.2085, l1=0.413, l2=0.622):
+
+    """Standalone planar 2R IK for testing without ROS context.
+
+    Args:
+        y (float): End-effector Y coordinate in meters.
+        z (float): End-effector Z coordinate in meters.
+        l0 (float, optional): Half shoulder width (distance from center to each shoulder). Defaults to 0.2085.
+        l1 (float, optional): Length of the first link. Defaults to 0.413.
+        l2 (float, optional): Length of the second link. Defaults to 0.622.
+
+    Returns:
+        tuple[float, float]: Shoulder joint angles (left, right) in radians.
+
+    Raises:
+        ValueError: If the target point is unreachable given link geometry.
+    """
+
+
+
+    eps = 1e-9
+
+    # Angle from left shoulder to end effector
+    beta1 = math.atan2(z, (l0 + y))
+
+    # Angle from right shoulder to end effector
+    beta2 = math.atan2(z, (l0 - y))
+
+    dy1 = l0 + y
+    dy2 = l0 - y
+    r1 = math.hypot(dy1, z)
+    r2 = math.hypot(dy2, z)
+
+    if r1 < eps or r2 < eps:
+        raise ValueError("Unreachable coordinates")
+
+    # Reachability checks (triangle inequality for each 2-link arm)
+    min_r = abs(l1 - l2)
+    max_r = l1 + l2
+    if (r1 < min_r - eps) or (r1 > max_r + eps) or (r2 < min_r - eps) or (r2 > max_r + eps):
+        raise ValueError("Unreachable coordinates")
+
+    # Alpha angle pre-calculations (law of cosines)
+    alpha1_calc = (l1**2 + r1**2 - l2**2) / (2 * l1 * r1)
+    alpha2_calc = (l1**2 + r2**2 - l2**2) / (2 * l1 * r2)
+
+    # Guard against floating-point roundoff pushing value slightly outside [-1, 1]
+    if alpha1_calc < -1 - eps or alpha1_calc > 1 + eps or alpha2_calc < -1 - eps or alpha2_calc > 1 + eps:
+        raise ValueError("Unreachable coordinates")
+    alpha1_calc = max(-1.0, min(1.0, alpha1_calc))
+    alpha2_calc = max(-1.0, min(1.0, alpha2_calc))
+
+    # Angle of left shoulder - beta1 and right shoulder - beta2
+    alpha1 = math.acos(alpha1_calc)
+    alpha2 = math.acos(alpha2_calc)
+
+    # Angles of left and right shoulders
+    shoulder1 = beta1 + alpha1
+    shoulder2 = math.pi - beta2 - alpha2
+    
+    return(shoulder1, shoulder2)
+
+
+
+
+
 class InverseKinematics(Node):
     def __init__(self):
         super().__init__('volcaniarm_inverse_kinematics')
@@ -14,7 +80,7 @@ class InverseKinematics(Node):
         self.get_logger().info('Inverse Kinematics service is ready')
         
         # Robot parameters
-        self.link_lengths = [0.50, 0.75]  # Link lengths [L1, L2]
+        self.link_lengths = [0.413, 0.622]  # Link lengths [L1, L2]
 
     def ik_cb(self, request, response):
         """Service callback to compute inverse kinematics."""
@@ -50,35 +116,41 @@ class InverseKinematics(Node):
         q_left, q_right : float
             Base joint angles in radians
         """
-        L1, L2 = self.link_lengths
-        
-        # Fixed joints in base frame
-        right_elbow_y = -0.215
-        left_elbow_y = 0.215
-        base_z = -0.0582
-        
-        def theta_calc(y, z, elbow_y, base_z, side):
-            L1 = self.link_lengths[0]
-            L2 = self.link_lengths[1]
-            
-            if (side == 'right'):
-                R = math.sqrt((y - right_elbow_y)**2 + (z - base_z)**2)
-                phi1 = math.atan2(-(z-base_z), (y - right_elbow_y))
+        eps = 1e-9
+        l0 = 0.2085  # Half shoulder separation
+        l1, l2 = self.link_lengths
 
+        beta1 = math.atan2(z, (l0 + y))
+        beta2 = math.atan2(z, (l0 - y))
 
-            else:
-                R = math.sqrt((y - right_elbow_y)**2 + (z - base_z)**2)
-                phi1 = math.atan2(-(z-base_z), left_elbow_y - y)
+        dy1 = l0 + y
+        dy2 = l0 - y
+        r1 = math.hypot(dy1, z)
+        r2 = math.hypot(dy2, z)
 
+        if r1 < eps or r2 < eps:
+            raise ValueError("Unreachable coordinates")
 
-            phi2  = math.acos(((R**2)+(L1**2)-(L2**2))/(2*R*L1))
+        min_r = abs(l1 - l2)
+        max_r = l1 + l2
+        if (r1 < min_r - eps) or (r1 > max_r + eps) or (r2 < min_r - eps) or (r2 > max_r + eps):
+            raise ValueError("Unreachable coordinates")
 
-            return phi1 + phi2
+        alpha1_calc = (l1**2 + r1**2 - l2**2) / (2 * l1 * r1)
+        alpha2_calc = (l1**2 + r2**2 - l2**2) / (2 * l1 * r2)
 
-        q_left = theta_calc(y, z, left_elbow_y, base_z, "left")
-        q_right = theta_calc(y, z, right_elbow_y, base_z, "right")
+        if alpha1_calc < -1 - eps or alpha1_calc > 1 + eps or alpha2_calc < -1 - eps or alpha2_calc > 1 + eps:
+            raise ValueError("Unreachable coordinates")
+        alpha1_calc = max(-1.0, min(1.0, alpha1_calc))
+        alpha2_calc = max(-1.0, min(1.0, alpha2_calc))
 
-        return q_left, q_right
+        alpha1 = math.acos(alpha1_calc)
+        alpha2 = math.acos(alpha2_calc)
+
+        shoulder1 = beta1 + alpha1
+        shoulder2 = math.pi - beta2 - alpha2
+
+        return shoulder1, shoulder2
 
 
 def main(args=None):
