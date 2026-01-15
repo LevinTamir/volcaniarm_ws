@@ -88,8 +88,8 @@ class InverseKinematics(Node):
         try:
             # X is fixed for now, use Y and Z for planar IK calculation
             q_left, q_right = self.ik_2R_YZ(request.y, request.z)
-            response.theta1 = q_left
-            response.theta2 = q_right
+            response.theta1 = q_right
+            response.theta2 = q_left
             response.success = True
             response.message = f"IK computed successfully for position ({request.x}, {request.y}, {request.z})"
             self.get_logger().info(f"IK: ({request.x}, {request.y}, {request.z}) -> ({q_left:.3f}, {q_right:.3f})")
