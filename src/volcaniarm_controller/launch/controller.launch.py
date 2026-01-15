@@ -39,11 +39,20 @@ def generate_launch_description():
         output="screen",
     )
 
+    # Set initial position node
+    set_initial_position = Node(
+        package="volcaniarm_controller",
+        executable="set_initial_position.py",
+        name="set_initial_position",
+        output="screen",
+    )
+
     return LaunchDescription(
         [
             use_sim_time_arg,
             joint_state_broadcaster_spawner,
             volcaniarm_controller_spawner,
+            set_initial_position,
             end_effector_marker,
         ]
     )
