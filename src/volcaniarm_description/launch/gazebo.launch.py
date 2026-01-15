@@ -95,6 +95,12 @@ def generate_launch_description():
             "0",
             "-Y",
             "0",
+            "-J",
+            "right_elbow_joint",
+            "1.57",
+            "-J",
+            "left_elbow_joint",
+            "1.57",
         ],
     )
 

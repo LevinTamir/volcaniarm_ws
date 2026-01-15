@@ -36,50 +36,50 @@ class EndEffectorMarker(Node):
 
     def fk_2R_YZ(self, q_left: float, q_right: float):
         """
-        Closed-loop 2D delta FK.
-        Solves for the intersection of two 2-link arms meeting at end-effector.
+        Planar 5-bar linkage FK in Y-Z plane.
+        Two actuated upper links from base, two passive lower links meeting at EE.
         """
-        L1, L2 = self.link_lengths
+        L1 = 0.41621  # Upper link length (elbow link)
+        L2 = 0.65     # Lower link length (forearm link)
         
-        # Fixed joints in base frame
-        right_elbow_y = -0.215
-        left_elbow_y = 0.215
-        base_z = -0.0582
+        # Base mount positions (elbow joint locations) in Y-Z plane
+        right_base_y = 0.215
+        left_base_y = -0.215
+        base_z = 0.0582
         
-        # Compute elbow A position (left side, using left_elbow_joint angle)
-        A_y = left_elbow_y + L1 * math.sin(q_left)
-        A_z = base_z - L1 * math.cos(q_left)
+        # Right upper link endpoint (right elbow tip) in Y-Z plane
+        # Joint rotates about X-axis, positive angle moves link down and outward
+        right_elbow_y = right_base_y + L1 * math.cos(q_right)
+        right_elbow_z = base_z + L1 * math.sin(q_right)  # Changed from - to +
         
-        # Compute elbow B position (right side, using right_elbow_joint angle)
-        B_y = right_elbow_y + L1 * math.sin(q_right)
-        B_z = base_z - L1 * math.cos(q_right)
+        # Left upper link endpoint (left elbow tip) in Y-Z plane
+        left_elbow_y = left_base_y - L1 * math.cos(q_left) 
+        left_elbow_z = base_z + L1 * math.sin(q_left)  # Changed from - to +
         
-        # Solve for intersection of two circles:
-        # Circle 1: center A, radius L2
-        # Circle 2: center B, radius L2
-        dy = B_y - A_y
-        dz = B_z - A_z
+        # Solve for end effector: intersection of two circles in Y-Z plane
+        dy = left_elbow_y - right_elbow_y
+        dz = left_elbow_z - right_elbow_z
         d = math.sqrt(dy**2 + dz**2)
         
-        if d > 2 * L2 or d < 0.001:  # No solution or coincident
-            # Fallback: midpoint
-            ee_y = (A_y + B_y) / 2.0
-            ee_z = (A_z + B_z) / 2.0
+        if d > 2 * L2 or d < 0.001:
+            # No solution - return midpoint
+            ee_y = (right_elbow_y + left_elbow_y) / 2.0
+            ee_z = (right_elbow_z + left_elbow_z) / 2.0
         else:
-            # Intersection of two circles
+            # Find intersection point in Y-Z plane
             a = d / 2.0
-            h = math.sqrt(L2**2 - a**2)
+            h = math.sqrt(max(0, L2**2 - a**2))
             
-            # Midpoint between A and B
-            mx = A_y + a * dy / d
-            mz = A_z + a * dz / d
+            # Midpoint between two elbow tips
+            my = right_elbow_y + a * dy / d
+            mz = right_elbow_z + a * dz / d
             
-            # Perpendicular offset (take lower solution)
-            ee_y = mx - h * dz / d
-            ee_z = mz + h * dy / d
+            # Perpendicular offset (choose the other solution)
+            ee_y = my + h * dz / d
+            ee_z = mz - h * dy / d
         
-        
-        ee_x = 0.15 # Offset marker along X axis
+        # X position is constant (planar mechanism)
+        ee_x = 0.1825 + 0.042  # Base X + small offset
 
         return ee_x, ee_y, ee_z
 
