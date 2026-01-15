@@ -16,11 +16,9 @@ class EndEffectorMarker(Node):
 
         # Parameters
         joints = self.declare_parameter('joints', ['left_elbow_joint', 'right_elbow_joint']).value
-        link_lengths = self.declare_parameter('link_lengths', [0.50, 0.75]).value
         base_frame = self.declare_parameter('base_frame', 'delta_arm_base_link').value
 
         self.joint_names = joints
-        self.link_lengths = link_lengths
         self.base_frame = base_frame
 
         # Publishers
@@ -38,35 +36,32 @@ class EndEffectorMarker(Node):
         """
         Planar 5-bar linkage FK in Y-Z plane.
         Two actuated upper links from base, two passive lower links meeting at EE.
+        Matches IK equations: motors at y=±0.215, z_offset=0.0582
         """
         L1 = 0.41621  # Upper link length (elbow link)
         L2 = 0.65     # Lower link length (forearm link)
+        l0 = 0.215    # Motor separation
+        z_offset = 0.0582  # Z coordinate offset
         
-        # Base mount positions (elbow joint locations) in Y-Z plane
-        right_base_y = 0.215
-        left_base_y = -0.215
-        base_z = 0.0582
+        # Passive joint positions (elbow tips) in Y-Z plane
+        left_elbow_y = -l0 + L1 * math.cos(q_left)
+        left_elbow_z = L1 * math.sin(q_left) + z_offset
         
-        # Right upper link endpoint (right elbow tip) in Y-Z plane
-        # Joint rotates about X-axis, positive angle moves link down and outward
-        right_elbow_y = right_base_y + L1 * math.cos(q_right)
-        right_elbow_z = base_z + L1 * math.sin(q_right)  # Changed from - to +
-        
-        # Left upper link endpoint (left elbow tip) in Y-Z plane
-        left_elbow_y = left_base_y - L1 * math.cos(q_left) 
-        left_elbow_z = base_z + L1 * math.sin(q_left)  # Changed from - to +
+        right_elbow_y = l0 + L1 * math.cos(q_right)
+        right_elbow_z = L1 * math.sin(q_right) + z_offset
         
         # Solve for end effector: intersection of two circles in Y-Z plane
         dy = left_elbow_y - right_elbow_y
         dz = left_elbow_z - right_elbow_z
         d = math.sqrt(dy**2 + dz**2)
         
-        if d > 2 * L2 or d < 0.001:
+        eps = 1e-9
+        if d > 2 * L2 + eps or d < eps:
             # No solution - return midpoint
             ee_y = (right_elbow_y + left_elbow_y) / 2.0
             ee_z = (right_elbow_z + left_elbow_z) / 2.0
         else:
-            # Find intersection point in Y-Z plane
+            # Find intersection point in Y-Z plane (law of cosines)
             a = d / 2.0
             h = math.sqrt(max(0, L2**2 - a**2))
             

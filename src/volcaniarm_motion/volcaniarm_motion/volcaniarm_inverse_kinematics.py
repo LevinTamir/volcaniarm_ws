@@ -5,7 +5,7 @@ from rclpy.node import Node
 from volcaniarm_interfaces.srv import ComputeIK
 import math
 
-def ik_2R_YZ_test( y, z, l0=0.2085, l1=0.413, l2=0.622):
+def ik_2R_YZ_test( y, z, l0=0.215, l1=0.41621, l2=0.65):
 
     """Standalone planar 2R IK for testing without ROS context.
 
@@ -80,7 +80,7 @@ class InverseKinematics(Node):
         self.get_logger().info('Inverse Kinematics service is ready')
         
         # Robot parameters
-        self.link_lengths = [0.413, 0.622]  # Link lengths [L1, L2]
+        self.link_lengths = [0.41621, 0.65]  # Link lengths [L1, L2] - must match FK
 
     def ik_cb(self, request, response):
         """Service callback to compute inverse kinematics."""
@@ -117,16 +117,20 @@ class InverseKinematics(Node):
             Base joint angles in radians
         """
         eps = 1e-9
-        l0 = 0.2085  # Half shoulder separation
+        l0 = 0.215  # Shoulder separation (distance from center to each shoulder)
+        base_z = 0.0582  # Base height (shoulder Z offset)
         l1, l2 = self.link_lengths
 
-        beta1 = math.atan2(z, (l0 + y))
-        beta2 = math.atan2(z, (l0 - y))
+        # Account for base_z offset
+        z_offset = z - base_z
+
+        beta1 = math.atan2(z_offset, (l0 + y))
+        beta2 = math.atan2(z_offset, (l0 - y))
 
         dy1 = l0 + y
         dy2 = l0 - y
-        r1 = math.hypot(dy1, z)
-        r2 = math.hypot(dy2, z)
+        r1 = math.hypot(dy1, z_offset)
+        r2 = math.hypot(dy2, z_offset)
 
         if r1 < eps or r2 < eps:
             raise ValueError("Unreachable coordinates")

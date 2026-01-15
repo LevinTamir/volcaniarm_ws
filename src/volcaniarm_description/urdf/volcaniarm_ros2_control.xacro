@@ -12,7 +12,6 @@
         
         <!-- ros2_control Common Interfaces -->
         <joint name="right_elbow_joint">
-            <param name="initial_position">1.57</param>
             <command_interface name="position">
               <param name="min">-2.09</param>
               <param name="max">2.09</param>
@@ -22,7 +21,6 @@
         </joint>
 
         <joint name="left_elbow_joint">
-            <param name="initial_position">1.57</param>
             <command_interface name="position">
               <param name="min">-2.09</param>
               <param name="max">2.09</param>
