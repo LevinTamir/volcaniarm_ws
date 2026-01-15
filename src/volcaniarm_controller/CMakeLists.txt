@@ -15,6 +15,7 @@ install(
 
 install(PROGRAMS
   ${PROJECT_NAME}/volcaniarm_end_effector_marker.py
+  ${PROJECT_NAME}/set_initial_position.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

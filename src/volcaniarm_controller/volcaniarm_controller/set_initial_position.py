@@ -18,6 +18,7 @@ class SetInitialPosition(Node):
             FollowJointTrajectory,
             '/volcaniarm_controller/follow_joint_trajectory'
         )
+        self.goal_done = False
         
         self.get_logger().info('Waiting for action server...')
         self.server_ready = self.action_client.wait_for_server(timeout_sec=10.0)
@@ -27,6 +28,7 @@ class SetInitialPosition(Node):
             self.send_initial_position()
         else:
             self.get_logger().error('Action server not available')
+            self.goal_done = True
     
     def send_initial_position(self):
         """Send initial joint positions (1.57, 1.57)"""
@@ -64,15 +66,21 @@ class SetInitialPosition(Node):
             self.get_logger().info('Initial position reached')
         except Exception as e:
             self.get_logger().error(f'Goal failed: {e}')
+        finally:
+            self.goal_done = True
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = SetInitialPosition()
     
-    # Spin briefly to process callbacks
+    # Spin with timeout to allow callbacks to process
+    start_time = time.time()
+    timeout = 15.0  # Maximum 15 seconds to complete
+    
     try:
-        rclpy.spin(node)
+        while not node.goal_done and (time.time() - start_time) < timeout:
+            rclpy.spin_once(node, timeout_sec=0.1)
     except KeyboardInterrupt:
         pass
     finally:
