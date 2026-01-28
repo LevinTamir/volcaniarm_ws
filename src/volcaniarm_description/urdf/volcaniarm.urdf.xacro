@@ -10,6 +10,9 @@
     <!-- Include Gazebo plugins -->
   <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_gazebo.xacro" />
 
+  <!-- Include RealSense camera frames for real hardware -->
+  <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_realsense.xacro" />
+
   <!-- World fixed link -->
   <link name="world" />
   <joint name="world_to_base" type="fixed">

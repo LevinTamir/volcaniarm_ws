@@ -26,6 +26,34 @@ def generate_launch_description():
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
 
+    # Display (RViz) launch
+    display_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_description_share,
+                "launch",
+                "display.launch.py",
+            )
+        ),
+        launch_arguments=[
+            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ],
+    )
+
+    # Controller launch (includes end effector marker)
+    controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_controller_share,
+                "launch",
+                "controller.launch.py",
+            )
+        ),
+        launch_arguments=[
+            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ],
+    )
+
     # Load controllers config
     controller_config_file = os.path.join(
         volcaniarm_controller_share,
@@ -48,28 +76,20 @@ def generate_launch_description():
                     ),
                     " use_sim:=false",
                 ]),
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
         ],
         output="screen",
     )
 
     # Controller manager node (runs on PC, not in Gazebo)
+    # Gets robot_description from robot_state_publisher topic
     controller_manager = Node(
         package="controller_manager",
         executable="ros2_control_node",
         parameters=[
-            {
-                "robot_description": Command([
-                    "xacro ",
-                    os.path.join(
-                        volcaniarm_description_share,
-                        "urdf",
-                        "volcaniarm.urdf.xacro",
-                    ),
-                    " use_sim:=false",
-                ]),
-            },
             controller_config_file,
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
         ],
         output="screen",
     )
@@ -114,6 +134,30 @@ def generate_launch_description():
         ],
     )
 
+    # RealSense camera launch (D435i)
+    realsense_camera = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            os.path.join(
+                get_package_share_directory('realsense2_camera'),
+                'launch',
+                'rs_launch.py'
+            )
+        ]),
+        launch_arguments={
+            'camera_name': 'camera',
+            'camera_namespace': '',
+            'enable_depth': 'true',
+            'enable_color': 'true',
+            'enable_infra1': 'false',
+            'enable_infra2': 'false',
+            'depth_module.depth_profile': '848x480x30',
+            'rgb_camera.color_profile': '848x480x30',
+            'align_depth.enable': 'true',
+            'pointcloud.enable': 'false',
+            'publish_tf': 'false',  # Disable - URDF handles all TF
+        }.items(),
+    )
+
     return LaunchDescription(
         [
             use_sim_time_arg,
@@ -123,5 +167,7 @@ def generate_launch_description():
             joint_state_broadcaster_spawner,
             volcaniarm_controller_spawner,
             display_launch,
+            controller_launch,
+            realsense_camera,
         ]
     )

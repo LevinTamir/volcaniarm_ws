@@ -23,8 +23,6 @@ def ik_2R_YZ_test( y, z, l0=0.215, l1=0.41621, l2=0.65):
         ValueError: If the target point is unreachable given link geometry.
     """
 
-
-
     eps = 1e-9
 
     # Angle from left shoulder to end effector
@@ -84,6 +82,9 @@ class VolcaniarmKinematics(Node):
         self.link_lengths = [0.41621, 0.65]  # Link lengths [L1, L2]
         self.l0 = 0.215  # Shoulder separation
         self.base_z = 0.0582  # Base height
+        
+        # Track last FK values to only log on change
+        self.last_fk = None
 
     def ik_cb(self, request, response):
         """Service callback to compute inverse kinematics."""
@@ -167,7 +168,12 @@ class VolcaniarmKinematics(Node):
             response.z = z
             response.success = True
             response.message = f"FK computed successfully for angles ({request.theta1:.3f}, {request.theta2:.3f})"
-            self.get_logger().info(f"FK: theta1={request.theta1:.3f}, theta2={request.theta2:.3f} -> ({response.x}, {y:.3f}, {z:.3f})")
+            
+            # Only log if values changed
+            current = (round(request.theta1, 3), round(request.theta2, 3), round(y, 3), round(z, 3))
+            if self.last_fk != current:
+                self.last_fk = current
+                self.get_logger().info(f"FK: theta1={request.theta1:.3f}, theta2={request.theta2:.3f} -> ({response.x}, {y:.3f}, {z:.3f})")
         except Exception as e:
             response.x = 0.0
             response.y = 0.0
