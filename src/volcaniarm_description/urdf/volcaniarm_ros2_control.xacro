@@ -26,7 +26,9 @@
               <param name="min">-3.14</param>
               <param name="max">3.14</param>
             </command_interface>
-            <state_interface name="position" />
+            <state_interface name="position">
+              <param name="initial_value">1.57</param>
+            </state_interface>
             <state_interface name="velocity" />
         </joint>
 
@@ -35,7 +37,9 @@
               <param name="min">-3.14</param>
               <param name="max">3.14</param>
             </command_interface>
-            <state_interface name="position" />
+            <state_interface name="position">
+              <param name="initial_value">1.57</param>
+            </state_interface>
             <state_interface name="velocity" />
         </joint>
            

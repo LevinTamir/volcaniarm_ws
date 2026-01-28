@@ -64,7 +64,7 @@ def generate_launch_description():
                     os.path.join(
                         volcaniarm_description_share,
                         "urdf",
-                        "volcaniarm_ros2_control.xacro",
+                        "volcaniarm.urdf.xacro",
                     ),
                     " use_sim:=false",
                 ]),

@@ -123,13 +123,13 @@ VolcaniArmHardware::on_configure(const rclcpp_lifecycle::State &)
 hardware_interface::CallbackReturn
 VolcaniArmHardware::on_activate(const rclcpp_lifecycle::State &)
 {
-  hw_position_right_elbow_ = 0.0;
+  hw_position_right_elbow_ = 1.57;
   hw_velocity_right_elbow_ = 0.0;
-  hw_position_command_right_elbow_ = 0.0;
+  hw_position_command_right_elbow_ = 1.57;
 
-  hw_position_left_elbow_ = 0.0;
+  hw_position_left_elbow_ = 1.57;
   hw_velocity_left_elbow_ = 0.0;
-  hw_position_command_left_elbow_ = 0.0;
+  hw_position_command_left_elbow_ = 1.57;
 
   return hardware_interface::CallbackReturn::SUCCESS;
 }
