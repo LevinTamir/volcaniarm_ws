@@ -21,7 +21,7 @@ class SetInitialPosition(Node):
         self.goal_done = False
         
         self.get_logger().info('Waiting for action server...')
-        self.server_ready = self.action_client.wait_for_server(timeout_sec=10.0)
+        self.server_ready = self.action_client.wait_for_server(timeout_sec=20.0)
         
         if self.server_ready:
             self.get_logger().info('Action server ready, sending initial position')
@@ -76,7 +76,7 @@ def main(args=None):
     
     # Spin with timeout to allow callbacks to process
     start_time = time.time()
-    timeout = 15.0  # Maximum 15 seconds to complete
+    timeout = 20.0  # Maximum 20 seconds to complete
     
     try:
         while not node.goal_done and (time.time() - start_time) < timeout:

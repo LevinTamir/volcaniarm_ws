@@ -1,6 +1,7 @@
 import os
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, RegisterEventHandler, TimerAction
+from launch.event_handlers import OnProcessExit
 from launch_ros.actions import Node
 
 
@@ -39,7 +40,7 @@ def generate_launch_description():
         output="screen",
     )
 
-    # Set initial position node
+    # Set initial position node with delay to ensure controllers are ready
     set_initial_position = Node(
         package="volcaniarm_controller",
         executable="set_initial_position.py",
@@ -47,12 +48,20 @@ def generate_launch_description():
         output="screen",
     )
 
+    # Wait for controller spawner to exit before starting initial position
+    delayed_set_initial_position = RegisterEventHandler(
+        event_handler=OnProcessExit(
+            target_action=volcaniarm_controller_spawner,
+            on_exit=[set_initial_position],
+        )
+    )
+
     return LaunchDescription(
         [
             use_sim_time_arg,
             joint_state_broadcaster_spawner,
             volcaniarm_controller_spawner,
-            set_initial_position,
+            delayed_set_initial_position,
             end_effector_marker,
         ]
     )

@@ -1,0 +1,9 @@
+<library path="volcaniarm_hardware">
+  <class name="volcaniarm_hardware/VolcaniArmHardware"
+         type="volcaniarm_hardware::VolcaniArmHardware"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Hardware interface for VolcaniARM dual stepper motor arm controller via serial connection.
+    </description>
+  </class>
+</library>
