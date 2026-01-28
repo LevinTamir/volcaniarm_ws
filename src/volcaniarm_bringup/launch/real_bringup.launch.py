@@ -1,7 +1,8 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -24,6 +25,13 @@ def generate_launch_description():
     # Get package paths
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
+
+    # Load controllers config
+    controller_config_file = os.path.join(
+        volcaniarm_controller_share,
+        "config",
+        "volcaniarm_controllers.yaml",
+    )
 
     # Robot state publisher with real hardware (use_sim=false)
     robot_state_publisher = Node(
@@ -60,7 +68,8 @@ def generate_launch_description():
                     ),
                     " use_sim:=false",
                 ]),
-            }
+            },
+            controller_config_file,
         ],
         output="screen",
     )
@@ -74,6 +83,7 @@ def generate_launch_description():
             "--controller-manager",
             "/controller_manager",
         ],
+        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
         output="screen",
     )
 
@@ -86,14 +96,22 @@ def generate_launch_description():
             "--controller-manager",
             "/controller_manager",
         ],
+        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
         output="screen",
     )
 
-    # Load controllers config
-    controller_config_file = os.path.join(
-        volcaniarm_controller_share,
-        "config",
-        "volcaniarm_controllers.yaml",
+    # Display (RViz) launch
+    display_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_description_share,
+                "launch",
+                "display.launch.py",
+            )
+        ),
+        launch_arguments=[
+            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ],
     )
 
     return LaunchDescription(
@@ -104,5 +122,6 @@ def generate_launch_description():
             controller_manager,
             joint_state_broadcaster_spawner,
             volcaniarm_controller_spawner,
+            display_launch,
         ]
     )
