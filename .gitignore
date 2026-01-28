@@ -2,6 +2,7 @@
 
 !.gitignore
 !/src/
+!/firmware/
 
 # ROS 2 build artifacts
 /build/
