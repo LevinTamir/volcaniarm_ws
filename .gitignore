@@ -2,7 +2,7 @@
 
 !.gitignore
 !/src/
-!/firmware/
+!/volcaniarm_firmware/
 
 # ROS 2 build artifacts
 /build/
