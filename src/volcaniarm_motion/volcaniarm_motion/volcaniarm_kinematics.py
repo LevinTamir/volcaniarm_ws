@@ -2,7 +2,7 @@
 
 import rclpy
 from rclpy.node import Node
-from volcaniarm_interfaces.srv import ComputeIK
+from volcaniarm_interfaces.srv import ComputeIK, ComputeFK
 import math
 
 def ik_2R_YZ_test( y, z, l0=0.215, l1=0.41621, l2=0.65):
@@ -71,16 +71,19 @@ def ik_2R_YZ_test( y, z, l0=0.215, l1=0.41621, l2=0.65):
 
 
 
-class InverseKinematics(Node):
+class VolcaniarmKinematics(Node):
     def __init__(self):
-        super().__init__('volcaniarm_inverse_kinematics')
+        super().__init__('volcaniarm_kinematics')
         
-        # Create the service
-        self.srv = self.create_service(ComputeIK, 'compute_ik', self.ik_cb)
-        self.get_logger().info('Inverse Kinematics service is ready')
+        # Create the services
+        self.ik_srv = self.create_service(ComputeIK, 'compute_ik', self.ik_cb)
+        self.fk_srv = self.create_service(ComputeFK, 'compute_fk', self.fk_cb)
+        self.get_logger().info('Kinematics services ready: IK and FK')
         
         # Robot parameters
-        self.link_lengths = [0.41621, 0.65]  # Link lengths [L1, L2] - must match FK
+        self.link_lengths = [0.41621, 0.65]  # Link lengths [L1, L2]
+        self.l0 = 0.215  # Shoulder separation
+        self.base_z = 0.0582  # Base height
 
     def ik_cb(self, request, response):
         """Service callback to compute inverse kinematics."""
@@ -92,7 +95,7 @@ class InverseKinematics(Node):
             response.theta2 = q_left
             response.success = True
             response.message = f"IK computed successfully for position ({request.x}, {request.y}, {request.z})"
-            self.get_logger().info(f"IK: ({request.x}, {request.y}, {request.z}) -> ({q_left:.3f}, {q_right:.3f})")
+            self.get_logger().info(f"IK: ({request.x}, {request.y}, {request.z}) -> theta1={response.theta1:.3f}, theta2={response.theta2:.3f}")
         except Exception as e:
             response.theta1 = 0.0
             response.theta2 = 0.0
@@ -117,18 +120,16 @@ class InverseKinematics(Node):
             Base joint angles in radians
         """
         eps = 1e-9
-        l0 = 0.215  # Shoulder separation (distance from center to each shoulder)
-        base_z = 0.0582  # Base height (shoulder Z offset)
         l1, l2 = self.link_lengths
 
         # Account for base_z offset
-        z_offset = z - base_z
+        z_offset = z - self.base_z
 
-        beta1 = math.atan2(z_offset, (l0 + y))
-        beta2 = math.atan2(z_offset, (l0 - y))
+        beta1 = math.atan2(z_offset, (self.l0 + y))
+        beta2 = math.atan2(z_offset, (self.l0 - y))
 
-        dy1 = l0 + y
-        dy2 = l0 - y
+        dy1 = self.l0 + y
+        dy2 = self.l0 - y
         r1 = math.hypot(dy1, z_offset)
         r2 = math.hypot(dy2, z_offset)
 
@@ -156,12 +157,88 @@ class InverseKinematics(Node):
 
         return shoulder1, shoulder2
 
+    def fk_cb(self, request, response):
+        """Service callback to compute forward kinematics."""
+        try:
+            # Compute FK for the given joint angles
+            y, z = self.fk_2R_YZ(request.theta1, request.theta2)
+            response.x = 0.0  # X is fixed for planar arm
+            response.y = y
+            response.z = z
+            response.success = True
+            response.message = f"FK computed successfully for angles ({request.theta1:.3f}, {request.theta2:.3f})"
+            self.get_logger().info(f"FK: theta1={request.theta1:.3f}, theta2={request.theta2:.3f} -> ({response.x}, {y:.3f}, {z:.3f})")
+        except Exception as e:
+            response.x = 0.0
+            response.y = 0.0
+            response.z = 0.0
+            response.success = False
+            response.message = f"FK computation failed: {str(e)}"
+            self.get_logger().error(response.message)
+        
+        return response
+
+    def fk_2R_YZ(self, theta1: float, theta2: float):
+        """Forward kinematics for planar 2-D delta arm in YZ plane.
+        
+        Parameters
+        ----------
+        theta1, theta2 : float
+            Right and left shoulder joint angles in radians
+            
+        Returns
+        -------
+        y, z : float
+            End-effector position in meters
+        """
+        l1, l2 = self.link_lengths
+        
+        # Left shoulder at (y=-l0, z=base_z)
+        # theta2 is left shoulder angle
+        elbow_left_y = -self.l0 + l1 * math.cos(theta2)
+        elbow_left_z = self.base_z + l1 * math.sin(theta2)
+        
+        # Right shoulder at (y=l0, z=base_z)
+        # theta1 is right shoulder angle
+        elbow_right_y = self.l0 + l1 * math.cos(theta1)
+        elbow_right_z = self.base_z + l1 * math.sin(theta1)
+        
+        # Debug
+        self.get_logger().debug(f'Elbows: left=({elbow_left_y:.3f}, {elbow_left_z:.3f}), right=({elbow_right_y:.3f}, {elbow_right_z:.3f})')
+        
+        # The end effector is where both l2 links meet
+        # We need to find the intersection point of two circles:
+        # Circle 1: center at right elbow, radius l2
+        # Circle 2: center at left elbow, radius l2
+        
+        dy = elbow_left_y - elbow_right_y
+        dz = elbow_left_z - elbow_right_z
+        d = math.hypot(dy, dz)
+        
+        # Check if intersection exists
+        if d > 2 * l2 or d < 1e-9:
+            raise ValueError(f"Invalid configuration: elbows are too far apart (d={d:.3f}m)")
+        
+        # Find intersection point (law of cosines)
+        a = d / 2.0
+        h = math.sqrt(l2**2 - a**2)
+        
+        # Point along the line from right elbow to left elbow
+        my = elbow_right_y + a * dy / d
+        mz = elbow_right_z + a * dz / d
+        
+        # Perpendicular offset (choose forward solution)
+        y = my + h * dz / d
+        z = mz - h * dy / d
+        
+        return y, z
+
 
 def main(args=None):
     rclpy.init(args=args)
-    ik_service = InverseKinematics()
-    rclpy.spin(ik_service)
-    ik_service.destroy_node()
+    kinematics_node = VolcaniarmKinematics()
+    rclpy.spin(kinematics_node)
+    kinematics_node.destroy_node()
     rclpy.shutdown()
 
 

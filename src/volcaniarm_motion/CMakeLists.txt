@@ -17,7 +17,7 @@ install(
 )
 
 install(PROGRAMS
-  volcaniarm_motion/volcaniarm_inverse_kinematics.py
+  volcaniarm_motion/volcaniarm_kinematics.py
   volcaniarm_motion/volcaniarm_motion_planning.py
   DESTINATION lib/${PROJECT_NAME}
 )

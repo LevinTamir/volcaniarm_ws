@@ -8,6 +8,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
+from volcaniarm_interfaces.srv import ComputeFK
 
 
 class EndEffectorMarker(Node):
@@ -20,6 +21,13 @@ class EndEffectorMarker(Node):
 
         self.joint_names = joints
         self.base_frame = base_frame
+        
+        # FK service client
+        self.fk_client = self.create_client(ComputeFK, 'compute_fk')
+        self.use_fk_service = False  # Start with local FK, switch to service when available
+        
+        # Check for FK service in background
+        self.create_timer(1.0, self.check_fk_service)
 
         # Publishers
         self.marker_pub = self.create_publisher(Marker, 'ee_marker', 10)
@@ -31,6 +39,12 @@ class EndEffectorMarker(Node):
         # State
         self.state = {}
         self.trail = deque(maxlen=300)
+    
+    def check_fk_service(self):
+        """Check if FK service is available and switch to using it."""
+        if not self.use_fk_service and self.fk_client.service_is_ready():
+            self.use_fk_service = True
+            self.get_logger().info('FK service available, switching to service-based FK')
 
     def fk_2R_YZ(self, q_left: float, q_right: float):
         """
@@ -89,8 +103,28 @@ class EndEffectorMarker(Node):
         except KeyError:
             return
 
-        x, y, z = self.fk_2R_YZ(q_l, q_r)
-        self.publish_markers(x, y, z)
+        if self.use_fk_service:
+            # Use FK service (theta1=right, theta2=left)
+            request = ComputeFK.Request()
+            request.theta1 = q_r
+            request.theta2 = q_l
+            future = self.fk_client.call_async(request)
+            future.add_done_callback(lambda f: self.handle_fk_response(f))
+        else:
+            # Use local FK computation
+            x, y, z = self.fk_2R_YZ(q_l, q_r)
+            self.publish_markers(x, y, z)
+    
+    def handle_fk_response(self, future):
+        """Handle FK service response."""
+        try:
+            response = future.result()
+            if response.success:
+                # Add X offset for visualization
+                x = 0.1825 + 0.042
+                self.publish_markers(x, response.y, response.z)
+        except Exception as e:
+            self.get_logger().error(f'FK service call failed: {e}')
 
     def publish_markers(self, x: float, y: float, z: float):
         """Publish EE marker and trail."""

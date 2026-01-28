@@ -11,6 +11,7 @@ find_package(rosidl_default_generators REQUIRED)
 # Generate interfaces
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ComputeIK.srv"
+  "srv/ComputeFK.srv"
 )
 
 if(BUILD_TESTING)

@@ -74,10 +74,7 @@ class MotionPlanningNode(Node):
         # Don't block in the callback!
         self.call_ik_service_async(x, y, z)
         
-    def call_ik_service(self, x, y, z):
-        """DEPRECATED - Use call_ik_service_async instead"""
-        pass
-    
+  
     def execute_trajectory_with_angles(self, joint_positions):
         """
         Execute trajectory with pre-computed joint angles.
@@ -137,7 +134,10 @@ class MotionPlanningNode(Node):
         rclpy.spin_until_future_complete(self, result_future)
         
         result = result_future.result().result
-        self.get_logger().info(f'Trajectory execution completed with error code: {result.error_code}')
+        if result.error_code == 0:
+            self.get_logger().info('Trajectory execution completed: SUCCESS')
+        else:
+            self.get_logger().error(f'Trajectory execution failed with error code: {result.error_code}')
         
     def feedback_callback(self, feedback_msg):
         """Callback for action feedback"""

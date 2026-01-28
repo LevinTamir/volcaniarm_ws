@@ -11,11 +11,11 @@ def generate_launch_description():
         default_value="True",
     )
 
-    # Inverse Kinematics node
-    inverse_kinematics_node = Node(
+    # Kinematics node (IK and FK services)
+    kinematics_node = Node(
         package="volcaniarm_motion",
-        executable="volcaniarm_inverse_kinematics.py",
-        name="volcaniarm_inverse_kinematics",
+        executable="volcaniarm_kinematics.py",
+        name="volcaniarm_kinematics",
         output="screen",
     )
 
@@ -30,7 +30,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             use_sim_time_arg,
-            inverse_kinematics_node,
+            kinematics_node,
             motion_planning_node,
         ]
     )
