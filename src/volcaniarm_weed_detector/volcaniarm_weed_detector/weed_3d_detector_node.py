@@ -32,7 +32,7 @@ class Weed3DDetector(Node):
         self.create_subscription(CameraInfo, '/camera/color/camera_info', self.camera_info_callback, 10)
 
         # Publishers
-        self.position_publisher = self.create_publisher(PointStamped, '/weed_position', 10)
+        self.position_publisher = self.create_publisher(PointStamped, '/weed_position_raw', 10)
         self.marker_publisher = self.create_publisher(Marker, '/weed_marker', 10)
 
     def camera_info_callback(self, msg):
