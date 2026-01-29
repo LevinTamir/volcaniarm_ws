@@ -70,6 +70,10 @@ class Weed3DDetector(Node):
             self.get_logger().warn('Invalid depth at weed centroid')
             return
 
+        # --- Convert depth to meters if in millimeters (RealSense uses mm, Gazebo uses m) ---
+        if depth > 100.0:  # If depth > 100, assume it's in millimeters
+            depth = depth / 1000.0
+
         # --- Compute 3D Coordinates ---
         X = float((cx_pixel - self.cx) * depth / self.fx)
         Y = float((cy_pixel - self.cy) * depth / self.fy)
