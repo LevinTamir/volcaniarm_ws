@@ -15,6 +15,17 @@ class Weed3DDetector(Node):
         self.depth_image = None
         self.camera_info_received = False
 
+        # --- Filter Parameters ---
+        self.ema_alpha = 0.15  # EMA smoothing factor (0.1 = very smooth, 0.5 = responsive)
+        self.outlier_threshold = 0.1  # Max allowed jump in meters per frame
+        self.min_contour_area = 500  # Minimum contour area to consider valid
+        self.outlier_reset_count = 10  # Reset filter after this many consecutive outliers
+        
+        # --- Filter State ---
+        self.filtered_position = None  # (X, Y, Z) filtered position
+        self.position_initialized = False
+        self.consecutive_outliers = 0  # Counter for consecutive outlier rejections
+
         # Subscribers
         self.create_subscription(Image, '/camera/color/image_raw', self.rgb_callback, 10)
         self.create_subscription(Image, '/camera/aligned_depth_to_color/image_raw', self.depth_callback, 10)
@@ -58,6 +69,12 @@ class Weed3DDetector(Node):
             return
 
         largest_contour = max(contours, key=cv2.contourArea)
+        
+        # --- Filter out small contours ---
+        if cv2.contourArea(largest_contour) < self.min_contour_area:
+            self.get_logger().debug('Contour too small, ignoring')
+            return
+            
         M = cv2.moments(largest_contour)
         if M['m00'] == 0:
             return
@@ -78,6 +95,37 @@ class Weed3DDetector(Node):
         X = float((cx_pixel - self.cx) * depth / self.fx)
         Y = float((cy_pixel - self.cy) * depth / self.fy)
         Z = float(depth)
+
+        # --- Apply Outlier Rejection and EMA Filter ---
+        raw_position = np.array([X, Y, Z])
+        
+        if not self.position_initialized:
+            # First valid reading - initialize filter
+            self.filtered_position = raw_position
+            self.position_initialized = True
+            self.consecutive_outliers = 0
+        else:
+            # Check for outliers (large jumps)
+            distance = np.linalg.norm(raw_position - self.filtered_position)
+            if distance > self.outlier_threshold:
+                self.consecutive_outliers += 1
+                
+                # If we keep getting "outliers", it means we moved to a new target - reset filter
+                if self.consecutive_outliers >= self.outlier_reset_count:
+                    self.get_logger().info(f'Filter reset: new target detected at distance={distance:.3f}m')
+                    self.filtered_position = raw_position
+                    self.consecutive_outliers = 0
+                else:
+                    self.get_logger().debug(f'Outlier rejected: distance={distance:.3f}m ({self.consecutive_outliers}/{self.outlier_reset_count})')
+                    return  # Reject this reading
+            else:
+                # Valid reading - reset outlier counter and apply EMA
+                self.consecutive_outliers = 0
+                self.filtered_position = (self.ema_alpha * raw_position + 
+                                          (1 - self.ema_alpha) * self.filtered_position)
+        
+        # Use filtered position
+        X, Y, Z = self.filtered_position
 
         self.get_logger().info(f"Weed 3D Position: X={X:.3f} m, Y={Y:.3f} m, Z={Z:.3f} m")
 
