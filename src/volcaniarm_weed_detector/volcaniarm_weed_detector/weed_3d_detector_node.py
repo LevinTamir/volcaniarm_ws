@@ -16,9 +16,9 @@ class Weed3DDetector(Node):
         self.camera_info_received = False
 
         # Subscribers
-        self.create_subscription(Image, '/camera/image', self.rgb_callback, 10)
-        self.create_subscription(Image, '/camera/depth_image', self.depth_callback, 10)
-        self.create_subscription(CameraInfo, '/camera/camera_info', self.camera_info_callback, 10)
+        self.create_subscription(Image, '/camera/color/image_raw', self.rgb_callback, 10)
+        self.create_subscription(Image, '/camera/aligned_depth_to_color/image_raw', self.depth_callback, 10)
+        self.create_subscription(CameraInfo, '/camera/color/camera_info', self.camera_info_callback, 10)
 
         # Publishers
         self.position_publisher = self.create_publisher(PointStamped, '/weed_position', 10)

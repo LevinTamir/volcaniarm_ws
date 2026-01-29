@@ -1,11 +1,11 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
-package_name = 'weed_3d_detector'
+package_name = 'volcaniarm_weed_detector'
 
 setup(
     name=package_name,
     version='0.0.0',
-    packages=[package_name],
+    packages=find_packages(),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'weed_3d_detector_node = weed_3d_detector.weed_3d_detector_node:main'
+            'volcaniarm_weed_detector_node = volcaniarm_weed_detector.weed_3d_detector_node:main'
         ],
     },
 )

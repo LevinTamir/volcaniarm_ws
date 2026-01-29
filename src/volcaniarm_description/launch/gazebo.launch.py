@@ -109,10 +109,18 @@ def generate_launch_description():
         executable="parameter_bridge",
         arguments=[
             "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
-            "/camera/camera_info@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo",
-            "/camera/image@sensor_msgs/msg/Image@gz.msgs.Image",
-            "/camera/depth_image@sensor_msgs/msg/Image@gz.msgs.Image",
-            "/camera/points@sensor_msgs/msg/PointCloud2@gz.msgs.PointCloudPacked",
+            "/rgbd_camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
+            "/rgbd_camera/image@sensor_msgs/msg/Image[gz.msgs.Image",
+            "/rgbd_camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image",
+            "/rgbd_camera/depth_image_camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
+            "/rgbd_camera/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
+        ],
+        remappings=[
+            ('/rgbd_camera/image', '/camera/color/image_raw'),
+            ('/rgbd_camera/camera_info', '/camera/color/camera_info'),
+            ('/rgbd_camera/depth_image', '/camera/aligned_depth_to_color/image_raw'),
+            ('/rgbd_camera/depth_image_camera_info', '/camera/aligned_depth_to_color/camera_info'),
+            ('/rgbd_camera/points', '/camera/depth/color/points'),
         ],
     )
 

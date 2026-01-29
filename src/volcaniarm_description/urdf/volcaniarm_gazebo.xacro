@@ -9,18 +9,6 @@
     </plugin>
   </gazebo>
 
-  <!-- Camera ROS 2 bridge remapping - normalize Gazebo camera topics to RealSense format -->
-  <gazebo>
-    <plugin filename="gz_ros2_camera" name="gz_ros2_camera">
-      <remappings>
-        <remap from="rgbd_camera/image">camera/color/image_raw</remap>
-        <remap from="rgbd_camera/depth_image">camera/aligned_depth_to_color/image_raw</remap>
-        <remap from="rgbd_camera/camera_info">camera/color/camera_info</remap>
-        <remap from="rgbd_camera/depth_image_camera_info">camera/aligned_depth_to_color/camera_info</remap>
-      </remappings>
-    </plugin>
-  </gazebo>
-
     <gazebo reference="camera_link">
         <sensor name="rgbd_camera" type="rgbd_camera">
             <camera>
@@ -33,12 +21,11 @@
                     <near>0.3</near>
                     <far>15</far>
                 </clip>
-                <optical_frame_id>camera_link_optical</optical_frame_id>
             </camera>
             <always_on>1</always_on>
             <update_rate>30</update_rate>
             <visualize>true</visualize>
-            <topic>camera</topic>
+            <topic>rgbd_camera</topic>
             <gz_frame_id>camera_link</gz_frame_id>
         </sensor>
     </gazebo>
