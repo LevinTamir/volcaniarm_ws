@@ -44,7 +44,6 @@ class EndEffectorMarker(Node):
         """Check if FK service is available and switch to using it."""
         if not self.use_fk_service and self.fk_client.service_is_ready():
             self.use_fk_service = True
-            self.get_logger().info('FK service available, switching to service-based FK')
 
     def fk_2R_YZ(self, q_left: float, q_right: float):
         """
