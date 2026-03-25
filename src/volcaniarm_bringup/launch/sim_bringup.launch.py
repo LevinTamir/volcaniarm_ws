@@ -16,6 +16,12 @@ def generate_launch_description():
         description="Use simulation time",
     )
 
+    world_name_arg = DeclareLaunchArgument(
+        "world_name",
+        default_value="feild",
+        description="Gazebo world name (without .sdf extension)",
+    )
+
     # Get package paths
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
@@ -32,7 +38,7 @@ def generate_launch_description():
         ),
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
-            ("world_name", "feild"),
+            ("world_name", LaunchConfiguration("world_name")),
         ],
     )
 
@@ -81,6 +87,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             use_sim_time_arg,
+            world_name_arg,
             gazebo_launch,
             controller_launch,
             display_launch,
