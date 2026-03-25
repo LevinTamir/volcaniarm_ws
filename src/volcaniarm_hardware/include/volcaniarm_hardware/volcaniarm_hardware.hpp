@@ -55,6 +55,10 @@ private:
   double hw_velocity_left_elbow_{0.0};
   double hw_position_command_left_elbow_{0.0};
 
+  // Home offsets: URDF_position = physical_position + home_offset
+  double right_elbow_home_offset_{0.0};
+  double left_elbow_home_offset_{0.0};
+
   bool configure_port_();
   bool send_position_command_rad_(double position_rad_right, double position_rad_left);
 };

@@ -42,6 +42,14 @@ hardware_interface::CallbackReturn VolcaniArmHardware::on_init(
   baud_ = std::stoi(info_.hardware_parameters.at("baud_rate"));
   steps_per_rev_ = std::stod(info_.hardware_parameters.at("steps_per_rev"));
 
+  // Home offset: maps physical zero to URDF zero (default 0.0 = no offset)
+  if (info_.hardware_parameters.count("right_elbow_home_offset")) {
+    right_elbow_home_offset_ = std::stod(info_.hardware_parameters.at("right_elbow_home_offset"));
+  }
+  if (info_.hardware_parameters.count("left_elbow_home_offset")) {
+    left_elbow_home_offset_ = std::stod(info_.hardware_parameters.at("left_elbow_home_offset"));
+  }
+
   std::cout << "[VolcaniArmHardware] Initialized with steps_per_rev = " << steps_per_rev_ << std::endl;
 
   hw_position_right_elbow_ = 0.0;
@@ -123,13 +131,13 @@ VolcaniArmHardware::on_configure(const rclcpp_lifecycle::State &)
 hardware_interface::CallbackReturn
 VolcaniArmHardware::on_activate(const rclcpp_lifecycle::State &)
 {
-  hw_position_right_elbow_ = 1.57;
+  hw_position_right_elbow_ = right_elbow_home_offset_;
   hw_velocity_right_elbow_ = 0.0;
-  hw_position_command_right_elbow_ = 1.57;
+  hw_position_command_right_elbow_ = right_elbow_home_offset_;
 
-  hw_position_left_elbow_ = 1.57;
+  hw_position_left_elbow_ = left_elbow_home_offset_;
   hw_velocity_left_elbow_ = 0.0;
-  hw_position_command_left_elbow_ = 1.57;
+  hw_position_command_left_elbow_ = left_elbow_home_offset_;
 
   return hardware_interface::CallbackReturn::SUCCESS;
 }
