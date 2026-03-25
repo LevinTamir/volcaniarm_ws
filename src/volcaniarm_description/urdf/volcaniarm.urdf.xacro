@@ -595,13 +595,10 @@
       </geometry>
     </collision>
   </link>
-  <joint name="camera_mount_linear_joint" type="prismatic">
+  <joint name="camera_mount_linear_joint" type="fixed">
     <origin xyz="0.405353761834025 0 0.039999999999992" rpy="0 0 0" />
     <parent link="base_link" />
     <child link="camera_mount_linear_link" />
-    <axis xyz="1 0 0" />
-    <limit lower="-0.3" upper="0.3" effort="10" velocity="10" />
-    <dynamics damping="0.1" friction="0.1" />
   </joint>
 
   <link name="camera_mount_rev_link">
@@ -612,7 +609,7 @@
                iyy="2.6062E-07" iyz="-1.1636E-11" izz="2.5357E-06" />
     </inertial>
     <visual>
-      <origin xyz="0 0 0" rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 1.5708 0" />
       <geometry>
         <mesh filename="package://volcaniarm_description/meshes/camera_mount_rev_link.STL" />
       </geometry>
@@ -621,20 +618,17 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0 0 0" rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 1.5708 0" />
       <geometry>
         <mesh filename="package://volcaniarm_description/meshes/camera_mount_rev_link.STL" />
       </geometry>
     </collision>
   </link>
-  <joint name="camera_mount_rev_joint" type="revolute">
+  <joint name="camera_mount_rev_joint" type="fixed">
     <origin xyz="0.192000000000008 0 -0.0290000000000052"
-            rpy="3.14159265358979 0.211904134210419 3.14159265358979" />
+            rpy="3.14159265358979 0.75 3.14159265358979" />
     <parent link="camera_mount_linear_link" />
     <child link="camera_mount_rev_link" />
-    <axis xyz="0 1 0" />
-    <limit lower="-3.14" upper="3.14" effort="10" velocity="10" />
-    <dynamics damping="0.1" friction="0.1" />
   </joint>
 
   <!-- ======================== CAMERA ======================== -->
@@ -647,7 +641,7 @@
                iyy="3.9447E-06" iyz="2.4433E-07" izz="2.7278E-05" />
     </inertial>
     <visual>
-      <origin xyz="0 0 0" rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 1.5708 0" />
       <geometry>
         <mesh filename="package://volcaniarm_description/meshes/camera_link.STL" />
       </geometry>
@@ -656,15 +650,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0 0 0" rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 1.5708 0" />
       <geometry>
         <mesh filename="package://volcaniarm_description/meshes/camera_link.STL" />
       </geometry>
     </collision>
   </link>
   <joint name="camera_joint" type="fixed">
-    <origin xyz="-2.37779715432929E-05 0 0.0160004150359285"
-            rpy="0 -0.0135473024600912 0" />
+    <origin xyz="0.0160004150359285 0 0" rpy="0 0 0" />
     <parent link="camera_mount_rev_link" />
     <child link="camera_link" />
   </joint>
