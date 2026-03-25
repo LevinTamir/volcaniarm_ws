@@ -1,250 +1,203 @@
 #!/usr/bin/env python3
+"""
+Kinematics service node for the volcaniarm 5-bar closed-loop linkage.
 
+Provides IK and FK services that accept/return URDF joint angles.
+Internally converts between the planar FK model convention and URDF joint space.
+
+Includes configurable workspace limits as a safety envelope.
+"""
+
+import math
 import rclpy
 from rclpy.node import Node
 from volcaniarm_interfaces.srv import ComputeIK, ComputeFK
-import math
-
-def ik_2R_YZ_test( y, z, l0=0.215, l1=0.41621, l2=0.65):
-
-    """Standalone planar 2R IK for testing without ROS context.
-
-    Args:
-        y (float): End-effector Y coordinate in meters.
-        z (float): End-effector Z coordinate in meters.
-        l0 (float, optional): Half shoulder width (distance from center to each shoulder). Defaults to 0.2085.
-        l1 (float, optional): Length of the first link. Defaults to 0.413.
-        l2 (float, optional): Length of the second link. Defaults to 0.622.
-
-    Returns:
-        tuple[float, float]: Shoulder joint angles (left, right) in radians.
-
-    Raises:
-        ValueError: If the target point is unreachable given link geometry.
-    """
-
-    eps = 1e-9
-
-    # Angle from left shoulder to end effector
-    beta1 = math.atan2(z, (l0 + y))
-
-    # Angle from right shoulder to end effector
-    beta2 = math.atan2(z, (l0 - y))
-
-    dy1 = l0 + y
-    dy2 = l0 - y
-    r1 = math.hypot(dy1, z)
-    r2 = math.hypot(dy2, z)
-
-    if r1 < eps or r2 < eps:
-        raise ValueError("Unreachable coordinates")
-
-    # Reachability checks (triangle inequality for each 2-link arm)
-    min_r = abs(l1 - l2)
-    max_r = l1 + l2
-    if (r1 < min_r - eps) or (r1 > max_r + eps) or (r2 < min_r - eps) or (r2 > max_r + eps):
-        raise ValueError("Unreachable coordinates")
-
-    # Alpha angle pre-calculations (law of cosines)
-    alpha1_calc = (l1**2 + r1**2 - l2**2) / (2 * l1 * r1)
-    alpha2_calc = (l1**2 + r2**2 - l2**2) / (2 * l1 * r2)
-
-    # Guard against floating-point roundoff pushing value slightly outside [-1, 1]
-    if alpha1_calc < -1 - eps or alpha1_calc > 1 + eps or alpha2_calc < -1 - eps or alpha2_calc > 1 + eps:
-        raise ValueError("Unreachable coordinates")
-    alpha1_calc = max(-1.0, min(1.0, alpha1_calc))
-    alpha2_calc = max(-1.0, min(1.0, alpha2_calc))
-
-    # Angle of left shoulder - beta1 and right shoulder - beta2
-    alpha1 = math.acos(alpha1_calc)
-    alpha2 = math.acos(alpha2_calc)
-
-    # Angles of left and right shoulders
-    shoulder1 = beta1 + alpha1
-    shoulder2 = math.pi - beta2 - alpha2
-    
-    return(shoulder1, shoulder2)
-
-
-
 
 
 class VolcaniarmKinematics(Node):
     def __init__(self):
         super().__init__('volcaniarm_kinematics')
-        
-        # Create the services
-        self.ik_srv = self.create_service(ComputeIK, 'compute_ik', self.ik_cb)
-        self.fk_srv = self.create_service(ComputeFK, 'compute_fk', self.fk_cb)
-        self.get_logger().info('Kinematics services ready: IK and FK')
-        
-        # Robot parameters
-        self.link_lengths = [0.41621, 0.65]  # Link lengths [L1, L2]
-        self.l0 = 0.215  # Shoulder separation
-        self.base_z = 0.0582  # Base height
-        
-        # Track last FK values to only log on change
-        self.last_fk = None
 
-    def ik_cb(self, request, response):
-        """Service callback to compute inverse kinematics."""
+        # Kinematic parameters
+        self.declare_parameter('L1', 0.41621)
+        self.declare_parameter('L2', 0.65)
+        self.declare_parameter('l0', 0.215)
+        self.declare_parameter('base_z', 0.0582)
+        self.declare_parameter('left_fk_offset', 3.0 * math.pi / 4.0)
+        self.declare_parameter('right_fk_offset', math.pi / 4.0)
 
-        try:
-            # X is fixed for now, use Y and Z for planar IK calculation
-            q_left, q_right = self.ik_2R_YZ(request.y, request.z)
-            response.theta1 = q_right
-            response.theta2 = q_left
-            response.success = True
-            response.message = f"IK computed successfully for position ({request.x}, {request.y}, {request.z})"
-            self.get_logger().info(f"IK: ({request.x}, {request.y}, {request.z}) -> theta1={response.theta1:.3f}, theta2={response.theta2:.3f}")
-        except Exception as e:
-            response.theta1 = 0.0
-            response.theta2 = 0.0
-            response.success = False
-            response.message = f"IK computation failed: {str(e)}"
-            self.get_logger().error(response.message)
-        
-        return response
+        # Workspace safety limits (in the arm's YZ plane)
+        # Workspace limits: Z positive = downward (arm extends in +Z)
+        self.declare_parameter('workspace.y_min', -0.4)
+        self.declare_parameter('workspace.y_max', 0.4)
+        self.declare_parameter('workspace.z_min', 0.1)
+        self.declare_parameter('workspace.z_max', 0.9)
 
-    def ik_2R_YZ(self, y: float, z: float):
-        """
-        Inverse kinematics for a planar 2-D delta arm in YZ plane.
+        # Joint limits (URDF joint angles)
+        self.declare_parameter('joint_limits.min', -3.14)
+        self.declare_parameter('joint_limits.max', 3.14)
 
-        Parameters
-        ----------
-        y, z : float
-            End-effector position
+        self.L1 = self.get_parameter('L1').value
+        self.L2 = self.get_parameter('L2').value
+        self.l0 = self.get_parameter('l0').value
+        self.base_z = self.get_parameter('base_z').value
+        self.left_fk_offset = self.get_parameter('left_fk_offset').value
+        self.right_fk_offset = self.get_parameter('right_fk_offset').value
 
-        Returns
-        -------
-        q_left, q_right : float
-            Base joint angles in radians
-        """
-        eps = 1e-9
-        l1, l2 = self.link_lengths
+        self.ws_y_min = self.get_parameter('workspace.y_min').value
+        self.ws_y_max = self.get_parameter('workspace.y_max').value
+        self.ws_z_min = self.get_parameter('workspace.z_min').value
+        self.ws_z_max = self.get_parameter('workspace.z_max').value
 
-        # Account for base_z offset
-        z_offset = z - self.base_z
+        self.jl_min = self.get_parameter('joint_limits.min').value
+        self.jl_max = self.get_parameter('joint_limits.max').value
 
-        beta1 = math.atan2(z_offset, (self.l0 + y))
-        beta2 = math.atan2(z_offset, (self.l0 - y))
+        # Services
+        self.create_service(ComputeIK, 'compute_ik', self.ik_cb)
+        self.create_service(ComputeFK, 'compute_fk', self.fk_cb)
 
-        dy1 = self.l0 + y
-        dy2 = self.l0 - y
-        r1 = math.hypot(dy1, z_offset)
-        r2 = math.hypot(dy2, z_offset)
+        self.get_logger().info(
+            f'Kinematics services ready (L1={self.L1}, L2={self.L2}, '
+            f'workspace Y[{self.ws_y_min}, {self.ws_y_max}] '
+            f'Z[{self.ws_z_min}, {self.ws_z_max}])')
 
-        if r1 < eps or r2 < eps:
-            raise ValueError("Unreachable coordinates")
+    # ── angle conversion ──────────────────────────────────────────
 
-        min_r = abs(l1 - l2)
-        max_r = l1 + l2
-        if (r1 < min_r - eps) or (r1 > max_r + eps) or (r2 < min_r - eps) or (r2 > max_r + eps):
-            raise ValueError("Unreachable coordinates")
+    def _urdf_to_fk(self, urdf_left, urdf_right):
+        return urdf_left + self.left_fk_offset, urdf_right + self.right_fk_offset
 
-        alpha1_calc = (l1**2 + r1**2 - l2**2) / (2 * l1 * r1)
-        alpha2_calc = (l1**2 + r2**2 - l2**2) / (2 * l1 * r2)
+    @staticmethod
+    def _normalize(a):
+        """Normalize angle to [-pi, pi]."""
+        while a > math.pi:
+            a -= 2.0 * math.pi
+        while a < -math.pi:
+            a += 2.0 * math.pi
+        return a
 
-        if alpha1_calc < -1 - eps or alpha1_calc > 1 + eps or alpha2_calc < -1 - eps or alpha2_calc > 1 + eps:
-            raise ValueError("Unreachable coordinates")
-        alpha1_calc = max(-1.0, min(1.0, alpha1_calc))
-        alpha2_calc = max(-1.0, min(1.0, alpha2_calc))
+    def _fk_to_urdf(self, fk_left, fk_right):
+        return (self._normalize(fk_left - self.left_fk_offset),
+                self._normalize(fk_right - self.right_fk_offset))
 
-        alpha1 = math.acos(alpha1_calc)
-        alpha2 = math.acos(alpha2_calc)
+    # ── workspace check ───────────────────────────────────────────
 
-        shoulder1 = beta1 + alpha1
-        shoulder2 = math.pi - beta2 - alpha2
+    def _check_workspace(self, y, z):
+        if y < self.ws_y_min or y > self.ws_y_max:
+            raise ValueError(
+                f'Y={y:.3f} outside workspace [{self.ws_y_min}, {self.ws_y_max}]')
+        if z < self.ws_z_min or z > self.ws_z_max:
+            raise ValueError(
+                f'Z={z:.3f} outside workspace [{self.ws_z_min}, {self.ws_z_max}]')
 
-        return shoulder1, shoulder2
+    def _check_joint_limits(self, urdf_left, urdf_right):
+        for name, val in [('left', urdf_left), ('right', urdf_right)]:
+            if val < self.jl_min or val > self.jl_max:
+                raise ValueError(
+                    f'{name} joint angle {val:.3f} outside limits '
+                    f'[{self.jl_min}, {self.jl_max}]')
+
+    # ── FK ────────────────────────────────────────────────────────
 
     def fk_cb(self, request, response):
-        """Service callback to compute forward kinematics."""
         try:
-            # Compute FK for the given joint angles
-            y, z = self.fk_2R_YZ(request.theta1, request.theta2)
-            response.x = 0.0  # X is fixed for planar arm
+            # request.theta1 = right URDF, request.theta2 = left URDF
+            fk_left, fk_right = self._urdf_to_fk(request.theta2, request.theta1)
+            y, z = self._fk_planar(fk_right, fk_left)
+            response.x = 0.0
             response.y = y
             response.z = z
             response.success = True
-            response.message = f"FK computed successfully for angles ({request.theta1:.3f}, {request.theta2:.3f})"
-            
-            # Only log if values changed
-            current = (round(request.theta1, 3), round(request.theta2, 3), round(y, 3), round(z, 3))
-            if self.last_fk != current:
-                self.last_fk = current
-                self.get_logger().info(f"FK: theta1={request.theta1:.3f}, theta2={request.theta2:.3f} -> ({response.x}, {y:.3f}, {z:.3f})")
+            response.message = 'OK'
+            self.get_logger().info(
+                f'FK: urdf({request.theta1:.3f}, {request.theta2:.3f}) → '
+                f'pos({y:.4f}, {z:.4f})')
         except Exception as e:
-            response.x = 0.0
-            response.y = 0.0
-            response.z = 0.0
+            response.x = response.y = response.z = 0.0
             response.success = False
-            response.message = f"FK computation failed: {str(e)}"
-            self.get_logger().error(response.message)
-        
+            response.message = str(e)
+            self.get_logger().error(f'FK failed: {e}')
         return response
 
-    def fk_2R_YZ(self, theta1: float, theta2: float):
-        """Forward kinematics for planar 2-D delta arm in YZ plane.
-        
-        Parameters
-        ----------
-        theta1, theta2 : float
-            Right and left shoulder joint angles in radians
-            
-        Returns
-        -------
-        y, z : float
-            End-effector position in meters
-        """
-        l1, l2 = self.link_lengths
-        
-        # Left shoulder at (y=-l0, z=base_z)
-        # theta2 is left shoulder angle
-        elbow_left_y = -self.l0 + l1 * math.cos(theta2)
-        elbow_left_z = self.base_z + l1 * math.sin(theta2)
-        
-        # Right shoulder at (y=l0, z=base_z)
-        # theta1 is right shoulder angle
-        elbow_right_y = self.l0 + l1 * math.cos(theta1)
-        elbow_right_z = self.base_z + l1 * math.sin(theta1)
-        
-        # Debug
-        self.get_logger().debug(f'Elbows: left=({elbow_left_y:.3f}, {elbow_left_z:.3f}), right=({elbow_right_y:.3f}, {elbow_right_z:.3f})')
-        
-        # The end effector is where both l2 links meet
-        # We need to find the intersection point of two circles:
-        # Circle 1: center at right elbow, radius l2
-        # Circle 2: center at left elbow, radius l2
-        
-        dy = elbow_left_y - elbow_right_y
-        dz = elbow_left_z - elbow_right_z
+    def _fk_planar(self, fk_right, fk_left):
+        y_l = -self.l0 + self.L1 * math.cos(fk_left)
+        z_l = self.base_z + self.L1 * math.sin(fk_left)
+        y_r = self.l0 + self.L1 * math.cos(fk_right)
+        z_r = self.base_z + self.L1 * math.sin(fk_right)
+
+        dy = y_l - y_r
+        dz = z_l - z_r
         d = math.hypot(dy, dz)
-        
-        # Check if intersection exists
-        if d > 2 * l2 or d < 1e-9:
-            raise ValueError(f"Invalid configuration: elbows are too far apart (d={d:.3f}m)")
-        
-        # Find intersection point (law of cosines)
+
+        if d > 2.0 * self.L2 or d < 1e-9:
+            raise ValueError(f'Elbows too far apart (d={d:.3f} m)')
+
         a = d / 2.0
-        h = math.sqrt(l2**2 - a**2)
-        
-        # Point along the line from right elbow to left elbow
-        my = elbow_right_y + a * dy / d
-        mz = elbow_right_z + a * dz / d
-        
-        # Perpendicular offset (choose forward solution)
-        y = my + h * dz / d
-        z = mz - h * dy / d
-        
-        return y, z
+        h = math.sqrt(self.L2**2 - a**2)
+        my = y_r + a * dy / d
+        mz = z_r + a * dz / d
+
+        return my + h * dz / d, mz - h * dy / d
+
+    # ── IK ────────────────────────────────────────────────────────
+
+    def ik_cb(self, request, response):
+        try:
+            self._check_workspace(request.y, request.z)
+
+            fk_left, fk_right = self._ik_planar(request.y, request.z)
+            urdf_left, urdf_right = self._fk_to_urdf(fk_left, fk_right)
+
+            self._check_joint_limits(urdf_left, urdf_right)
+
+            response.theta1 = urdf_right
+            response.theta2 = urdf_left
+            response.success = True
+            response.message = 'OK'
+            self.get_logger().info(
+                f'IK: pos({request.y:.4f}, {request.z:.4f}) → '
+                f'urdf(R={urdf_right:.3f}, L={urdf_left:.3f})')
+        except Exception as e:
+            response.theta1 = response.theta2 = 0.0
+            response.success = False
+            response.message = str(e)
+            self.get_logger().error(f'IK failed: {e}')
+        return response
+
+    def _ik_planar(self, y, z):
+        eps = 1e-9
+        z_off = z - self.base_z
+
+        dy1 = self.l0 + y
+        dy2 = self.l0 - y
+        r1 = math.hypot(dy1, z_off)
+        r2 = math.hypot(dy2, z_off)
+
+        if r1 < eps or r2 < eps:
+            raise ValueError('Target at shoulder — unreachable')
+
+        min_r = abs(self.L1 - self.L2)
+        max_r = self.L1 + self.L2
+        if r1 < min_r - eps or r1 > max_r + eps or \
+           r2 < min_r - eps or r2 > max_r + eps:
+            raise ValueError(f'Unreachable (r1={r1:.3f}, r2={r2:.3f})')
+
+        def _clamp_acos(val):
+            return math.acos(max(-1.0, min(1.0, val)))
+
+        alpha1 = _clamp_acos((self.L1**2 + r1**2 - self.L2**2) / (2 * self.L1 * r1))
+        alpha2 = _clamp_acos((self.L1**2 + r2**2 - self.L2**2) / (2 * self.L1 * r2))
+
+        beta1 = math.atan2(z_off, dy1)
+        beta2 = math.atan2(z_off, dy2)
+
+        return beta1 + alpha1, math.pi - beta2 - alpha2
 
 
 def main(args=None):
     rclpy.init(args=args)
-    kinematics_node = VolcaniarmKinematics()
-    rclpy.spin(kinematics_node)
-    kinematics_node.destroy_node()
+    node = VolcaniarmKinematics()
+    rclpy.spin(node)
+    node.destroy_node()
     rclpy.shutdown()
 
 

@@ -12,7 +12,7 @@ find_package(volcaniarm_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
 install(
-  DIRECTORY launch
+  DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
 )
 

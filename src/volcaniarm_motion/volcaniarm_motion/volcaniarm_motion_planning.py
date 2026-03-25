@@ -1,160 +1,237 @@
 #!/usr/bin/env python3
+"""
+Motion planning node for the volcaniarm.
+
+Features:
+  - Subscribes to weed detection topic, transforms position to arm frame via tf2
+  - Calls IK service to compute joint angles
+  - Sends trajectory to the controller
+  - Returns to home position after each operation
+  - Queues incoming detections to avoid dropping targets
+"""
 
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
+from collections import deque
+
 from control_msgs.action import FollowJointTrajectory
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from trajectory_msgs.msg import JointTrajectoryPoint
 from volcaniarm_interfaces.srv import ComputeIK
 from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import PointStamped
+
+import tf2_ros
+from tf2_geometry_msgs import do_transform_point
 
 
 class MotionPlanningNode(Node):
     def __init__(self):
         super().__init__('motion_planning_node')
-        
-        # Create a client for the IK service
-        self.ik_client = self.create_client(ComputeIK, 'compute_ik')
-        while not self.ik_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Waiting for IK service...')
-        
-        # Create an action client for the joint trajectory controller
+        self.cb_group = ReentrantCallbackGroup()
+
+        # ── Parameters ────────────────────────────────────────────
+        self.declare_parameter('trajectory_duration', 2.0)
+        self.declare_parameter('dwell_time', 2.0)
+        self.declare_parameter('home_duration', 2.0)
+        self.declare_parameter('weed_topic', '/weed_position')
+        self.declare_parameter('arm_frame', 'volcaniarm_base_link')
+        self.declare_parameter('home_position', [0.0, 0.0])
+        self.declare_parameter('return_home', True)
+        self.declare_parameter('queue_size', 10)
+        self.declare_parameter('joint_names',
+            ['volcaniarm_right_elbow_joint', 'volcaniarm_left_elbow_joint'])
+
+        self.trajectory_duration = self.get_parameter('trajectory_duration').value
+        self.dwell_time = self.get_parameter('dwell_time').value
+        self.home_duration = self.get_parameter('home_duration').value
+        weed_topic = self.get_parameter('weed_topic').value
+        self.arm_frame = self.get_parameter('arm_frame').value
+        self.home_position = list(self.get_parameter('home_position').value)
+        self.return_home = self.get_parameter('return_home').value
+        queue_size = self.get_parameter('queue_size').value
+        self.joint_names = list(self.get_parameter('joint_names').value)
+
+        # ── TF2 ──────────────────────────────────────────────────
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
+        # ── IK client ────────────────────────────────────────────
+        self.ik_client = self.create_client(
+            ComputeIK, 'compute_ik', callback_group=self.cb_group)
+
+        # ── Trajectory action ────────────────────────────────────
         self.action_client = ActionClient(
-            self,
-            FollowJointTrajectory,
-            '/volcaniarm_controller/follow_joint_trajectory'
-        )
-        
-        # Subscribe to weed position topic
-        self.weed_position_sub = self.create_subscription(
-            PointStamped,
-            '/weed_position',
-            self.weed_position_callback,
-            10
-        )
-        
-        self.joint_names = ['volcaniarm_right_elbow_joint', 'volcaniarm_left_elbow_joint']
-        self.get_logger().info('Motion Planning Node initialized')
-        self.get_logger().info('Waiting for weed positions on /weed_position...')
-    
-    def call_ik_service_async(self, x, y, z):
-        """Call IK service asynchronously with callback"""
+            self, FollowJointTrajectory,
+            '/volcaniarm_controller/follow_joint_trajectory',
+            callback_group=self.cb_group)
+
+        # ── Weed subscriber ──────────────────────────────────────
+        self.create_subscription(
+            PointStamped, weed_topic,
+            self.weed_position_cb, 10,
+            callback_group=self.cb_group)
+
+        # ── State ────────────────────────────────────────────────
+        self.busy = False
+        self.target_queue = deque(maxlen=queue_size)
+
+        # Timer to process queued targets
+        self.create_timer(0.1, self._process_queue, callback_group=self.cb_group)
+
+        self.get_logger().info(
+            f'Motion planning ready — listening on {weed_topic}, '
+            f'arm_frame={self.arm_frame}, return_home={self.return_home}')
+
+    # ── Weed detection callback ───────────────────────────────────
+
+    def weed_position_cb(self, msg: PointStamped):
+        """Transform weed position to arm frame and queue it."""
+        try:
+            # Transform from detection frame to arm frame
+            if msg.header.frame_id != self.arm_frame:
+                transform = self.tf_buffer.lookup_transform(
+                    self.arm_frame, msg.header.frame_id,
+                    rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.5))
+                msg = do_transform_point(msg, transform)
+        except Exception as e:
+            self.get_logger().warn(f'TF transform failed: {e} — using raw coordinates')
+
+        self.target_queue.append((msg.point.y, msg.point.z))
+        self.get_logger().info(
+            f'Queued weed at y={msg.point.y:.3f}, z={msg.point.z:.3f} '
+            f'({len(self.target_queue)} in queue)')
+
+    # ── Queue processing ──────────────────────────────────────────
+
+    def _process_queue(self):
+        """Process next target from the queue if not busy."""
+        if self.busy or not self.target_queue:
+            return
+
+        y, z = self.target_queue.popleft()
+        self.get_logger().info(f'Processing target y={y:.3f}, z={z:.3f}')
+        self._move_to_position(y, z)
+
+    def _move_to_position(self, y, z):
+        """Call IK and send trajectory to the target position."""
+        if not self.ik_client.service_is_ready():
+            self.get_logger().warn('IK service not available, re-queueing')
+            self.target_queue.appendleft((y, z))
+            return
+
+        self.busy = True
         request = ComputeIK.Request()
-        request.x = x
+        request.x = 0.0
         request.y = y
         request.z = z
-        
+
         future = self.ik_client.call_async(request)
-        # Add done callback - will be called when response arrives
-        future.add_done_callback(lambda f: self.ik_service_callback(f, x, y, z))
-    
-    def ik_service_callback(self, future, x, y, z):
-        """Callback when IK service response arrives"""
+        future.add_done_callback(
+            lambda f: self._on_ik_result(f, go_home_after=self.return_home))
+
+    def _on_ik_result(self, future, go_home_after=False):
+        """Handle IK response and send trajectory."""
         try:
             response = future.result()
-            if response.success:
-                self.get_logger().info(f'IK result: theta1={response.theta1:.3f}, theta2={response.theta2:.3f}')
-                # Now execute trajectory with these joint angles
-                self.execute_trajectory_with_angles([(response.theta1, response.theta2)])
-            else:
-                self.get_logger().error(f"IK failed: {response.message}")
         except Exception as e:
-            self.get_logger().error(f'IK service call failed: {e}')
-    
-    def weed_position_callback(self, msg):
-        """Callback when a new weed position is received"""
-        x = msg.point.x
-        y = msg.point.y
-        z = msg.point.z
-        
-        self.get_logger().info(f'Received weed position: ({x:.3f}, {y:.3f}, {z:.3f})')
-        
-        # Spawn async task to compute IK and execute trajectory
-        # Don't block in the callback!
-        self.call_ik_service_async(x, y, z)
-        
-  
-    def execute_trajectory_with_angles(self, joint_positions):
-        """
-        Execute trajectory with pre-computed joint angles.
-        
-        Parameters
-        ----------
-        joint_positions : list of tuples
-            List of (theta1, theta2) joint angles
-        """
-        
-
-
-        # Create trajectory message
-        trajectory = JointTrajectory()
-        trajectory.joint_names = self.joint_names
-        
-        # Add points to trajectory
-        time_offset = 2.0  # seconds between waypoints
-        for i, (theta1, theta2) in enumerate(joint_positions):
-            point = JointTrajectoryPoint()
-            point.positions = [theta1, theta2]
-            point.velocities = [0.0, 0.0]
-            point.accelerations = [0.0, 0.0]
-            
-            # Set time from start
-            total_seconds = time_offset * (i + 1)
-            point.time_from_start = Duration(sec=int(total_seconds), nanosec=0)
-            
-            trajectory.points.append(point)
-        
-        # Create goal message
-        goal_msg = FollowJointTrajectory.Goal()
-        goal_msg.trajectory = trajectory
-        
-        self.get_logger().info('Sending trajectory goal to controller...')
-        
-        # Wait for action server
-        self.action_client.wait_for_server()
-        
-        # Send goal
-        send_goal_future = self.action_client.send_goal_async(
-            goal_msg,
-            feedback_callback=self.feedback_callback
-        )
-        
-        rclpy.spin_until_future_complete(self, send_goal_future)
-        goal_handle = send_goal_future.result()
-        
-        if not goal_handle.accepted:
-            self.get_logger().error('Goal rejected by controller')
+            self.get_logger().error(f'IK call failed: {e}')
+            self.busy = False
             return
-        
-        self.get_logger().info('Goal accepted by controller')
-        
-        # Wait for result
+
+        if not response.success:
+            self.get_logger().error(f'IK failed: {response.message}')
+            self.busy = False
+            return
+
+        self.get_logger().info(
+            f'IK → R={response.theta1:.3f}, L={response.theta2:.3f}')
+        self._send_trajectory(
+            response.theta1, response.theta2,
+            self.trajectory_duration,
+            go_home_after=go_home_after)
+
+    # ── Trajectory execution ──────────────────────────────────────
+
+    def _send_trajectory(self, theta_right, theta_left, duration,
+                         go_home_after=False):
+        """Send a single-point trajectory."""
+        if not self.action_client.server_is_ready():
+            self.get_logger().warn('Action server not ready')
+            self.busy = False
+            return
+
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory.joint_names = self.joint_names
+
+        point = JointTrajectoryPoint()
+        point.positions = [theta_right, theta_left]
+        point.velocities = [0.0, 0.0]
+        sec = int(duration)
+        nsec = int((duration - sec) * 1e9)
+        point.time_from_start = Duration(sec=sec, nanosec=nsec)
+        goal.trajectory.points.append(point)
+
+        send_future = self.action_client.send_goal_async(goal)
+        send_future.add_done_callback(
+            lambda f: self._on_goal_response(f, go_home_after))
+
+    def _on_goal_response(self, future, go_home_after):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().error('Goal rejected')
+            self.busy = False
+            return
+
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-        
-        result = result_future.result().result
+        result_future.add_done_callback(
+            lambda f: self._on_trajectory_done(f, go_home_after))
+
+    def _on_trajectory_done(self, future, go_home_after):
+        result = future.result().result
         if result.error_code == 0:
-            self.get_logger().info('Trajectory execution completed: SUCCESS')
+            self.get_logger().info('Trajectory completed')
         else:
-            self.get_logger().error(f'Trajectory execution failed with error code: {result.error_code}')
-        
-    def feedback_callback(self, feedback_msg):
-        """Callback for action feedback"""
-        feedback = feedback_msg.feedback
-        pass
+            self.get_logger().error(f'Trajectory failed (code={result.error_code})')
+
+        if go_home_after and self.dwell_time > 0:
+            self.get_logger().info(f'Dwelling at target for {self.dwell_time:.1f}s')
+            self._dwell_timer = self.create_timer(
+                self.dwell_time, lambda: self._on_dwell_done(),
+                callback_group=self.cb_group)
+        elif go_home_after:
+            self._go_home()
+        else:
+            self.busy = False
+
+    def _on_dwell_done(self):
+        """Called after dwell time at target expires."""
+        self._dwell_timer.cancel()
+        self._dwell_timer.destroy()
+        self._go_home()
+
+    # ── Home position ─────────────────────────────────────────────
+
+    def _go_home(self):
+        """Send arm to home position."""
+        self.get_logger().info('Returning to home position')
+        self._send_trajectory(
+            self.home_position[0], self.home_position[1],
+            self.home_duration,
+            go_home_after=False)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    motion_planner = MotionPlanningNode()
-    
+    node = MotionPlanningNode()
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(motion_planner)
+        executor.spin()
     except KeyboardInterrupt:
         pass
-    
-    motion_planner.destroy_node()
+    node.destroy_node()
     rclpy.shutdown()
 
 
