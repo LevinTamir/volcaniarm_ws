@@ -16,340 +16,732 @@
   <!-- World fixed link -->
   <link name="world" />
   <joint name="world_to_base" type="fixed">
-    <origin xyz="0 0 1.0" rpy="3.14159 0 0" />
+    <origin xyz="0 0 0.98" rpy="0 0 3.14159" />
     <parent link="world" />
-    <child link="delta_arm_base_link" />
+    <child link="base_link" />
   </joint>
 
-  <!-- base -->
-
-  <link
-    name="delta_arm_base_link">
+  <!-- base (table top) -->
+  <link name="base_link">
     <inertial>
-      <origin
-        xyz="0.0448523615659837 -5.61618529459906E-11 0.0475041838279733"
-        rpy="0 0 0" />
-      <mass
-        value="3.66893125370708" />
-      <inertia
-        ixx="0.0370764826444317"
-        ixy="5.22170430710044E-06"
-        ixz="0.000455029302088239"
-        iyy="0.00997633418242008"
-        iyz="-2.53723287794529E-12"
-        izz="0.042776927188676" />
+      <origin xyz="0.0033183 1.7612E-06 -0.24794" rpy="0 0 0" />
+      <mass value="5.4796" />
+      <inertia ixx="0.36605" ixy="-2.0049E-09" ixz="1.5542E-08"
+               iyy="0.19294" iyz="-3.1213E-09" izz="0.31414" />
     </inertial>
     <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://volcaniarm_description/meshes/delta_arm_base_link.STL" />
+        <mesh filename="package://volcaniarm_description/meshes/base_link.STL" />
       </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.79216 0.81961 0.93333 1" />
+      <material name="">
+        <color rgba="1 0 0 1" />
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://volcaniarm_description/meshes/delta_arm_base_link.STL" />
+        <mesh filename="package://volcaniarm_description/meshes/base_link.STL" />
       </geometry>
     </collision>
   </link>
 
-  <!-- right elbow -->
+  <!-- ======================== TABLE LEGS ======================== -->
 
-  <link
-    name="right_elbow_link">
+  <!-- Front-left table leg -->
+  <link name="fl_table_leg_link">
     <inertial>
-      <origin
-        xyz="0.0344418579623738 0.207911851059774 0.00327083348162716"
-        rpy="0 0 0" />
-      <mass
-        value="0.255626035233683" />
-      <inertia
-        ixx="0.00159990350392906"
-        ixy="-4.89579235407502E-07"
-        ixz="-2.57067549462293E-06"
-        iyy="8.89672102610009E-05"
-        iyz="-2.77751340707856E-06"
-        izz="0.00160137777854202" />
+      <origin xyz="0 2.2204E-16 0.22347" rpy="0 0 0" />
+      <mass value="0.15157" />
+      <inertia ixx="0.0028107" ixy="-1.2462E-19" ixz="-4.3818E-20"
+               iyy="0.0028135" iyz="-1.2312E-20" izz="5.0184E-05" />
     </inertial>
     <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://volcaniarm_description/meshes/right_elbow_link.STL" />
+        <mesh filename="package://volcaniarm_description/meshes/fl_table_leg_link.STL" />
       </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.79216 0.81961 0.93333 1" />
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://volcaniarm_description/meshes/right_elbow_link.STL" />
+        <mesh filename="package://volcaniarm_description/meshes/fl_table_leg_link.STL" />
       </geometry>
     </collision>
   </link>
-
-  <joint
-    name="right_elbow_joint"
-    type="revolute">
-    <origin
-      xyz="0.1825 0.215 0.0582"
-      rpy="0 0 0" />
-    <parent
-      link="delta_arm_base_link" />
-    <child
-      link="right_elbow_link" />
-    <axis
-      xyz="1 0 0" />
-    <limit
-      lower="-3.14"
-      upper="3.14"
-      effort="10"
-      velocity="10" />
+  <joint name="fl_table_leg_joint" type="fixed">
+    <origin xyz="0.340000000000002 0.697999999999994 -0.883" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="fl_table_leg_link" />
   </joint>
 
-  <!-- left elbow -->
-   
-  <link
-    name="left_elbow_link">
+  <!-- FL caster wheel mount -->
+  <link name="fl_caster_wheel_mount_link">
     <inertial>
-      <origin
-        xyz="0.0344418579623738 0.207911854085233 -0.000328981745472023"
-        rpy="0 0 0" />
-      <mass
-        value="0.255626035233677" />
-      <inertia
-        ixx="0.00159990350392901"
-        ixy="-4.89578784056069E-07"
-        ixz="-2.57068360841827E-06"
-        iyy="8.89679482853774E-05"
-        iyz="4.10433625636923E-06"
-        izz="0.00160137704051758" />
+      <origin xyz="-0.011459 -7.0567E-09 -0.011665" rpy="0 0 0" />
+      <mass value="0.047319" />
+      <inertia ixx="1.6675E-05" ixy="-8.0944E-11" ixz="-8.1003E-07"
+               iyy="2.9049E-05" iyz="-7.8988E-11" izz="3.76E-05" />
     </inertial>
     <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://volcaniarm_description/meshes/left_elbow_link.STL" />
+        <mesh filename="package://volcaniarm_description/meshes/fl_caster_wheel_mount_link.STL" />
       </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.79216 0.81961 0.93333 1" />
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://volcaniarm_description/meshes/left_elbow_link.STL" />
+        <mesh filename="package://volcaniarm_description/meshes/fl_caster_wheel_mount_link.STL" />
       </geometry>
     </collision>
   </link>
-
-  <joint
-    name="left_elbow_joint"
-    type="revolute">
-    <origin
-      xyz="0.1825 -0.215 0.0582"
-      rpy="0 0 0" />
-    <parent
-      link="delta_arm_base_link" />
-    <child
-      link="left_elbow_link" />
-    <axis
-      xyz="1 0 0" />
-    <limit
-      lower="-3.14"
-      upper="3.14"
-      effort="10"
-      velocity="10" />
+  <joint name="fl_caster_wheel_mount_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="fl_table_leg_link" />
+    <child link="fl_caster_wheel_mount_link" />
   </joint>
 
-  <!-- Camera link -->
-  <link name="camera_link">
+  <!-- FL caster wheel -->
+  <link name="fl_caster_wheel_link">
+    <inertial>
+      <origin xyz="0 -5.3545E-05 -1.1102E-16" rpy="0 0 0" />
+      <mass value="0.12084" />
+      <inertia ixx="4.6943E-05" ixy="2.8182E-17" ixz="-1.6458E-15"
+               iyy="7.6353E-05" iyz="4.9423E-17" izz="4.6943E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/fl_caster_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/fl_caster_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fl_caster_wheel_joint" type="fixed">
+    <origin xyz="-0.0324999999999998 0 -0.0595000000000001" rpy="0 0 0" />
+    <parent link="fl_caster_wheel_mount_link" />
+    <child link="fl_caster_wheel_link" />
+  </joint>
+
+  <!-- Front-right table leg -->
+  <link name="fr_table_leg_link">
+    <inertial>
+      <origin xyz="-4.4409E-16 -5.5511E-17 0.22347" rpy="0 0 0" />
+      <mass value="0.15157" />
+      <inertia ixx="0.0028107" ixy="-2.7017E-19" ixz="2.3161E-21"
+               iyy="0.0028135" iyz="-2.0835E-19" izz="5.0184E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/fr_table_leg_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/fr_table_leg_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fr_table_leg_joint" type="fixed">
+    <origin xyz="0.340000000000005 -0.697999999999998 -0.883" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="fr_table_leg_link" />
+  </joint>
+
+  <!-- FR caster wheel mount -->
+  <link name="fr_caster_wheel_mount_link">
+    <inertial>
+      <origin xyz="-0.011459 -7.0567E-09 -0.011665" rpy="0 0 0" />
+      <mass value="0.047319" />
+      <inertia ixx="1.6675E-05" ixy="-8.0944E-11" ixz="-8.1003E-07"
+               iyy="2.9049E-05" iyz="-7.8988E-11" izz="3.76E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/fr_caster_wheel_mount_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/fr_caster_wheel_mount_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fr_caster_wheel_mount_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="fr_table_leg_link" />
+    <child link="fr_caster_wheel_mount_link" />
+  </joint>
+
+  <!-- FR caster wheel -->
+  <link name="fr_caster_wheel_link">
+    <inertial>
+      <origin xyz="0 -5.3545E-05 0" rpy="0 0 0" />
+      <mass value="0.12084" />
+      <inertia ixx="4.6943E-05" ixy="2.8345E-17" ixz="-1.6458E-15"
+               iyy="7.6353E-05" iyz="4.9116E-17" izz="4.6943E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/fr_caster_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/fr_caster_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fr_caster_wheel_joint" type="fixed">
+    <origin xyz="-0.0324999999999998 0 -0.0594999999999999" rpy="0 0 0" />
+    <parent link="fr_caster_wheel_mount_link" />
+    <child link="fr_caster_wheel_link" />
+  </joint>
+
+  <!-- Rear-left table leg -->
+  <link name="rl_table_leg_link">
+    <inertial>
+      <origin xyz="2.2204E-16 4.4409E-16 0.22347" rpy="0 0 0" />
+      <mass value="0.15157" />
+      <inertia ixx="0.0028107" ixy="-6.6369E-21" ixz="3.4765E-19"
+               iyy="0.0028135" iyz="-1.384E-18" izz="5.0184E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rl_table_leg_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rl_table_leg_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rl_table_leg_joint" type="fixed">
+    <origin xyz="-0.340000000000005 0.697999999999997 -0.883" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="rl_table_leg_link" />
+  </joint>
+
+  <!-- RL caster wheel mount -->
+  <link name="rl_caster_wheel_mount_link">
+    <inertial>
+      <origin xyz="-0.011459 -7.0567E-09 -0.011665" rpy="0 0 0" />
+      <mass value="0.047319" />
+      <inertia ixx="1.6675E-05" ixy="-8.0944E-11" ixz="-8.1003E-07"
+               iyy="2.9049E-05" iyz="-7.8988E-11" izz="3.76E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rl_caster_wheel_mount_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rl_caster_wheel_mount_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rl_caster_wheel_mount_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="rl_table_leg_link" />
+    <child link="rl_caster_wheel_mount_link" />
+  </joint>
+
+  <!-- RL caster wheel -->
+  <link name="rl_caster_wheel_link">
+    <inertial>
+      <origin xyz="-2.2204E-16 -5.3545E-05 2.2204E-16" rpy="0 0 0" />
+      <mass value="0.12084" />
+      <inertia ixx="4.6943E-05" ixy="2.8308E-17" ixz="-1.6458E-15"
+               iyy="7.6353E-05" iyz="4.8989E-17" izz="4.6943E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rl_caster_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rl_caster_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rl_caster_wheel_joint" type="fixed">
+    <origin xyz="-0.0325 0 -0.0595" rpy="0 0 0" />
+    <parent link="rl_caster_wheel_mount_link" />
+    <child link="rl_caster_wheel_link" />
+  </joint>
+
+  <!-- Rear-right table leg -->
+  <link name="rr_table_leg_link">
+    <inertial>
+      <origin xyz="2.2204E-16 1.1102E-16 0.22347" rpy="0 0 0" />
+      <mass value="0.15157" />
+      <inertia ixx="0.0028107" ixy="-1.1843E-20" ixz="2.1315E-20"
+               iyy="0.0028135" iyz="-2.3739E-18" izz="5.0184E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rr_table_leg_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rr_table_leg_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rr_table_leg_joint" type="fixed">
+    <origin xyz="-0.339999999999995 -0.698000000000003 -0.883" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="rr_table_leg_link" />
+  </joint>
+
+  <!-- RR caster wheel mount -->
+  <link name="rr_caster_wheel_mount_link">
+    <inertial>
+      <origin xyz="-0.011459 -7.0567E-09 -0.011665" rpy="0 0 0" />
+      <mass value="0.047319" />
+      <inertia ixx="1.6675E-05" ixy="-8.0944E-11" ixz="-8.1003E-07"
+               iyy="2.9049E-05" iyz="-7.8988E-11" izz="3.76E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rr_caster_wheel_mount_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rr_caster_wheel_mount_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rr_caster_wheel_mount_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="rr_table_leg_link" />
+    <child link="rr_caster_wheel_mount_link" />
+  </joint>
+
+  <!-- RR caster wheel -->
+  <link name="rr_caster_wheel_link">
+    <inertial>
+      <origin xyz="2.2204E-16 -5.3545E-05 0" rpy="0 0 0" />
+      <mass value="0.12084" />
+      <inertia ixx="4.6943E-05" ixy="2.8252E-17" ixz="-1.6459E-15"
+               iyy="7.6353E-05" iyz="4.9045E-17" izz="4.6943E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rr_caster_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/rr_caster_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rr_caster_wheel_joint" type="fixed">
+    <origin xyz="-0.0324999999999998 0 -0.0595" rpy="0 0 0" />
+    <parent link="rr_caster_wheel_mount_link" />
+    <child link="rr_caster_wheel_link" />
+  </joint>
+
+  <!-- ======================== VOLCANIARM BASE ======================== -->
+
+  <link name="volcaniarm_base_link">
+    <inertial>
+      <origin xyz="0.056584 -3.9432E-11 0.053171" rpy="0 0 0" />
+      <mass value="5.2358" />
+      <inertia ixx="0.045054" ixy="5.2217E-06" ixz="0.00071509"
+               iyy="0.014737" iyz="3.2233E-10" izz="0.053493" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/volcaniarm_base_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/volcaniarm_base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="volcaniarm_base_joint" type="fixed">
+    <origin xyz="-0.218000000000013 0 -0.0199999999999894" rpy="3.14159265358979 0 0" />
+    <parent link="base_link" />
+    <child link="volcaniarm_base_link" />
+  </joint>
+
+  <!-- ======================== LEFT ELBOW + ARM ======================== -->
+
+  <link name="volcaniarm_left_elbow_link">
+    <inertial>
+      <origin xyz="-0.0035388 0.00032928 0.20807" rpy="0 0 0" />
+      <mass value="0.25539" />
+      <inertia ixx="0.0015999" ixy="2.5707E-06" ixz="-4.8958E-07"
+               iyy="0.0016014" iyz="-4.1044E-06" izz="8.8962E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/volcaniarm_left_elbow_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/volcaniarm_left_elbow_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="volcaniarm_left_elbow_joint" type="revolute">
+    <origin xyz="0.285 -0.215 0.0632" rpy="0.7854 0 0" />
+    <parent link="volcaniarm_base_link" />
+    <child link="volcaniarm_left_elbow_link" />
+    <axis xyz="1 0 0" />
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="10" />
+    <dynamics damping="0.1" friction="0.1" />
+  </joint>
+
+  <link name="volcaniarm_left_arm_link">
+    <inertial>
+      <origin xyz="-1.1102E-15 -0.019365 0.31121" rpy="0 0 0" />
+      <mass value="0.31139" />
+      <inertia ixx="0.0060642" ixy="-1.1232E-13" ixz="7.5126E-14"
+               iyy="0.0060587" iyz="1.0603E-13" izz="0.00011844" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/volcaniarm_left_arm_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/volcaniarm_left_arm_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="volcaniarm_left_arm_joint" type="revolute">
+    <origin xyz="0.004 0.02 0.41621" rpy="-1.7053 0 0" />
+    <parent link="volcaniarm_left_elbow_link" />
+    <child link="volcaniarm_left_arm_link" />
+    <axis xyz="1 0 0" />
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="10" />
+    <dynamics damping="0.1" friction="0.1" />
+  </joint>
+
+  <!-- ======================== RIGHT ELBOW + ARM ======================== -->
+
+  <link name="volcaniarm_right_elbow_link">
+    <inertial>
+      <origin xyz="-0.0035272 -0.0032768 0.20822" rpy="0 0 0" />
+      <mass value="0.25516" />
+      <inertia ixx="0.0015999" ixy="2.5707E-06" ixz="-4.8958E-07"
+               iyy="0.0016014" iyz="2.7775E-06" izz="8.8958E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/volcaniarm_right_elbow_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/volcaniarm_right_elbow_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="volcaniarm_right_elbow_joint" type="revolute">
+    <origin xyz="0.289 0.215 0.0632" rpy="-0.7854 0 0" />
+    <parent link="volcaniarm_base_link" />
+    <child link="volcaniarm_right_elbow_link" />
+    <axis xyz="1 0 0" />
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="10" />
+    <dynamics damping="0.1" friction="0.1" />
+  </joint>
+
+  <link name="volcaniarm_right_arm_link">
+    <inertial>
+      <origin xyz="-0.00010972 0.018304 0.32828" rpy="0 0 0" />
+      <mass value="0.32945" />
+      <inertia ixx="0.0060651" ixy="4.6871E-12" ixz="3.074E-12"
+               iyy="0.0060639" iyz="3.1157E-09" izz="0.00012364" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/volcaniarm_right_arm_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/volcaniarm_right_arm_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="volcaniarm_right_arm_joint" type="revolute">
+    <origin xyz="0.004 -0.02 0.41621" rpy="1.7053 0 0" />
+    <parent link="volcaniarm_right_elbow_link" />
+    <child link="volcaniarm_right_arm_link" />
+    <axis xyz="1 0 0" />
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="10" />
+    <dynamics damping="0.1" friction="0.1" />
+  </joint>
+
+  <!-- ======================== CAMERA MOUNT ======================== -->
+
+  <link name="camera_mount_linear_link">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <mass value="0.1" />
-      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001" />
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4" />
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <box size="0.05 0.05 0.05" />
+        <mesh filename="package://volcaniarm_description/meshes/camera_mount_linear_link.STL" />
       </geometry>
-      <material name="gray">
-        <color rgba="0.5 0.5 0.5 1" />
+      <material name="">
+        <color rgba="1 1 1 1" />
       </material>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <box size="0.05 0.05 0.05" />
+        <mesh filename="package://volcaniarm_description/meshes/camera_mount_linear_link.STL" />
       </geometry>
     </collision>
   </link>
+  <joint name="camera_mount_linear_joint" type="prismatic">
+    <origin xyz="0.405353761834025 0 0.039999999999992" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="camera_mount_linear_link" />
+    <axis xyz="1 0 0" />
+    <limit lower="-0.3" upper="0.3" effort="10" velocity="10" />
+    <dynamics damping="0.1" friction="0.1" />
+  </joint>
 
+  <link name="camera_mount_rev_link">
+    <inertial>
+      <origin xyz="-0.00010268 -1.5812E-06 0.01215" rpy="0 0 0" />
+      <mass value="0.006837" />
+      <inertia ixx="2.4745E-06" ixy="8.8137E-13" ixz="-4.848E-10"
+               iyy="2.6062E-07" iyz="-1.1636E-11" izz="2.5357E-06" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/camera_mount_rev_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/camera_mount_rev_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="camera_mount_rev_joint" type="revolute">
+    <origin xyz="0.192000000000008 0 -0.0290000000000052"
+            rpy="3.14159265358979 0.211904134210419 3.14159265358979" />
+    <parent link="camera_mount_linear_link" />
+    <child link="camera_mount_rev_link" />
+    <axis xyz="0 1 0" />
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="10" />
+    <dynamics damping="0.1" friction="0.1" />
+  </joint>
+
+  <!-- ======================== CAMERA ======================== -->
+
+  <link name="camera_link">
+    <inertial>
+      <origin xyz="-6.0219E-07 0.00024591 0.011952" rpy="0 0 0" />
+      <mass value="0.044753" />
+      <inertia ixx="2.7362E-05" ixy="3.9858E-09" ixz="7.9052E-10"
+               iyy="3.9447E-06" iyz="2.4433E-07" izz="2.7278E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/camera_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://volcaniarm_description/meshes/camera_link.STL" />
+      </geometry>
+    </collision>
+  </link>
   <joint name="camera_joint" type="fixed">
-    <origin xyz="0.5 0 0.1" rpy="0 -1.8 0" />
-    <parent link="delta_arm_base_link" />
+    <origin xyz="-2.37779715432929E-05 0 0.0160004150359285"
+            rpy="0 -0.0135473024600912 0" />
+    <parent link="camera_mount_rev_link" />
     <child link="camera_link" />
   </joint>
 
   <!-- Camera optical frame -->
   <link name="camera_link_optical" />
-
   <joint name="camera_optical_joint" type="fixed">
     <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708" />
     <parent link="camera_link" />
     <child link="camera_link_optical" />
   </joint>
 
+  <!-- ======================== 5-BAR LINKAGE CLOSURE ======================== -->
 
-  <!-- right arm -->
-
-  <!-- <link
-    name="right_arm_link">
+  <!-- Massless tip frame fixed to the right arm at the physical closure point -->
+  <link name="right_arm_tip_link">
     <inertial>
-      <origin
-        xyz="-6.66133814775094E-16 0.311213203465175 -0.0193654158244768"
-        rpy="0 0 0" />
-      <mass
-        value="0.311388968904969" />
-      <inertia
-        ixx="0.00606416863421189"
-        ixy="-7.51196529191669E-14"
-        ixz="-1.12323620344002E-13"
-        iyy="0.000118443044081191"
-        iyz="-1.06032881991769E-13"
-        izz="0.00605866068599566" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.001" />
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
     </inertial>
     <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://volcaniarm_description/meshes/right_arm_link.STL" />
+        <sphere radius="0.008" />
       </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      <material name="tip_green">
+        <color rgba="0.0 1.0 0.0 1.0" />
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://volcaniarm_description/meshes/right_arm_link.STL" />
+        <sphere radius="0.008" />
       </geometry>
     </collision>
   </link>
+  <joint name="right_arm_tip_joint" type="fixed">
+    <origin xyz="0 0 0.6225" rpy="0 0 0" />
+    <parent link="volcaniarm_right_arm_link" />
+    <child link="right_arm_tip_link" />
+  </joint>
+  <!-- Prevent Gazebo from merging this fixed joint so DetachableJoint can find the link -->
+  <gazebo reference="right_arm_tip_joint">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
 
-  <joint
-    name="right_arm_joint"
-    type="revolute">
-    <origin
-      xyz="0.042 0.41621 0.02"
-      rpy="0.31866 0 0" />
-    <parent
-      link="right_elbow_link" />
-    <child
-      link="right_arm_link" />
-    <axis
-      xyz="1 0 0" />
-    <limit
-      lower="-3.14"
-      upper="3.14"
-      effort="10"
-      velocity="10" />
-  </joint> -->
-
-  <!-- left arm -->
-
-  <!-- <link
-    name="left_arm_link">
+  <!-- Closure dummy link: URDF-tree leaf on the left arm, DetachableJoint target -->
+  <link name="closure_dummy_link">
     <inertial>
-      <origin
-        xyz="0.000109605665534085 0.328277798613676 0.0183035870311327"
-        rpy="0 0 0" />
-      <mass
-        value="0.329453720362959" />
-      <inertia
-        ixx="0.00606509659166047"
-        ixy="3.1029743207609E-12"
-        ixz="4.54332710534137E-12"
-        iyy="0.000123636511114911"
-        iyz="3.04888853494377E-09"
-        izz="0.00606385685806373" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.001" />
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
     </inertial>
     <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://volcaniarm_description/meshes/left_arm_link.STL" />
+        <sphere radius="0.008" />
       </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      <material name="closure_purple">
+        <color rgba="0.6 0.0 0.8 1.0" />
       </material>
     </visual>
     <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="package://volcaniarm_description/meshes/left_arm_link.STL" />
+        <sphere radius="0.008" />
       </geometry>
     </collision>
   </link>
-
-  <joint
-    name="left_arm_joint"
-    type="revolute">
-    <origin
-      xyz="0.042 0.41621 -0.02"
-      rpy="-0.31866 0 0" />
-    <parent
-      link="left_elbow_link" />
-    <child
-      link="left_arm_link" />
-    <axis
-      xyz="-1 0 0" />
-    <limit
-      lower="-3.14"
-      upper="3.14"
-      effort="10"
-      velocity="10" />
-  </joint> -->
+  <joint name="closure_joint" type="revolute">
+    <origin xyz="0 0 0.6225" rpy="1.8398 0 0" />
+    <parent link="volcaniarm_left_arm_link" />
+    <child link="closure_dummy_link" />
+    <axis xyz="1 0 0" />
+    <limit lower="-3.14" upper="3.14" effort="0" velocity="10" />
+    <dynamics damping="0.1" friction="0.0" />
+  </joint>
 
 </robot>

@@ -33,10 +33,10 @@ class SetInitialPosition(Node):
     def send_initial_position(self):
         """Send initial joint positions (1.57, 1.57)"""
         goal = FollowJointTrajectory.Goal()
-        goal.trajectory.joint_names = ['right_elbow_joint', 'left_elbow_joint']
+        goal.trajectory.joint_names = ['volcaniarm_right_elbow_joint', 'volcaniarm_left_elbow_joint']
         
         point = JointTrajectoryPoint()
-        point.positions = [1.57, 1.57]
+        point.positions = [0.0, 0.0]
         point.velocities = [0.0, 0.0]
         point.accelerations = [0.0, 0.0]
         point.time_from_start = Duration(sec=2, nanosec=0)

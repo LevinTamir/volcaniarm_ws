@@ -13,8 +13,8 @@ controller_manager:
 volcaniarm_controller:
   ros__parameters:
     joints:
-      - right_elbow_joint
-      - left_elbow_joint
+      - volcaniarm_right_elbow_joint
+      - volcaniarm_left_elbow_joint
 
     command_interfaces:
      - position

@@ -16,8 +16,8 @@ class EndEffectorMarker(Node):
         super().__init__('volcaniarm_end_effector_marker')
 
         # Parameters
-        joints = self.declare_parameter('joints', ['left_elbow_joint', 'right_elbow_joint']).value
-        base_frame = self.declare_parameter('base_frame', 'delta_arm_base_link').value
+        joints = self.declare_parameter('joints', ['volcaniarm_left_elbow_joint', 'volcaniarm_right_elbow_joint']).value
+        base_frame = self.declare_parameter('base_frame', 'volcaniarm_base_link').value
 
         self.joint_names = joints
         self.base_frame = base_frame

@@ -63,18 +63,18 @@ VolcaniArmHardware::export_state_interfaces()
   // Right elbow joint
   state_interfaces.emplace_back(
     hardware_interface::StateInterface(
-      "right_elbow_joint", hardware_interface::HW_IF_POSITION, &hw_position_right_elbow_));
+      "volcaniarm_right_elbow_joint", hardware_interface::HW_IF_POSITION, &hw_position_right_elbow_));
   state_interfaces.emplace_back(
     hardware_interface::StateInterface(
-      "right_elbow_joint", hardware_interface::HW_IF_VELOCITY, &hw_velocity_right_elbow_));
+      "volcaniarm_right_elbow_joint", hardware_interface::HW_IF_VELOCITY, &hw_velocity_right_elbow_));
 
   // Left elbow joint
   state_interfaces.emplace_back(
     hardware_interface::StateInterface(
-      "left_elbow_joint", hardware_interface::HW_IF_POSITION, &hw_position_left_elbow_));
+      "volcaniarm_left_elbow_joint", hardware_interface::HW_IF_POSITION, &hw_position_left_elbow_));
   state_interfaces.emplace_back(
     hardware_interface::StateInterface(
-      "left_elbow_joint", hardware_interface::HW_IF_VELOCITY, &hw_velocity_left_elbow_));
+      "volcaniarm_left_elbow_joint", hardware_interface::HW_IF_VELOCITY, &hw_velocity_left_elbow_));
 
   return state_interfaces;
 }
@@ -86,11 +86,11 @@ VolcaniArmHardware::export_command_interfaces()
 
   command_interfaces.emplace_back(
     hardware_interface::CommandInterface(
-      "right_elbow_joint", hardware_interface::HW_IF_POSITION, &hw_position_command_right_elbow_));
+      "volcaniarm_right_elbow_joint", hardware_interface::HW_IF_POSITION, &hw_position_command_right_elbow_));
 
   command_interfaces.emplace_back(
     hardware_interface::CommandInterface(
-      "left_elbow_joint", hardware_interface::HW_IF_POSITION, &hw_position_command_left_elbow_));
+      "volcaniarm_left_elbow_joint", hardware_interface::HW_IF_POSITION, &hw_position_command_left_elbow_));
 
   return command_interfaces;
 }

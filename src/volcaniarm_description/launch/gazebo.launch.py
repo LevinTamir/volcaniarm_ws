@@ -96,11 +96,11 @@ def generate_launch_description():
             "-Y",
             "0",
             "-J",
-            "right_elbow_joint",
-            "1.57",
+            "volcaniarm_right_elbow_joint",
+            "0.0",
             "-J",
-            "left_elbow_joint",
-            "1.57",
+            "volcaniarm_left_elbow_joint",
+            "0.0",
         ],
     )
 

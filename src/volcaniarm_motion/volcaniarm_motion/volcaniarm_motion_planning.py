@@ -34,7 +34,7 @@ class MotionPlanningNode(Node):
             10
         )
         
-        self.joint_names = ['right_elbow_joint', 'left_elbow_joint']
+        self.joint_names = ['volcaniarm_right_elbow_joint', 'volcaniarm_left_elbow_joint']
         self.get_logger().info('Motion Planning Node initialized')
         self.get_logger().info('Waiting for weed positions on /weed_position...')
     
