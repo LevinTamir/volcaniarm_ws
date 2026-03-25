@@ -94,7 +94,7 @@
     <include>
       <uri>model://plant</uri>
       <name>weed_target</name>
-      <pose>0 0.3 0 0 0 0</pose>
+      <pose>-0.1 0.25 0 0 0 0</pose>
     </include>
 
   </world>

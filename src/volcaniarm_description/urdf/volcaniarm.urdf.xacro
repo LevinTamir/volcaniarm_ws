@@ -626,7 +626,7 @@
   </link>
   <joint name="camera_mount_rev_joint" type="fixed">
     <origin xyz="0.192000000000008 0 -0.0290000000000052"
-            rpy="3.14159265358979 0.75 3.14159265358979" />
+            rpy="3.14159265358979 0.9 3.14159265358979" />
     <parent link="camera_mount_linear_link" />
     <child link="camera_mount_rev_link" />
   </joint>

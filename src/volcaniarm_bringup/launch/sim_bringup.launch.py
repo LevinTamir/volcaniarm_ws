@@ -70,19 +70,19 @@ def generate_launch_description():
         ],
     )
 
-    # # Motion launch
-    # motion_launch = IncludeLaunchDescription(
-    #     PythonLaunchDescriptionSource(
-    #         os.path.join(
-    #             volcaniarm_motion_share,
-    #             "launch",
-    #             "motion.launch.py",
-    #         )
-    #     ),
-    #     launch_arguments=[
-    #         ("use_sim_time", LaunchConfiguration("use_sim_time")),
-    #     ],
-    # )
+    # Motion launch
+    motion_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_motion_share,
+                "launch",
+                "motion.launch.py",
+            )
+        ),
+        launch_arguments=[
+            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ],
+    )
 
     return LaunchDescription(
         [
@@ -91,6 +91,6 @@ def generate_launch_description():
             gazebo_launch,
             controller_launch,
             display_launch,
-            # motion_launch,
+            motion_launch,
         ]
     )
