@@ -35,10 +35,12 @@ volcaniarm_controller:
 
     # 5-bar linkage kinematic parameters
     kinematics:
-      L1: 0.41621       # Upper link length (elbow link) [m]
-      L2: 0.65          # Lower link length (arm link) [m]
-      l0: 0.215         # Shoulder separation from center [m]
-      base_z: 0.0582    # Base height offset [m]
-      cum_left_base: 2.2217   # Cumulative Rx at q=0 for left chain
-      cum_right_base: 4.0615  # Cumulative Rx at q=0 for right chain
-      closure_rpy: 1.8398     # Closure joint rpy offset
+      L1: 0.41621         # Upper link length (elbow link) [m]
+      L2: 0.65            # Lower link length (arm link) [m]
+      l0: 0.215           # Shoulder separation from center [m]
+      base_z: 0.0632      # Elbow joint Z offset in volcaniarm_base_link [m]
+      left_elbow_rpy: 0.7854    # Left elbow joint Rx offset [rad]
+      right_elbow_rpy: -0.7854  # Right elbow joint Rx offset [rad]
+      left_arm_rpy: -1.7053     # Left arm joint Rx offset [rad]
+      right_arm_rpy: 1.7053     # Right arm joint Rx offset [rad]
+      closure_rpy: 1.8398       # Closure joint Rx offset [rad]

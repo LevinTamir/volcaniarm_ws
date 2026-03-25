@@ -13,15 +13,13 @@ namespace volcaniarm_controller
 controller_interface::CallbackReturn
 ClosedLoopTrajectoryController::on_init()
 {
-  // Initialise the parent JointTrajectoryController first
   auto ret = joint_trajectory_controller::JointTrajectoryController::on_init();
   if (ret != controller_interface::CallbackReturn::SUCCESS) {
     return ret;
   }
 
-  // Declare additional parameters for the closed-loop passive joints
-  auto_declare<std::vector<std::string>>(
-    "passive_joints", std::vector<std::string>{});
+  // Passive joint configuration
+  auto_declare<std::vector<std::string>>("passive_joints", std::vector<std::string>{});
   auto_declare<std::string>("left_elbow_joint", "volcaniarm_left_elbow_joint");
   auto_declare<std::string>("right_elbow_joint", "volcaniarm_right_elbow_joint");
 
@@ -29,9 +27,13 @@ ClosedLoopTrajectoryController::on_init()
   auto_declare<double>("kinematics.L1", 0.41621);
   auto_declare<double>("kinematics.L2", 0.65);
   auto_declare<double>("kinematics.l0", 0.215);
-  auto_declare<double>("kinematics.base_z", 0.0582);
-  auto_declare<double>("kinematics.cum_left_base", 2.2217);
-  auto_declare<double>("kinematics.cum_right_base", 4.0615);
+  auto_declare<double>("kinematics.base_z", 0.0632);
+
+  // URDF joint frame Rx offsets
+  auto_declare<double>("kinematics.left_elbow_rpy", 0.7854);
+  auto_declare<double>("kinematics.right_elbow_rpy", -0.7854);
+  auto_declare<double>("kinematics.left_arm_rpy", -1.7053);
+  auto_declare<double>("kinematics.right_arm_rpy", 1.7053);
   auto_declare<double>("kinematics.closure_rpy", 1.8398);
 
   return controller_interface::CallbackReturn::SUCCESS;
@@ -41,26 +43,25 @@ controller_interface::CallbackReturn
 ClosedLoopTrajectoryController::on_configure(
   const rclcpp_lifecycle::State & previous_state)
 {
-  // Configure the parent first
   auto ret = joint_trajectory_controller::JointTrajectoryController::on_configure(previous_state);
   if (ret != controller_interface::CallbackReturn::SUCCESS) {
     return ret;
   }
 
-  // Read our additional parameters
-  passive_joint_names_ = get_node()->get_parameter("passive_joints")
-                           .as_string_array();
-  left_elbow_joint_name_ = get_node()->get_parameter("left_elbow_joint")
-                             .as_string();
-  right_elbow_joint_name_ = get_node()->get_parameter("right_elbow_joint")
-                              .as_string();
+  // Read parameters
+  passive_joint_names_ = get_node()->get_parameter("passive_joints").as_string_array();
+  left_elbow_joint_name_ = get_node()->get_parameter("left_elbow_joint").as_string();
+  right_elbow_joint_name_ = get_node()->get_parameter("right_elbow_joint").as_string();
 
-  L1_  = get_node()->get_parameter("kinematics.L1").as_double();
-  L2_  = get_node()->get_parameter("kinematics.L2").as_double();
-  l0_  = get_node()->get_parameter("kinematics.l0").as_double();
+  L1_ = get_node()->get_parameter("kinematics.L1").as_double();
+  L2_ = get_node()->get_parameter("kinematics.L2").as_double();
+  l0_ = get_node()->get_parameter("kinematics.l0").as_double();
   base_z_ = get_node()->get_parameter("kinematics.base_z").as_double();
-  cum_left_base_  = get_node()->get_parameter("kinematics.cum_left_base").as_double();
-  cum_right_base_ = get_node()->get_parameter("kinematics.cum_right_base").as_double();
+
+  left_elbow_rpy_ = get_node()->get_parameter("kinematics.left_elbow_rpy").as_double();
+  right_elbow_rpy_ = get_node()->get_parameter("kinematics.right_elbow_rpy").as_double();
+  left_arm_rpy_ = get_node()->get_parameter("kinematics.left_arm_rpy").as_double();
+  right_arm_rpy_ = get_node()->get_parameter("kinematics.right_arm_rpy").as_double();
   closure_rpy_ = get_node()->get_parameter("kinematics.closure_rpy").as_double();
 
   if (passive_joint_names_.empty()) {
@@ -68,16 +69,6 @@ ClosedLoopTrajectoryController::on_configure(
       "No passive_joints configured — passive joint states will not be published.");
   }
 
-  // Compute home-position calibration offsets (elbow angles = 0)
-  auto [y_ee, z_ee] = fk(0.0, 0.0);
-  double y_l = -l0_ + L1_;  // cos(0)=1
-  double z_l = base_z_;      // sin(0)=0
-  double y_r =  l0_ + L1_;
-  double z_r = base_z_;
-  left_arm_home_offset_  = std::atan2(y_ee - y_l, z_ee - z_l);
-  right_arm_home_offset_ = std::atan2(y_ee - y_r, z_ee - z_r);
-
-  // Create publisher for passive joint states
   passive_joint_pub_ = get_node()->create_publisher<sensor_msgs::msg::JointState>(
     "/joint_states", 10);
 
@@ -99,15 +90,12 @@ controller_interface::return_type
 ClosedLoopTrajectoryController::update(
   const rclcpp::Time & time, const rclcpp::Duration & period)
 {
-  // Run the parent trajectory controller update (commands, interpolation, etc.)
   auto ret = joint_trajectory_controller::JointTrajectoryController::update(time, period);
 
-  // Publish passive joint states regardless of the parent's return value
   if (!passive_joint_names_.empty() && passive_joint_pub_) {
-    // Read current elbow positions from the state interfaces
-    double theta_left  = 0.0;
+    double theta_left = 0.0;
     double theta_right = 0.0;
-    bool found_left  = false;
+    bool found_left = false;
     bool found_right = false;
 
     for (size_t i = 0; i < dof_; ++i) {
@@ -141,24 +129,30 @@ ClosedLoopTrajectoryController::update(
   return ret;
 }
 
-std::pair<double, double>
-ClosedLoopTrajectoryController::fk(double theta_right, double theta_left) const
+void ClosedLoopTrajectoryController::elbow_tip(
+  double elbow_rpy, double theta, double shoulder_y,
+  double & y_out, double & z_out) const
 {
-  // Elbow tip positions in the planar YZ model
-  double y_l = -l0_ + L1_ * std::cos(theta_left);
-  double z_l = base_z_ + L1_ * std::sin(theta_left);
+  // Total rotation around X for the elbow link
+  double alpha = elbow_rpy + theta;
+  // Local Z axis in volcaniarm_base_link: [0, -sin(alpha), cos(alpha)]
+  // Elbow tip = shoulder_origin + L1 * local_Z
+  y_out = shoulder_y + L1_ * (-std::sin(alpha));
+  z_out = base_z_ + L1_ * std::cos(alpha);
+}
 
-  double y_r =  l0_ + L1_ * std::cos(theta_right);
-  double z_r = base_z_ + L1_ * std::sin(theta_right);
-
-  // Circle-circle intersection (both circles have radius L2)
+bool ClosedLoopTrajectoryController::compute_ee(
+  double y_l, double z_l, double y_r, double z_r,
+  double & y_ee, double & z_ee) const
+{
   double dy = y_l - y_r;
   double dz = z_l - z_r;
-  double d  = std::hypot(dy, dz);
+  double d = std::hypot(dy, dz);
 
   if (d > 2.0 * L2_ || d < 1e-9) {
-    // Degenerate — return midpoint
-    return {(y_l + y_r) / 2.0, (z_l + z_r) / 2.0};
+    y_ee = (y_l + y_r) / 2.0;
+    z_ee = (z_l + z_r) / 2.0;
+    return false;
   }
 
   double a = d / 2.0;
@@ -167,36 +161,47 @@ ClosedLoopTrajectoryController::fk(double theta_right, double theta_left) const
   double my = y_r + a * dy / d;
   double mz = z_r + a * dz / d;
 
-  // Choose the "lower" solution (end-effector below elbows)
-  double y_ee = my + h * dz / d;
-  double z_ee = mz - h * dy / d;
+  // Choose the solution where arm extends in +Z direction (downward in world)
+  y_ee = my + h * dz / d;
+  z_ee = mz - h * dy / d;
 
-  return {y_ee, z_ee};
+  return true;
 }
 
 void ClosedLoopTrajectoryController::compute_passive_angles(
   double theta_left, double theta_right,
   double & left_arm_out, double & right_arm_out, double & closure_out) const
 {
-  auto [y_ee, z_ee] = fk(theta_right, theta_left);
+  // Elbow tip positions in volcaniarm_base_link frame
+  double y_l, z_l, y_r, z_r;
+  elbow_tip(left_elbow_rpy_, theta_left, -l0_, y_l, z_l);
+  elbow_tip(right_elbow_rpy_, theta_right, l0_, y_r, z_r);
 
-  // Elbow tip positions
-  double y_l = -l0_ + L1_ * std::cos(theta_left);
-  double z_l = base_z_ + L1_ * std::sin(theta_left);
-  double y_r =  l0_ + L1_ * std::cos(theta_right);
-  double z_r = base_z_ + L1_ * std::sin(theta_right);
+  // End-effector position (circle-circle intersection)
+  double y_ee, z_ee;
+  compute_ee(y_l, z_l, y_r, z_r, y_ee, z_ee);
 
-  // Arm direction angles in the planar world frame
-  double left_arm_world  = std::atan2(y_ee - y_l, z_ee - z_l);
-  double right_arm_world = std::atan2(y_ee - y_r, z_ee - z_r);
+  // For each arm link, the total Rx rotation from volcaniarm_base_link to
+  // the arm link frame is: elbow_rpy + theta_elbow + arm_rpy + theta_arm
+  //
+  // The arm link's local Z axis in volcaniarm_base_link is:
+  //   [0, -sin(total_rot), cos(total_rot)]
+  //
+  // This must point from elbow tip toward end-effector, so:
+  //   total_rot = atan2(-(y_ee - y_elbow), z_ee - z_elbow)
+  //   theta_arm = total_rot - elbow_rpy - theta_elbow - arm_rpy
 
-  // Passive joint angle = world angle change from home position
-  left_arm_out  = left_arm_world  - left_arm_home_offset_;
-  right_arm_out = right_arm_world - right_arm_home_offset_;
+  double alpha_left = left_elbow_rpy_ + theta_left;
+  double total_left = std::atan2(-(y_ee - y_l), z_ee - z_l);
+  left_arm_out = total_left - alpha_left - left_arm_rpy_;
 
-  // Closure joint: aligns left chain tip frame with right chain tip frame
-  double cum_left  = cum_left_base_  + theta_left  + left_arm_out;
-  double cum_right = cum_right_base_ + theta_right + right_arm_out;
+  double alpha_right = right_elbow_rpy_ + theta_right;
+  double total_right = std::atan2(-(y_ee - y_r), z_ee - z_r);
+  right_arm_out = total_right - alpha_right - right_arm_rpy_;
+
+  // Closure joint: the residual rotation to align left arm tip with right arm tip
+  double cum_left = alpha_left + left_arm_rpy_ + left_arm_out;
+  double cum_right = alpha_right + right_arm_rpy_ + right_arm_out;
   closure_out = cum_right - cum_left - closure_rpy_;
 }
 

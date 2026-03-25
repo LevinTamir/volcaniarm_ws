@@ -31,8 +31,13 @@ public:
     const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
 private:
-  // FK: compute end-effector (y, z) from elbow angles
-  std::pair<double, double> fk(double theta_right, double theta_left) const;
+  // Compute elbow tip position in volcaniarm_base_link frame
+  void elbow_tip(double elbow_rpy, double theta, double shoulder_y,
+                 double & y_out, double & z_out) const;
+
+  // Compute end-effector via circle-circle intersection
+  bool compute_ee(double y_l, double z_l, double y_r, double z_r,
+                  double & y_ee, double & z_ee) const;
 
   // Compute passive arm and closure joint angles
   void compute_passive_angles(
@@ -48,21 +53,17 @@ private:
   std::string right_elbow_joint_name_;
 
   // Kinematic parameters
-  double L1_{0.41621};   // Upper link length (elbow link)
-  double L2_{0.65};      // Lower link length (arm link)
-  double l0_{0.215};     // Shoulder separation from center
-  double base_z_{0.0582}; // Base height offset
+  double L1_{0.41621};    // Upper link length (elbow link)
+  double L2_{0.65};       // Lower link length (arm link)
+  double l0_{0.215};      // Shoulder separation from center
+  double base_z_{0.0632}; // Elbow joint Z offset in volcaniarm_base_link
 
-  // URDF joint frame Rx offsets (cumulative rotation constants)
-  // cum_left_base  = pi + left_elbow_rpy + left_arm_rpy  = 2.2217
-  // cum_right_base = pi + right_elbow_rpy + right_arm_rpy = 4.0615
-  double cum_left_base_{2.2217};
-  double cum_right_base_{4.0615};
+  // URDF joint frame Rx offsets
+  double left_elbow_rpy_{0.7854};
+  double right_elbow_rpy_{-0.7854};
+  double left_arm_rpy_{-1.7053};
+  double right_arm_rpy_{1.7053};
   double closure_rpy_{1.8398};
-
-  // Home-position calibration offsets (computed once at configure)
-  double left_arm_home_offset_{0.0};
-  double right_arm_home_offset_{0.0};
 };
 
 }  // namespace volcaniarm_controller
