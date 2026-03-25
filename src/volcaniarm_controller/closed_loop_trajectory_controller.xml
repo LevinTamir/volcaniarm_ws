@@ -1,0 +1,12 @@
+<library path="closed_loop_trajectory_controller">
+  <class name="volcaniarm_controller/ClosedLoopTrajectoryController"
+         type="volcaniarm_controller::ClosedLoopTrajectoryController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Joint trajectory controller with passive joint state publishing for
+      closed-loop (5-bar) linkage mechanisms. Inherits all functionality from
+      JointTrajectoryController and additionally computes and publishes the
+      passive joint angles derived from the actuated elbow joints.
+    </description>
+  </class>
+</library>
