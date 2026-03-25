@@ -1,12 +1,15 @@
 #ifndef VOLCANIARM_CONTROLLER__CLOSED_LOOP_TRAJECTORY_CONTROLLER_HPP_
 #define VOLCANIARM_CONTROLLER__CLOSED_LOOP_TRAJECTORY_CONTROLLER_HPP_
 
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "joint_trajectory_controller/joint_trajectory_controller.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "visualization_msgs/msg/marker.hpp"
+#include "geometry_msgs/msg/point.hpp"
 #include "rclcpp/publisher.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 
@@ -31,32 +34,45 @@ public:
     const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
 private:
-  // Compute elbow tip position in volcaniarm_base_link frame
   void elbow_tip(double elbow_rpy, double theta, double shoulder_y,
                  double & y_out, double & z_out) const;
 
-  // Compute end-effector via circle-circle intersection
   bool compute_ee(double y_l, double z_l, double y_r, double z_r,
                   double & y_ee, double & z_ee) const;
 
-  // Compute passive arm and closure joint angles
   void compute_passive_angles(
     double theta_left, double theta_right,
     double & left_arm_out, double & right_arm_out, double & closure_out) const;
 
-  // Publisher for passive joint states
+  // Compute EE position in volcaniarm_base_link frame
+  void compute_ee_position(double theta_left, double theta_right,
+                           double & x_ee, double & y_ee, double & z_ee) const;
+
+  void publish_ee_markers(const rclcpp::Time & time,
+                          double x, double y, double z);
+
+  // Publishers
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr passive_joint_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr ee_marker_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr ee_path_pub_;
 
   // Configuration from YAML
   std::vector<std::string> passive_joint_names_;
   std::string left_elbow_joint_name_;
   std::string right_elbow_joint_name_;
 
+  // EE visualization
+  bool publish_ee_marker_{true};
+  std::string ee_frame_id_{"volcaniarm_base_link"};
+  double tool_offset_{0.0};  // X offset for planar mechanism
+  size_t trail_max_size_{300};
+  std::deque<geometry_msgs::msg::Point> trail_;
+
   // Kinematic parameters
-  double L1_{0.41621};    // Upper link length (elbow link)
-  double L2_{0.65};       // Lower link length (arm link)
-  double l0_{0.215};      // Shoulder separation from center
-  double base_z_{0.0632}; // Elbow joint Z offset in volcaniarm_base_link
+  double L1_{0.41621};
+  double L2_{0.65};
+  double l0_{0.215};
+  double base_z_{0.0632};
 
   // URDF joint frame Rx offsets
   double left_elbow_rpy_{0.7854};

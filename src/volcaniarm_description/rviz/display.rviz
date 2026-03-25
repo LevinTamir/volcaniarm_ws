@@ -8,7 +8,6 @@ Panels:
         - /Status1
         - /TF1
         - /TF1/Frames1
-        - /DepthCloud1
         - /DepthCloud1/Auto Size1
         - /Image1
       Splitter Ratio: 0.6529411673545837
@@ -30,7 +29,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: DepthCloud
+    SyncSource: PointCloud2
 Visualization Manager:
   Class: ""
   Displays:
@@ -70,26 +69,11 @@ Visualization Manager:
         Expand Link Details: false
         Expand Tree: false
         Link Tree Style: Links in Alphabetic Order
-        camera_camera_link:
+        base_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        camera_color_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        camera_color_optical_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        camera_depth_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        camera_depth_optical_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
+          Value: true
         camera_link:
           Alpha: 1
           Show Axes: false
@@ -99,17 +83,107 @@ Visualization Manager:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        delta_arm_base_link:
+        camera_mount_linear_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        left_elbow_link:
+        camera_mount_rev_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        right_elbow_link:
+        closure_dummy_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fl_caster_wheel_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fl_caster_wheel_mount_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fl_table_leg_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fr_caster_wheel_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fr_caster_wheel_mount_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fr_table_leg_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        right_arm_tip_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rl_caster_wheel_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rl_caster_wheel_mount_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rl_table_leg_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rr_caster_wheel_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rr_caster_wheel_mount_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rr_table_leg_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        volcaniarm_base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        volcaniarm_left_arm_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        volcaniarm_left_elbow_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        volcaniarm_right_arm_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        volcaniarm_right_elbow_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
@@ -133,50 +207,94 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: false
-        camera_camera_link:
-          Value: true
-        camera_color_frame:
-          Value: true
-        camera_color_optical_frame:
-          Value: true
-        camera_depth_frame:
-          Value: true
-        camera_depth_optical_frame:
+        base_link:
           Value: true
         camera_link:
           Value: true
         camera_link_optical:
           Value: false
-        delta_arm_base_link:
+        camera_mount_linear_link:
           Value: true
-        left_elbow_link:
+        camera_mount_rev_link:
           Value: true
-        right_elbow_link:
+        closure_dummy_link:
+          Value: true
+        fl_caster_wheel_link:
+          Value: true
+        fl_caster_wheel_mount_link:
+          Value: true
+        fl_table_leg_link:
+          Value: true
+        fr_caster_wheel_link:
+          Value: true
+        fr_caster_wheel_mount_link:
+          Value: true
+        fr_table_leg_link:
+          Value: true
+        right_arm_tip_link:
+          Value: true
+        rl_caster_wheel_link:
+          Value: true
+        rl_caster_wheel_mount_link:
+          Value: true
+        rl_table_leg_link:
+          Value: true
+        rr_caster_wheel_link:
+          Value: true
+        rr_caster_wheel_mount_link:
+          Value: true
+        rr_table_leg_link:
+          Value: true
+        volcaniarm_base_link:
+          Value: true
+        volcaniarm_left_arm_link:
+          Value: true
+        volcaniarm_left_elbow_link:
+          Value: true
+        volcaniarm_right_arm_link:
+          Value: true
+        volcaniarm_right_elbow_link:
           Value: true
         world:
           Value: true
       Marker Scale: 1
       Name: TF
-      Show Arrows: true
+      Show Arrows: false
       Show Axes: true
       Show Names: false
       Tree:
         world:
-          delta_arm_base_link:
-            camera_link:
-              camera_camera_link:
-                camera_color_frame:
-                  camera_color_optical_frame:
+          base_link:
+            camera_mount_linear_link:
+              camera_mount_rev_link:
+                camera_link:
+                  camera_link_optical:
                     {}
-                camera_depth_frame:
-                  camera_depth_optical_frame:
+            fl_table_leg_link:
+              fl_caster_wheel_mount_link:
+                fl_caster_wheel_link:
+                  {}
+            fr_table_leg_link:
+              fr_caster_wheel_mount_link:
+                fr_caster_wheel_link:
+                  {}
+            rl_table_leg_link:
+              rl_caster_wheel_mount_link:
+                rl_caster_wheel_link:
+                  {}
+            rr_table_leg_link:
+              rr_caster_wheel_mount_link:
+                rr_caster_wheel_link:
+                  {}
+            volcaniarm_base_link:
+              volcaniarm_left_elbow_link:
+                volcaniarm_left_arm_link:
+                  closure_dummy_link:
                     {}
-              camera_link_optical:
-                {}
-            left_elbow_link:
-              {}
-            right_elbow_link:
-              {}
+              volcaniarm_right_elbow_link:
+                volcaniarm_right_arm_link:
+                  right_arm_tip_link:
+                    {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -189,6 +307,7 @@ Visualization Manager:
         Min Value: -10
         Value: true
       Axis: Z
+      CameraInfo Topic: /camera/aligned_depth_to_color/camera_info
       Channel Name: intensity
       Class: rviz_default_plugins/DepthCloud
       Color: 255; 255; 255
@@ -285,7 +404,6 @@ Visualization Manager:
       Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /camera/depth/color/points
@@ -338,7 +456,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 4.652493953704834
+      Distance: 5.091839790344238
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -353,10 +471,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.6403970718383789
+      Pitch: 0.41039717197418213
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 5.703589916229248
+      Yaw: 6.023592948913574
     Saved: ~
 Window Geometry:
   Displays:
@@ -366,7 +484,7 @@ Window Geometry:
   Hide Right Dock: false
   Image:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd00000004000000000000017e000003c9fc0200000009fb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005d00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000003f00000318000000cc00fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261fb0000000a0049006d006100670065010000035d000000ab0000001700ffffff000000010000010f000003c9fc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073000000003f000003c9000000a900fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e100000197000000030000073e0000003efc0100000002fb0000000800540069006d006501000000000000073e0000026f00fffffffb0000000800540069006d00650100000000000004500000000000000000000005ba000003c900000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd00000004000000000000017e000003c9fc0200000009fb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005d00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000003f00000318000000cc00fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261fb0000000a0049006d006100670065010000035d000000ab0000001700ffffff000000010000010f000003c9fc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a00560069006500770073000000003f000003c9000000a900fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b200000000000000000000000200000490000000a9fc0100000001fb0000000a00560069006500770073030000004e00000080000002e100000197000000030000039f0000003efc0100000002fb0000000800540069006d006501000000000000039f0000026f00fffffffb0000000800540069006d006501000000000000045000000000000000000000021b000003c900000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Time:
@@ -375,6 +493,6 @@ Window Geometry:
     collapsed: false
   Views:
     collapsed: false
-  Width: 1854
-  X: 1986
+  Width: 927
+  X: 993
   Y: 32

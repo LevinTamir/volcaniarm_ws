@@ -33,6 +33,13 @@ volcaniarm_controller:
       - volcaniarm_right_arm_joint
       - closure_joint
 
+    # End-effector marker visualization
+    ee_marker:
+      enable: true
+      frame_id: volcaniarm_base_link
+      tool_offset: 0.0   # Tool X offset from end-effector [m]
+      trail_size: 300
+
     # 5-bar linkage kinematic parameters
     kinematics:
       L1: 0.41621         # Upper link length (elbow link) [m]

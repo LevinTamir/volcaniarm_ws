@@ -23,6 +23,12 @@ ClosedLoopTrajectoryController::on_init()
   auto_declare<std::string>("left_elbow_joint", "volcaniarm_left_elbow_joint");
   auto_declare<std::string>("right_elbow_joint", "volcaniarm_right_elbow_joint");
 
+  // EE marker configuration
+  auto_declare<bool>("ee_marker.enable", true);
+  auto_declare<std::string>("ee_marker.frame_id", "volcaniarm_base_link");
+  auto_declare<double>("ee_marker.tool_offset", 0.0);
+  auto_declare<int>("ee_marker.trail_size", 300);
+
   // Kinematic parameters
   auto_declare<double>("kinematics.L1", 0.41621);
   auto_declare<double>("kinematics.L2", 0.65);
@@ -53,6 +59,12 @@ ClosedLoopTrajectoryController::on_configure(
   left_elbow_joint_name_ = get_node()->get_parameter("left_elbow_joint").as_string();
   right_elbow_joint_name_ = get_node()->get_parameter("right_elbow_joint").as_string();
 
+  publish_ee_marker_ = get_node()->get_parameter("ee_marker.enable").as_bool();
+  ee_frame_id_ = get_node()->get_parameter("ee_marker.frame_id").as_string();
+  tool_offset_ = get_node()->get_parameter("ee_marker.tool_offset").as_double();
+  trail_max_size_ = static_cast<size_t>(
+    get_node()->get_parameter("ee_marker.trail_size").as_int());
+
   L1_ = get_node()->get_parameter("kinematics.L1").as_double();
   L2_ = get_node()->get_parameter("kinematics.L2").as_double();
   l0_ = get_node()->get_parameter("kinematics.l0").as_double();
@@ -64,17 +76,20 @@ ClosedLoopTrajectoryController::on_configure(
   right_arm_rpy_ = get_node()->get_parameter("kinematics.right_arm_rpy").as_double();
   closure_rpy_ = get_node()->get_parameter("kinematics.closure_rpy").as_double();
 
-  if (passive_joint_names_.empty()) {
-    RCLCPP_WARN(get_node()->get_logger(),
-      "No passive_joints configured — passive joint states will not be published.");
-  }
-
+  // Create publishers
   passive_joint_pub_ = get_node()->create_publisher<sensor_msgs::msg::JointState>(
     "/joint_states", 10);
 
+  if (publish_ee_marker_) {
+    ee_marker_pub_ = get_node()->create_publisher<visualization_msgs::msg::Marker>(
+      "ee_marker", 10);
+    ee_path_pub_ = get_node()->create_publisher<visualization_msgs::msg::Marker>(
+      "ee_path", 10);
+  }
+
   RCLCPP_INFO(get_node()->get_logger(),
-    "ClosedLoopTrajectoryController configured with %zu passive joints",
-    passive_joint_names_.size());
+    "ClosedLoopTrajectoryController configured: %zu passive joints, EE marker %s",
+    passive_joint_names_.size(), publish_ee_marker_ ? "enabled" : "disabled");
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -83,6 +98,7 @@ controller_interface::CallbackReturn
 ClosedLoopTrajectoryController::on_activate(
   const rclcpp_lifecycle::State & previous_state)
 {
+  trail_.clear();
   return joint_trajectory_controller::JointTrajectoryController::on_activate(previous_state);
 }
 
@@ -92,29 +108,31 @@ ClosedLoopTrajectoryController::update(
 {
   auto ret = joint_trajectory_controller::JointTrajectoryController::update(time, period);
 
-  if (!passive_joint_names_.empty() && passive_joint_pub_) {
-    double theta_left = 0.0;
-    double theta_right = 0.0;
-    bool found_left = false;
-    bool found_right = false;
+  // Read current elbow positions from state interfaces
+  double theta_left = 0.0;
+  double theta_right = 0.0;
+  bool found_left = false;
+  bool found_right = false;
 
-    for (size_t i = 0; i < dof_; ++i) {
-      const auto & joint_name = params_.joints[i];
-      if (has_position_state_interface_) {
-        auto pos_opt = joint_state_interface_[0][i].get().get_optional();
-        if (!pos_opt.has_value()) { continue; }
-        double pos = pos_opt.value();
-        if (joint_name == left_elbow_joint_name_) {
-          theta_left = pos;
-          found_left = true;
-        } else if (joint_name == right_elbow_joint_name_) {
-          theta_right = pos;
-          found_right = true;
-        }
+  for (size_t i = 0; i < dof_; ++i) {
+    const auto & joint_name = params_.joints[i];
+    if (has_position_state_interface_) {
+      auto pos_opt = joint_state_interface_[0][i].get().get_optional();
+      if (!pos_opt.has_value()) { continue; }
+      double pos = pos_opt.value();
+      if (joint_name == left_elbow_joint_name_) {
+        theta_left = pos;
+        found_left = true;
+      } else if (joint_name == right_elbow_joint_name_) {
+        theta_right = pos;
+        found_right = true;
       }
     }
+  }
 
-    if (found_left && found_right) {
+  if (found_left && found_right) {
+    // Publish passive joint states
+    if (!passive_joint_names_.empty() && passive_joint_pub_) {
       double left_arm = 0.0, right_arm = 0.0, closure = 0.0;
       compute_passive_angles(theta_left, theta_right, left_arm, right_arm, closure);
 
@@ -123,6 +141,13 @@ ClosedLoopTrajectoryController::update(
       js.name = passive_joint_names_;
       js.position = {left_arm, right_arm, closure};
       passive_joint_pub_->publish(js);
+    }
+
+    // Publish EE markers
+    if (publish_ee_marker_ && ee_marker_pub_) {
+      double x_ee, y_ee, z_ee;
+      compute_ee_position(theta_left, theta_right, x_ee, y_ee, z_ee);
+      publish_ee_markers(time, x_ee, y_ee, z_ee);
     }
   }
 
@@ -133,10 +158,7 @@ void ClosedLoopTrajectoryController::elbow_tip(
   double elbow_rpy, double theta, double shoulder_y,
   double & y_out, double & z_out) const
 {
-  // Total rotation around X for the elbow link
   double alpha = elbow_rpy + theta;
-  // Local Z axis in volcaniarm_base_link: [0, -sin(alpha), cos(alpha)]
-  // Elbow tip = shoulder_origin + L1 * local_Z
   y_out = shoulder_y + L1_ * (-std::sin(alpha));
   z_out = base_z_ + L1_ * std::cos(alpha);
 }
@@ -161,35 +183,84 @@ bool ClosedLoopTrajectoryController::compute_ee(
   double my = y_r + a * dy / d;
   double mz = z_r + a * dz / d;
 
-  // Choose the solution where arm extends in +Z direction (downward in world)
   y_ee = my + h * dz / d;
   z_ee = mz - h * dy / d;
 
   return true;
 }
 
-void ClosedLoopTrajectoryController::compute_passive_angles(
+void ClosedLoopTrajectoryController::compute_ee_position(
   double theta_left, double theta_right,
-  double & left_arm_out, double & right_arm_out, double & closure_out) const
+  double & x_ee, double & y_ee, double & z_ee) const
 {
-  // Elbow tip positions in volcaniarm_base_link frame
   double y_l, z_l, y_r, z_r;
   elbow_tip(left_elbow_rpy_, theta_left, -l0_, y_l, z_l);
   elbow_tip(right_elbow_rpy_, theta_right, l0_, y_r, z_r);
 
-  // End-effector position (circle-circle intersection)
+  compute_ee(y_l, z_l, y_r, z_r, y_ee, z_ee);
+  // EE X = midpoint of the two elbow joint X origins + arm joint X offset + tool offset
+  // Left elbow at X=0.285, right at X=0.289 in volcaniarm_base_link, arm joints add 0.004
+  x_ee = 0.291 + tool_offset_;
+}
+
+void ClosedLoopTrajectoryController::publish_ee_markers(
+  const rclcpp::Time & time, double x, double y, double z)
+{
+  auto stamp = time;
+
+  // EE sphere
+  visualization_msgs::msg::Marker m;
+  m.header.frame_id = ee_frame_id_;
+  m.header.stamp = stamp;
+  m.ns = "ee";
+  m.id = 0;
+  m.type = visualization_msgs::msg::Marker::SPHERE;
+  m.action = visualization_msgs::msg::Marker::ADD;
+  m.pose.position.x = x;
+  m.pose.position.y = y;
+  m.pose.position.z = z;
+  m.pose.orientation.w = 1.0;
+  m.scale.x = m.scale.y = m.scale.z = 0.05;
+  m.color.r = 1.0f;
+  m.color.g = 0.2f;
+  m.color.b = 0.2f;
+  m.color.a = 1.0f;
+  ee_marker_pub_->publish(m);
+
+  // Trail
+  geometry_msgs::msg::Point pt;
+  pt.x = x; pt.y = y; pt.z = z;
+  trail_.push_back(pt);
+  while (trail_.size() > trail_max_size_) {
+    trail_.pop_front();
+  }
+
+  visualization_msgs::msg::Marker p;
+  p.header.frame_id = ee_frame_id_;
+  p.header.stamp = stamp;
+  p.ns = "trail";
+  p.id = 1;
+  p.type = visualization_msgs::msg::Marker::LINE_STRIP;
+  p.action = visualization_msgs::msg::Marker::ADD;
+  p.scale.x = 0.005;
+  p.color.r = 0.1f;
+  p.color.g = 0.6f;
+  p.color.b = 1.0f;
+  p.color.a = 0.9f;
+  p.points.assign(trail_.begin(), trail_.end());
+  ee_path_pub_->publish(p);
+}
+
+void ClosedLoopTrajectoryController::compute_passive_angles(
+  double theta_left, double theta_right,
+  double & left_arm_out, double & right_arm_out, double & closure_out) const
+{
+  double y_l, z_l, y_r, z_r;
+  elbow_tip(left_elbow_rpy_, theta_left, -l0_, y_l, z_l);
+  elbow_tip(right_elbow_rpy_, theta_right, l0_, y_r, z_r);
+
   double y_ee, z_ee;
   compute_ee(y_l, z_l, y_r, z_r, y_ee, z_ee);
-
-  // For each arm link, the total Rx rotation from volcaniarm_base_link to
-  // the arm link frame is: elbow_rpy + theta_elbow + arm_rpy + theta_arm
-  //
-  // The arm link's local Z axis in volcaniarm_base_link is:
-  //   [0, -sin(total_rot), cos(total_rot)]
-  //
-  // This must point from elbow tip toward end-effector, so:
-  //   total_rot = atan2(-(y_ee - y_elbow), z_ee - z_elbow)
-  //   theta_arm = total_rot - elbow_rpy - theta_elbow - arm_rpy
 
   double alpha_left = left_elbow_rpy_ + theta_left;
   double total_left = std::atan2(-(y_ee - y_l), z_ee - z_l);
@@ -199,7 +270,6 @@ void ClosedLoopTrajectoryController::compute_passive_angles(
   double total_right = std::atan2(-(y_ee - y_r), z_ee - z_r);
   right_arm_out = total_right - alpha_right - right_arm_rpy_;
 
-  // Closure joint: the residual rotation to align left arm tip with right arm tip
   double cum_left = alpha_left + left_arm_rpy_ + left_arm_out;
   double cum_right = alpha_right + right_arm_rpy_ + right_arm_out;
   closure_out = cum_right - cum_left - closure_rpy_;

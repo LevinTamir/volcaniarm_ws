@@ -13,6 +13,8 @@ find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 # C++ closed-loop trajectory controller library
 add_library(closed_loop_trajectory_controller SHARED
@@ -29,6 +31,8 @@ ament_target_dependencies(closed_loop_trajectory_controller
   rclcpp
   rclcpp_lifecycle
   sensor_msgs
+  visualization_msgs
+  geometry_msgs
 )
 pluginlib_export_plugin_description_file(
   controller_interface closed_loop_trajectory_controller.xml
@@ -51,11 +55,6 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(PROGRAMS
-  ${PROJECT_NAME}/volcaniarm_end_effector_marker.py
-  ${PROJECT_NAME}/set_initial_position.py
-  DESTINATION lib/${PROJECT_NAME}
-)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -73,6 +72,8 @@ ament_export_dependencies(
   rclcpp
   rclcpp_lifecycle
   sensor_msgs
+  visualization_msgs
+  geometry_msgs
 )
 
 ament_package()
