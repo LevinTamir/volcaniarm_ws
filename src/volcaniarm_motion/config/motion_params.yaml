@@ -45,3 +45,7 @@ motion_planning_node:
 
     # Target queue
     queue_size: 10
+
+    # Calibration offsets (applied after TF transform, in base_link frame)
+    offset_y: 0.0    # Lateral correction [m] — positive shifts target in +Y
+    offset_z: 0.0    # Vertical correction [m] — positive shifts target downward

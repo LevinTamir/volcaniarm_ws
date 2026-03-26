@@ -42,6 +42,8 @@ class MotionPlanningNode(Node):
         self.declare_parameter('queue_size', 10)
         self.declare_parameter('joint_names',
             ['volcaniarm_right_elbow_joint', 'volcaniarm_left_elbow_joint'])
+        self.declare_parameter('offset_y', 0.0)
+        self.declare_parameter('offset_z', 0.0)
 
         self.trajectory_duration = self.get_parameter('trajectory_duration').value
         self.dwell_time = self.get_parameter('dwell_time').value
@@ -52,6 +54,8 @@ class MotionPlanningNode(Node):
         self.return_home = self.get_parameter('return_home').value
         queue_size = self.get_parameter('queue_size').value
         self.joint_names = list(self.get_parameter('joint_names').value)
+        self.offset_y = self.get_parameter('offset_y').value
+        self.offset_z = self.get_parameter('offset_z').value
 
         # ── TF2 ──────────────────────────────────────────────────
         self.tf_buffer = tf2_ros.Buffer()
@@ -98,9 +102,11 @@ class MotionPlanningNode(Node):
         except Exception as e:
             self.get_logger().warn(f'TF transform failed: {e} — using raw coordinates')
 
-        self.target_queue.append((-msg.point.y, msg.point.z))
+        y = -msg.point.y + self.offset_y
+        z = msg.point.z + self.offset_z
+        self.target_queue.append((y, z))
         self.get_logger().info(
-            f'Queued weed at y={msg.point.y:.3f}, z={msg.point.z:.3f} '
+            f'Queued weed at y={y:.3f}, z={z:.3f} '
             f'({len(self.target_queue)} in queue)')
 
     # ── Queue processing ──────────────────────────────────────────

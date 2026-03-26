@@ -79,9 +79,7 @@ class Weed3DDetector(Node):
         if M['m00'] == 0:
             return
         cx_pixel = int(M['m10'] / M['m00'])
-
-        # Use bottom of contour (highest Y pixel = closest to weed base/root)
-        cy_pixel = largest_contour[:, 0, 1].max()
+        cy_pixel = int(M['m01'] / M['m00'])
 
         # --- Get Median Depth over a patch around the target pixel ---
         half = 5  # 11x11 patch
