@@ -143,7 +143,7 @@ class Weed3DDetector(Node):
         point_msg = PointStamped()
         point_msg.header.stamp.sec = 0
         point_msg.header.stamp.nanosec = 0
-        point_msg.header.frame_id = 'volcaniarm_base_link'
+        point_msg.header.frame_id = 'camera_link_optical'
         point_msg.point.x = X
         point_msg.point.y = Y
         point_msg.point.z = Z
@@ -153,7 +153,7 @@ class Weed3DDetector(Node):
         marker = Marker()
         marker.header.stamp.sec = 0
         marker.header.stamp.nanosec = 0
-        marker.header.frame_id = 'volcaniarm_base_link'
+        marker.header.frame_id = 'camera_link_optical'
         marker.ns = "weed_marker"
         marker.id = 0
         marker.type = Marker.SPHERE

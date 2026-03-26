@@ -18,7 +18,7 @@ def generate_launch_description():
 
     world_name_arg = DeclareLaunchArgument(
         "world_name",
-        default_value="feild",
+        default_value="lab",
         description="Gazebo world name (without .sdf extension)",
     )
 

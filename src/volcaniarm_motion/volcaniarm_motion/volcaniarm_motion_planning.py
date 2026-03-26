@@ -98,7 +98,7 @@ class MotionPlanningNode(Node):
         except Exception as e:
             self.get_logger().warn(f'TF transform failed: {e} — using raw coordinates')
 
-        self.target_queue.append((msg.point.y, msg.point.z))
+        self.target_queue.append((-msg.point.y, msg.point.z))
         self.get_logger().info(
             f'Queued weed at y={msg.point.y:.3f}, z={msg.point.z:.3f} '
             f'({len(self.target_queue)} in queue)')

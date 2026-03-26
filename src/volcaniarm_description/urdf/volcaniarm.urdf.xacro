@@ -4,6 +4,12 @@
 
   <xacro:arg name="use_sim" default="true" />
 
+  <!-- Camera mount position tuning
+       camera_mount_x range: 0.155 to 0.655
+       camera_mount_pitch: rev joint pitch in radians -->
+  <xacro:property name="camera_mount_x" value="0.25" />
+  <xacro:property name="camera_mount_pitch" value="1.3" />
+
    <!-- ros2_control hardware interfaces -->
   <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_ros2_control.xacro" />
 
@@ -596,7 +602,7 @@
     </collision>
   </link>
   <joint name="camera_mount_linear_joint" type="fixed">
-    <origin xyz="0.405353761834025 0 0.039999999999992" rpy="0 0 0" />
+    <origin xyz="${camera_mount_x} 0 0.039999999999992" rpy="0 0 0" />
     <parent link="base_link" />
     <child link="camera_mount_linear_link" />
   </joint>
@@ -626,7 +632,7 @@
   </link>
   <joint name="camera_mount_rev_joint" type="fixed">
     <origin xyz="0.192000000000008 0 -0.0290000000000052"
-            rpy="3.14159265358979 0.9 3.14159265358979" />
+            rpy="3.14159265358979 ${camera_mount_pitch} 3.14159265358979" />
     <parent link="camera_mount_linear_link" />
     <child link="camera_mount_rev_link" />
   </joint>
