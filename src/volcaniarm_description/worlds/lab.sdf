@@ -2,7 +2,7 @@
   <world name="lab">
     <physics name="fast" type="dart">
       <max_step_size>0.005</max_step_size>
-      <real_time_factor>0</real_time_factor>
+      <real_time_factor>1.0</real_time_factor>
       <dart>
         <solver>
           <solver_type>pgs</solver_type>
