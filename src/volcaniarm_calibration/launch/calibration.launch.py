@@ -45,10 +45,10 @@ def generate_launch_description():
         }.items(),
     )
 
-    # --- ArUco marker detector (from ros2_aruco) ---
+    # --- ArUco marker detector (aruco_opencv) ---
     aruco_node = Node(
-        package='ros2_aruco',
-        executable='aruco_node',
+        package='aruco_opencv',
+        executable='aruco_tracker_autostart',
         parameters=[aruco_config, {
             'marker_size': LaunchConfiguration('marker_size'),
         }],

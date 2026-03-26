@@ -17,7 +17,7 @@
   <depend>sensor_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>easy_handeye2</depend>
-  <depend>ros2_aruco_interfaces</depend>
+  <depend>aruco_opencv_msgs</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

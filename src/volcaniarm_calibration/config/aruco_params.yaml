@@ -1,10 +1,8 @@
-aruco_node:
+aruco_tracker_autostart:
   ros__parameters:
-    # ArUco marker detection parameters
-    marker_size: 0.05              # Marker side length in meters (5 cm)
-    aruco_dictionary_id: DICT_4X4_50
-    image_topic: /camera/color/image_raw
-    camera_info_topic: /camera/color/camera_info
-
-    # Detection tuning
+    # ArUco marker detection parameters (aruco_opencv)
+    marker_size: 0.05                        # Marker side length in meters (5 cm)
+    marker_dict: 4X4_50                      # ArUco dictionary
+    cam_base_topic: /camera/color/image_raw  # Camera image topic
     image_is_rectified: true
+    publish_tf: false                        # We publish TF via our bridge node
