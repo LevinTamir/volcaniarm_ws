@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(wc:*)",
+      "Bash(pip install:*)",
+      "Bash(python3:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git stash:*)",
+      "Bash(colcon build:*)",
+      "Bash(colcon test:*)",
+      "Bash(ros2:*)",
+      "Bash(rosdep:*)",
+      "Bash(source:*)",
+      "Bash(grep -r \"sensor\\\\|camera\\\\|rgbd\" /home/tamir/ros2_workspaces/volcaniarm_ws/src/volcaniarm_description/worlds/*.sdf)",
+      "Read(//tmp/mycobot_ros2/**)",
+      "Bash(grep -r \"bridge\\\\|depth\\\\|camera\\\\|sensor\" /home/tamir/ros2_workspaces/volcaniarm_ws/src/volcaniarm_weed_detector --include=*.py --include=*.yaml)",
+      "Bash(python3 -c \"from sensor_msgs_py import point_cloud2; print\\(''sensor_msgs_py available''\\)\")",
+      "Bash(python3 -c \":*)"
+    ],
+    "deny": [
+      "Bash(sudo:*)",
+      "Bash(docker:*)",
+      "Bash(rm -rf:*)",
+      "Read(~/.ssh/**)",
+      "Read(.env)"
+    ]
+  }
+}

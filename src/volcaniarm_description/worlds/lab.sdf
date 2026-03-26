@@ -90,16 +90,19 @@
       </link>
     </model>
 
-    <!-- Vase (raises the plant into the arm's workspace) -->
-    <model name="vase">
+    <!-- Potted weed: vase + plant as one model, origin at vase bottom -->
+    <model name="weed_target">
       <static>true</static>
       <pose>-0.1 0.35 0 0 0 0</pose>
-      <link name="link">
-        <visual name="visual">
+
+      <link name="vase_link">
+        <!-- Vase cylinder: 0.15m tall, shifted up so bottom sits at Z=0 -->
+        <visual name="vase_visual">
+          <pose>0 0 0.075 0 0 0</pose>
           <geometry>
             <cylinder>
               <radius>0.04</radius>
-              <length>0.3</length>
+              <length>0.15</length>
             </cylinder>
           </geometry>
           <material>
@@ -107,23 +110,37 @@
             <diffuse>0.1 0.1 0.1 1</diffuse>
           </material>
         </visual>
-        <collision name="collision">
+        <collision name="vase_collision">
+          <pose>0 0 0.075 0 0 0</pose>
           <geometry>
             <cylinder>
               <radius>0.04</radius>
-              <length>0.3</length>
+              <length>0.15</length>
             </cylinder>
+          </geometry>
+        </collision>
+
+        <!-- Plant mesh sitting on top of the vase (Z=0.15) -->
+        <visual name="plant_visual">
+          <pose>0 0 0.15 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <uri>model://plant/meshes/plant.dae</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </visual>
+        <collision name="plant_collision">
+          <pose>0 0 0.15 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <uri>model://plant/meshes/plant.dae</uri>
+              <scale>1 1 1</scale>
+            </mesh>
           </geometry>
         </collision>
       </link>
     </model>
-
-    <!-- Single weed plant along Y axis, within workspace -->
-    <include>
-      <uri>model://plant</uri>
-      <name>weed_target</name>
-      <pose>-0.1 0.35 0.15 0 0 0</pose>
-    </include>
 
   </world>
 </sdf>

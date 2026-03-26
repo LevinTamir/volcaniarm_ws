@@ -1,18 +1,20 @@
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image, CameraInfo
+from sensor_msgs.msg import Image, PointCloud2
 from geometry_msgs.msg import PointStamped
 from visualization_msgs.msg import Marker
+from sensor_msgs_py import point_cloud2
 from cv_bridge import CvBridge
+import tf2_ros
+from tf2_geometry_msgs import do_transform_point
 import message_filters
 import cv2
 import numpy as np
 
 class Weed3DDetector(Node):
     def __init__(self):
-        super().__init__('weed_3d_detector_node')
+        super().__init__('weed_detection_node')
         self.bridge = CvBridge()
-        self.camera_info_received = False
 
         # --- Filter Parameters ---
         self.ema_alpha = 0.15  # EMA smoothing factor (0.1 = very smooth, 0.5 = responsive)
@@ -25,36 +27,32 @@ class Weed3DDetector(Node):
         self.position_initialized = False
         self.consecutive_outliers = 0  # Counter for consecutive outlier rejections
 
-        # Synchronized RGB + Depth subscribers
-        rgb_sub = message_filters.Subscriber(self, Image, '/camera/color/image_raw')
-        depth_sub = message_filters.Subscriber(self, Image, '/camera/aligned_depth_to_color/image_raw')
-        self.sync = message_filters.ApproximateTimeSynchronizer(
-            [rgb_sub, depth_sub], queue_size=10, slop=0.05)
-        self.sync.registerCallback(self.synced_callback)
+        # --- Target frame (publish in this frame) ---
+        self.declare_parameter('target_frame', 'volcaniarm_base_link')
+        self.target_frame = self.get_parameter('target_frame').value
 
-        self.create_subscription(CameraInfo, '/camera/color/camera_info', self.camera_info_callback, 10)
+        # --- TF2 ---
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
+        # Synchronized RGB + Point Cloud subscribers
+        rgb_sub = message_filters.Subscriber(self, Image, '/camera/color/image_raw')
+        cloud_sub = message_filters.Subscriber(self, PointCloud2, '/camera/depth/color/points')
+        self.sync = message_filters.ApproximateTimeSynchronizer(
+            [rgb_sub, cloud_sub], queue_size=10, slop=0.1)
+        self.sync.registerCallback(self.synced_callback)
 
         # Publishers
         self.position_publisher = self.create_publisher(PointStamped, '/weed_position_raw', 10)
         self.marker_publisher = self.create_publisher(Marker, '/weed_marker', 10)
 
-    def camera_info_callback(self, msg):
-        if not self.camera_info_received:
-            self.fx = msg.k[0]
-            self.fy = msg.k[4]
-            self.cx = msg.k[2]
-            self.cy = msg.k[5]
-            self.camera_info_received = True
-            self.get_logger().info('Camera Intrinsics Received')
-
-    def synced_callback(self, rgb_msg, depth_msg):
-        if not self.camera_info_received:
-            return
+    def synced_callback(self, rgb_msg, cloud_msg):
         rgb_image = self.bridge.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
-        depth_image = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding='passthrough')
-        self.process(rgb_image, depth_image)
+        self.latest_cloud = cloud_msg
+        self.cloud_frame_id = cloud_msg.header.frame_id
+        self.process(rgb_image, cloud_msg)
 
-    def process(self, rgb_image, depth_image):
+    def process(self, rgb_image, cloud_msg):
 
         # --- Segment Green (Weed) in RGB ---
         hsv = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2HSV)
@@ -69,89 +67,123 @@ class Weed3DDetector(Node):
             return
 
         largest_contour = max(contours, key=cv2.contourArea)
-        
+
         # --- Filter out small contours ---
         if cv2.contourArea(largest_contour) < self.min_contour_area:
             self.get_logger().debug('Contour too small, ignoring')
             return
-            
+
         M = cv2.moments(largest_contour)
         if M['m00'] == 0:
             return
         cx_pixel = int(M['m10'] / M['m00'])
         cy_pixel = int(M['m01'] / M['m00'])
 
-        # --- Get Median Depth over a patch around the target pixel ---
+        # --- Look up 3D point from the point cloud at the detected pixel ---
+        # The point cloud is organized (same width/height as the image).
+        # Read a small patch around the centroid and take the median valid point.
         half = 5  # 11x11 patch
-        h, w = depth_image.shape[:2]
-        y0 = max(0, cy_pixel - half)
-        y1 = min(h, cy_pixel + half + 1)
-        x0 = max(0, cx_pixel - half)
-        x1 = min(w, cx_pixel + half + 1)
-        depth_patch = depth_image[y0:y1, x0:x1].astype(float).flatten()
-        depth_patch = depth_patch[(depth_patch > 0) & ~np.isnan(depth_patch)]
-        if len(depth_patch) == 0:
-            self.get_logger().warn('Invalid depth at weed target')
+        img_h, img_w = rgb_image.shape[:2]
+
+        # Point cloud may have different dimensions than the RGB image
+        cloud_w = cloud_msg.width
+        cloud_h = cloud_msg.height
+
+        # Scale pixel coordinates if image and cloud resolutions differ
+        scale_x = cloud_w / img_w
+        scale_y = cloud_h / img_h
+        cloud_cx = int(cx_pixel * scale_x)
+        cloud_cy = int(cy_pixel * scale_y)
+
+        # Clamp patch bounds
+        y0 = max(0, cloud_cy - half)
+        y1 = min(cloud_h, cloud_cy + half + 1)
+        x0 = max(0, cloud_cx - half)
+        x1 = min(cloud_w, cloud_cx + half + 1)
+
+        # Build flat indices into the organized cloud (row-major: index = v * width + u)
+        indices = [v * cloud_w + u for v in range(y0, y1) for u in range(x0, x1)]
+
+        # Read the patch of points
+        patch = point_cloud2.read_points(
+            cloud_msg, field_names=('x', 'y', 'z'),
+            skip_nans=True, uvs=indices)
+
+        if len(patch) == 0:
+            self.get_logger().warn('No valid 3D points at weed location')
             return
-        depth = float(np.median(depth_patch))
 
-        # --- Convert depth to meters if in millimeters (RealSense uses mm, Gazebo uses m) ---
-        if depth > 100.0:  # If depth > 100, assume it's in millimeters
-            depth = depth / 1000.0
+        points_x = patch['x']
+        points_y = patch['y']
+        points_z = patch['z']
 
-        # --- Compute 3D Coordinates ---
-        X = float((cx_pixel - self.cx) * depth / self.fx)
-        Y = float((cy_pixel - self.cy) * depth / self.fy)
-        Z = float(depth)
+        # Filter out zero-depth points
+        valid = points_z > 0
+        points_x = points_x[valid]
+        points_y = points_y[valid]
+        points_z = points_z[valid]
+
+        if len(points_x) == 0:
+            self.get_logger().warn('No valid 3D points at weed location')
+            return
+
+        # Median of the patch for robustness
+        X = float(np.median(points_x))
+        Y = float(np.median(points_y))
+        Z = float(np.median(points_z))
 
         # --- Apply Outlier Rejection and EMA Filter ---
         raw_position = np.array([X, Y, Z])
-        
+
         if not self.position_initialized:
-            # First valid reading - initialize filter
             self.filtered_position = raw_position
             self.position_initialized = True
             self.consecutive_outliers = 0
         else:
-            # Check for outliers (large jumps)
             distance = np.linalg.norm(raw_position - self.filtered_position)
             if distance > self.outlier_threshold:
                 self.consecutive_outliers += 1
-                
-                # If we keep getting "outliers", it means we moved to a new target - reset filter
                 if self.consecutive_outliers >= self.outlier_reset_count:
                     self.get_logger().info(f'Filter reset: new target detected at distance={distance:.3f}m')
                     self.filtered_position = raw_position
                     self.consecutive_outliers = 0
                 else:
                     self.get_logger().debug(f'Outlier rejected: distance={distance:.3f}m ({self.consecutive_outliers}/{self.outlier_reset_count})')
-                    return  # Reject this reading
+                    return
             else:
-                # Valid reading - reset outlier counter and apply EMA
                 self.consecutive_outliers = 0
-                self.filtered_position = (self.ema_alpha * raw_position + 
+                self.filtered_position = (self.ema_alpha * raw_position +
                                           (1 - self.ema_alpha) * self.filtered_position)
-        
-        # Use filtered position
+
         X, Y, Z = self.filtered_position
 
-        self.get_logger().info(f"Weed 3D Position: X={X:.3f} m, Y={Y:.3f} m, Z={Z:.3f} m")
-
-        # --- Publish Position as PointStamped ---
+        # Build point in the cloud's native frame
+        cloud_frame = cloud_msg.header.frame_id or 'camera_link'
         point_msg = PointStamped()
-        point_msg.header.stamp.sec = 0
-        point_msg.header.stamp.nanosec = 0
-        point_msg.header.frame_id = 'camera_link_optical'
+        point_msg.header.stamp = self.get_clock().now().to_msg()
+        point_msg.header.frame_id = cloud_frame
         point_msg.point.x = X
         point_msg.point.y = Y
         point_msg.point.z = Z
+
+        # Transform to target frame (e.g. volcaniarm_base_link)
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                self.target_frame, cloud_frame,
+                rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.5))
+            point_msg = do_transform_point(point_msg, transform)
+        except Exception as e:
+            self.get_logger().warn(f'TF transform failed: {e} — publishing in {cloud_frame}')
+
+        self.get_logger().info(
+            f"Weed 3D Position ({point_msg.header.frame_id}): "
+            f"X={point_msg.point.x:.3f} m, Y={point_msg.point.y:.3f} m, Z={point_msg.point.z:.3f} m")
         self.position_publisher.publish(point_msg)
 
-        # --- Publish Marker for RViz ---
+        # --- Publish Marker for RViz (in target frame) ---
         marker = Marker()
-        marker.header.stamp.sec = 0
-        marker.header.stamp.nanosec = 0
-        marker.header.frame_id = 'camera_link_optical'
+        marker.header.stamp = point_msg.header.stamp
+        marker.header.frame_id = point_msg.header.frame_id
         marker.ns = "weed_marker"
         marker.id = 0
         marker.type = Marker.SPHERE

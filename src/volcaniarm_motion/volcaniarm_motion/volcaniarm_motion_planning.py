@@ -102,7 +102,7 @@ class MotionPlanningNode(Node):
         except Exception as e:
             self.get_logger().warn(f'TF transform failed: {e} — using raw coordinates')
 
-        y = -msg.point.y + self.offset_y
+        y = msg.point.y + self.offset_y
         z = msg.point.z + self.offset_z
         self.target_queue.append((y, z))
         self.get_logger().info(

@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'volcaniarm_weed_detector_node = volcaniarm_weed_detector.weed_3d_detector_node:main'
+            'weed_detection_node = volcaniarm_weed_detector.weed_detection_node:main'
         ],
     },
 )
