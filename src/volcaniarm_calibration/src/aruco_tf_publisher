@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from volcaniarm_calibration.aruco_tf_publisher import main
+main()

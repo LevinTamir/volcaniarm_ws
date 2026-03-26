@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from volcaniarm_weed_detector.weed_detection_node import main
+main()

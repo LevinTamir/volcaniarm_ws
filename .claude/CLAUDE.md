@@ -53,8 +53,8 @@ ros2 param list / ros2 param get <node> <param>
 
 ## Conventions
 
-- Python packages use `ament_python` build type with `setup.py`
-- C++ packages use `ament_cmake` build type with `CMakeLists.txt`
+- **All packages** use `ament_cmake` build type with `CMakeLists.txt`
+- Python nodes use `ament_cmake_python` — Python module in `pkg_name/`, executable wrapper in `src/`
 - Launch files are Python-based (`.launch.py`)
 - Parameters live in `config/*.yaml` files within each package
 - Custom interfaces go in `volcaniarm_interfaces`

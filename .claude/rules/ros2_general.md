@@ -10,21 +10,6 @@ globs: src/**
 - Node executables: `snake_case`
 - Topic/service names: `snake_case` with `/` namespace separators
 
-## Python Package Structure (ament_python)
-```
-pkg_name/
-├── package.xml
-├── setup.py
-├── setup.cfg
-├── config/              # Parameter YAML files
-├── launch/              # Launch files
-├── pkg_name/
-│   ├── __init__.py
-│   └── node_module.py
-└── resource/
-    └── pkg_name         # Empty marker file
-```
-
 ## C++ Package Structure (ament_cmake)
 ```
 pkg_name/
@@ -37,6 +22,23 @@ pkg_name/
 └── src/
     └── source.cpp
 ```
+
+## Python Package Structure (ament_cmake_python)
+```
+pkg_name/
+├── package.xml
+├── CMakeLists.txt
+├── config/              # Parameter YAML files
+├── launch/              # Launch files
+├── pkg_name/
+│   ├── __init__.py
+│   └── node_module.py
+└── src/
+    └── node_executable  # Thin wrapper: calls node_module:main()
+```
+- Uses `ament_cmake` build type with `ament_cmake_python` for Python module install
+- Executable wrappers go in `src/`, installed via `install(PROGRAMS src/... DESTINATION lib/${PROJECT_NAME})`
+- Do NOT use `ament_python` / `setup.py` / `resource/` marker files
 
 ## Launch Files
 - Use Python launch files (`.launch.py`)

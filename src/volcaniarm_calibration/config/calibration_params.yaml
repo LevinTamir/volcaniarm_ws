@@ -1,0 +1,5 @@
+aruco_tf_publisher:
+  ros__parameters:
+    marker_id: 0                              # ArUco marker ID on the end effector
+    marker_frame: aruco_marker                # TF frame name for the detected marker
+    camera_frame: camera_color_optical_frame  # Camera optical frame (from RealSense)
