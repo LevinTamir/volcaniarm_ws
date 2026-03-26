@@ -19,7 +19,8 @@ class Weed3DDetector(Node):
         # --- Filter Parameters ---
         self.ema_alpha = 0.15  # EMA smoothing factor (0.1 = very smooth, 0.5 = responsive)
         self.outlier_threshold = 0.1  # Max allowed jump in meters per frame
-        self.min_contour_area = 500  # Minimum contour area to consider valid
+        self.declare_parameter('min_contour_area', 100)
+        self.min_contour_area = self.get_parameter('min_contour_area').value
         self.outlier_reset_count = 10  # Reset filter after this many consecutive outliers
 
         # --- Filter State ---
@@ -30,6 +31,10 @@ class Weed3DDetector(Node):
         # --- Target frame (publish in this frame) ---
         self.declare_parameter('target_frame', 'volcaniarm_base_link')
         self.target_frame = self.get_parameter('target_frame').value
+
+        # --- Height offset (applied after TF, in target frame Z) ---
+        self.declare_parameter('offset_z', -0.05)
+        self.offset_z = self.get_parameter('offset_z').value
 
         # --- TF2 ---
         self.tf_buffer = tf2_ros.Buffer()
@@ -56,23 +61,27 @@ class Weed3DDetector(Node):
 
         # --- Segment Green (Weed) in RGB ---
         hsv = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2HSV)
-        lower_green = np.array([35, 50, 50])
+        lower_green = np.array([35, 60, 60])
         upper_green = np.array([85, 255, 255])
         mask = cv2.inRange(hsv, lower_green, upper_green)
 
-        # --- Find Largest Contour ---
+        # --- Morphological cleanup: close gaps, then erode edge noise ---
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.erode(mask, kernel, iterations=1)
+
+        # --- Find largest contour for height, mean of all pixels for lateral ---
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             self.get_logger().info('No weed segment found')
             return
 
         largest_contour = max(contours, key=cv2.contourArea)
-
-        # --- Filter out small contours ---
         if cv2.contourArea(largest_contour) < self.min_contour_area:
             self.get_logger().debug('Contour too small, ignoring')
             return
 
+        # Use centroid of the largest green contour for both X and Y
         M = cv2.moments(largest_contour)
         if M['m00'] == 0:
             return
@@ -175,6 +184,9 @@ class Weed3DDetector(Node):
         except Exception as e:
             self.get_logger().warn(f'TF transform failed: {e} — publishing in {cloud_frame}')
 
+        # Apply height offset in target frame
+        point_msg.point.z += self.offset_z
+
         self.get_logger().info(
             f"Weed 3D Position ({point_msg.header.frame_id}): "
             f"X={point_msg.point.x:.3f} m, Y={point_msg.point.y:.3f} m, Z={point_msg.point.z:.3f} m")
@@ -193,16 +205,17 @@ class Weed3DDetector(Node):
         marker.scale.x = 0.05
         marker.scale.y = 0.05
         marker.scale.z = 0.05
-        marker.color.r = 0.0
-        marker.color.g = 0.0
-        marker.color.b = 1.0
+        marker.color.r = 1.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
         marker.color.a = 1.0
         self.marker_publisher.publish(marker)
 
         # --- Optional Visualization ---
         vis_image = rgb_image.copy()
-        cv2.drawContours(vis_image, [largest_contour], -1, (0, 255, 0), 2)
-        cv2.circle(vis_image, (cx_pixel, cy_pixel), 5, (255, 0, 0), -1)
+        if largest_contour is not None:
+            cv2.drawContours(vis_image, [largest_contour], -1, (0, 255, 0), 2)
+        cv2.circle(vis_image, (cx_pixel, cy_pixel), 7, (0, 255, 255), -1)
         cv2.imshow('Weed Detection', vis_image)
         cv2.waitKey(1)
 
