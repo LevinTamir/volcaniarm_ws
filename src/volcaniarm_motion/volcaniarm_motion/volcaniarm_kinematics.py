@@ -11,7 +11,7 @@ Includes configurable workspace limits as a safety envelope.
 import math
 import rclpy
 from rclpy.node import Node
-from volcaniarm_interfaces.srv import ComputeIK, ComputeFK
+from volcaniarm_msgs.srv import ComputeIK, ComputeFK
 
 
 class VolcaniarmKinematics(Node):

@@ -18,7 +18,7 @@ from collections import deque
 
 from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
-from volcaniarm_interfaces.srv import ComputeIK
+from volcaniarm_msgs.srv import ComputeIK
 from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import PointStamped
 

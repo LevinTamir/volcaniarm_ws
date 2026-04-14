@@ -1,37 +1,47 @@
 # Volcaniarm Workspace
 
-ROS 2 workspace for the Volcaniarm — a dual stepper motor robotic arm for agricultural weed detection research.
+ROS 2 workspace for the Volcaniarm, a 2-DOF stepper motor arm for weed detection in agriculture, as part of my Thesis.
+
+Firmware lives in a separate repo: [volcaniarm_firmware](https://github.com/LevinTamir/volcaniarm_firmware)
+
+## Requirements
+
+- Ubuntu 24.04
+- ROS 2 Jazzy
+
 
 ## Packages
 
 | Package | Description |
 |---------|-------------|
-| `volcaniarm_bringup` | Launch files for simulation and real robot |
-| `volcaniarm_controller` | Closed-loop trajectory controller (ros2_control) |
-| `volcaniarm_description` | URDF/Xacro, meshes, Gazebo worlds, RViz configs |
-| `volcaniarm_hardware` | ros2_control hardware interface (serial to MCU) |
-| `volcaniarm_interfaces` | Custom service/message definitions |
+| `volcaniarm_bringup` | Launch files (sim + real) |
+| `volcaniarm_calibration` | Hand-eye calibration |
+| `volcaniarm_controller` | Trajectory controller (ros2_control) |
+| `volcaniarm_description` | URDF, meshes, worlds, RViz configs |
+| `volcaniarm_hardware` | Hardware interface, serial to MCU (ros2_control) |
+| `volcaniarm_msgs` | Custom srv/msg definitions |
 | `volcaniarm_motion` | Motion planning and kinematics |
-| `volcaniarm_weed_detector` | Weed detection node (OpenCV + depth camera) |
+| `volcaniarm_weed_detector` | Weed detection (OpenCV + depth camera) |
 
-## Quick Start
+`easy_handeye2` is included as a git submodule.
+
+## Setup
 
 ```bash
-# Build
-colcon build --symlink-install
-
-# Source
-source install/setup.bash
-
-# Launch simulation
-ros2 launch volcaniarm_bringup sim_bringup.launch.py
-
-# Launch real robot
-ros2 launch volcaniarm_bringup real_bringup.launch.py
+mkdir -p <your_ws_path>/volcaniarm_ws
+cd <your_ws_path>/volcaniarm_ws
+git clone --recurse-submodules git@github.com:LevinTamir/volcaniarm_ws.git .
 ```
 
-## Requirements
+## Build
 
-- ROS 2 Jazzy
-- Ubuntu 24.04
-- Python 3.12
+```bash
+colcon build --symlink-install
+source install/setup.bash
+
+# Simulation
+ros2 launch volcaniarm_bringup sim_bringup.launch.py
+
+# Real robot
+ros2 launch volcaniarm_bringup real_bringup.launch.py
+```
