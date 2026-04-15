@@ -40,7 +40,7 @@ private:
   bool compute_ee(double y_l, double z_l, double y_r, double z_r,
                   double & y_ee, double & z_ee) const;
 
-  void compute_passive_angles(
+  bool compute_passive_angles(
     double theta_left, double theta_right,
     double & left_arm_out, double & right_arm_out, double & closure_out) const;
 

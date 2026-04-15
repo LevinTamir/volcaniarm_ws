@@ -134,13 +134,16 @@ ClosedLoopTrajectoryController::update(
     // Publish passive joint states
     if (!passive_joint_names_.empty() && passive_joint_pub_) {
       double left_arm = 0.0, right_arm = 0.0, closure = 0.0;
-      compute_passive_angles(theta_left, theta_right, left_arm, right_arm, closure);
-
-      sensor_msgs::msg::JointState js;
-      js.header.stamp = time;
-      js.name = passive_joint_names_;
-      js.position = {left_arm, right_arm, closure};
-      passive_joint_pub_->publish(js);
+      if (compute_passive_angles(theta_left, theta_right, left_arm, right_arm, closure)) {
+        sensor_msgs::msg::JointState js;
+        js.header.stamp = time;
+        js.name = passive_joint_names_;
+        js.position = {left_arm, right_arm, closure};
+        passive_joint_pub_->publish(js);
+      } else {
+        RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(), 1000,
+          "Linkage cannot close: elbows too far apart, skipping passive joint publish");
+      }
     }
 
     // Publish EE markers
@@ -251,7 +254,7 @@ void ClosedLoopTrajectoryController::publish_ee_markers(
   ee_path_pub_->publish(p);
 }
 
-void ClosedLoopTrajectoryController::compute_passive_angles(
+bool ClosedLoopTrajectoryController::compute_passive_angles(
   double theta_left, double theta_right,
   double & left_arm_out, double & right_arm_out, double & closure_out) const
 {
@@ -260,7 +263,9 @@ void ClosedLoopTrajectoryController::compute_passive_angles(
   elbow_tip(right_elbow_rpy_, theta_right, l0_, y_r, z_r);
 
   double y_ee, z_ee;
-  compute_ee(y_l, z_l, y_r, z_r, y_ee, z_ee);
+  if (!compute_ee(y_l, z_l, y_r, z_r, y_ee, z_ee)) {
+    return false;
+  }
 
   double alpha_left = left_elbow_rpy_ + theta_left;
   double total_left = std::atan2(-(y_ee - y_l), z_ee - z_l);
@@ -273,6 +278,7 @@ void ClosedLoopTrajectoryController::compute_passive_angles(
   double cum_left = alpha_left + left_arm_rpy_ + left_arm_out;
   double cum_right = alpha_right + right_arm_rpy_ + right_arm_out;
   closure_out = cum_right - cum_left - closure_rpy_;
+  return true;
 }
 
 }  // namespace volcaniarm_controller
