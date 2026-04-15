@@ -19,7 +19,6 @@ def generate_launch_description():
     accuracy_config = os.path.join(calibration_share, 'config', 'accuracy_test_params.yaml')
 
     # AprilTag detector -- sim camera publishes to /camera/color/image_raw
-    # (not /camera/camera/color/... like the real RealSense)
     apriltag_node = Node(
         package='apriltag_ros',
         executable='apriltag_node',

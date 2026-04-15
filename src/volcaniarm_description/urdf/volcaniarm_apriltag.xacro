@@ -3,11 +3,12 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm_apriltag">
 
   <!-- AprilTag 36h11 ID 20 mounted on the end effector (sim only).
-       The tag is a flat 64mm square facing +X direction.
-       Uses a DAE mesh with baked texture so it renders in both Gazebo and RViz. -->
+       Uses a DAE mesh with baked texture so it renders in both Gazebo and RViz.
+       DAE has 64mm geometry, scaled up to 200mm for reliable detection in sim. -->
 
   <xacro:property name="tag_mesh"
     value="package://volcaniarm_description/models/Apriltag36_11_00020/apriltag_36h11_id20.dae" />
+  <xacro:property name="tag_scale" value="${0.2 / 0.064}" />
 
   <!-- Tag visual link attached to right_arm_tip_link -->
   <link name="apriltag_link">
@@ -19,7 +20,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="${tag_mesh}" />
+        <mesh filename="${tag_mesh}" scale="${tag_scale} ${tag_scale} ${tag_scale}" />
       </geometry>
     </visual>
   </link>

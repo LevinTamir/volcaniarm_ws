@@ -28,6 +28,18 @@ def generate_launch_description():
         description="Add AprilTag to EE for calibration testing",
     )
 
+    camera_mount_x_arg = DeclareLaunchArgument(
+        "camera_mount_x",
+        default_value="0.25",
+        description="Camera mount position along X (range: 0.155 to 0.655)",
+    )
+
+    camera_mount_pitch_arg = DeclareLaunchArgument(
+        "camera_mount_pitch",
+        default_value="1.3",
+        description="Camera mount pitch in radians",
+    )
+
     # Get package paths
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
@@ -46,6 +58,8 @@ def generate_launch_description():
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
             ("world_name", LaunchConfiguration("world_name")),
             ("calibration", LaunchConfiguration("calibration")),
+            ("camera_mount_x", LaunchConfiguration("camera_mount_x")),
+            ("camera_mount_pitch", LaunchConfiguration("camera_mount_pitch")),
         ],
     )
 
@@ -96,6 +110,8 @@ def generate_launch_description():
             use_sim_time_arg,
             world_name_arg,
             calibration_arg,
+            camera_mount_x_arg,
+            camera_mount_pitch_arg,
             gazebo_launch,
             controller_launch,
             display_launch,

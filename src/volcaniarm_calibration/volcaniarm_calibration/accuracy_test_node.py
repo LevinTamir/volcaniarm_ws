@@ -344,6 +344,7 @@ class AccuracyTestNode(Node):
         self._save_raw_csv()
         self._save_summary_csv()
         self.get_logger().info('Accuracy test complete.')
+        raise SystemExit(0)
 
     def _save_raw_csv(self):
         filename = f'{self.output_prefix}_raw_{self.timestamp_str}.csv'
@@ -435,7 +436,7 @@ def main(args=None):
     executor.add_node(node)
     try:
         executor.spin()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     node.destroy_node()
     rclpy.shutdown()

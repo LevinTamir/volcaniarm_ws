@@ -4,12 +4,14 @@
 
   <xacro:arg name="use_sim" default="true" />
   <xacro:arg name="calibration" default="false" />
+  <xacro:arg name="camera_mount_x" default="0.25" />
+  <xacro:arg name="camera_mount_pitch" default="1.3" />
 
   <!-- Camera mount position tuning
        camera_mount_x range: 0.155 to 0.655
        camera_mount_pitch: rev joint pitch in radians -->
-  <xacro:property name="camera_mount_x" value="0.25" />
-  <xacro:property name="camera_mount_pitch" value="1.3" />
+  <xacro:property name="camera_mount_x" value="$(arg camera_mount_x)" />
+  <xacro:property name="camera_mount_pitch" value="$(arg camera_mount_pitch)" />
 
    <!-- ros2_control hardware interfaces -->
   <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_ros2_control.xacro" />
@@ -584,7 +586,9 @@
   </joint>
 
   <!-- ======================== CAMERA MOUNT ======================== -->
+  <!-- Skipped in calibration mode (camera is placed directly by realsense xacro) -->
 
+  <xacro:unless value="$(arg calibration)">
   <link name="camera_mount_linear_link">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -642,6 +646,7 @@
     <parent link="camera_mount_linear_link" />
     <child link="camera_mount_rev_link" />
   </joint>
+  </xacro:unless>
 
   <!-- ======================== CAMERA ======================== -->
 
@@ -668,11 +673,13 @@
       </geometry>
     </collision>
   </link>
-  <joint name="camera_joint" type="fixed">
-    <origin xyz="0.0160004150359285 0 0" rpy="3.14159 0 0" />
-    <parent link="camera_mount_rev_link" />
-    <child link="camera_link" />
-  </joint>
+  <xacro:unless value="$(arg calibration)">
+    <joint name="camera_joint" type="fixed">
+      <origin xyz="0.0160004150359285 0 0" rpy="3.14159 0 0" />
+      <parent link="camera_mount_rev_link" />
+      <child link="camera_link" />
+    </joint>
+  </xacro:unless>
 
   <!-- Camera optical frame -->
   <link name="camera_link_optical" />
