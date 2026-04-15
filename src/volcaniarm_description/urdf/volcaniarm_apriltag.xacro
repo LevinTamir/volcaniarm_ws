@@ -3,11 +3,11 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm_apriltag">
 
   <!-- AprilTag 36h11 ID 20 mounted on the end effector (sim only).
-       The tag is a flat 64mm square facing the camera. -->
+       The tag is a flat 64mm square facing +X direction.
+       Uses a DAE mesh with baked texture so it renders in both Gazebo and RViz. -->
 
-  <xacro:property name="tag_size" value="0.064" />
-  <xacro:property name="tag_texture_path"
-    value="$(find volcaniarm_description)/meshes/apriltag_36h11_id20.png" />
+  <xacro:property name="tag_mesh"
+    value="package://volcaniarm_description/models/Apriltag36_11_00020/apriltag_36h11_id20.dae" />
 
   <!-- Tag visual link attached to right_arm_tip_link -->
   <link name="apriltag_link">
@@ -16,40 +16,24 @@
       <mass value="0.001" />
       <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9" />
     </inertial>
-    <visual name="apriltag_visual">
+    <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <box size="${tag_size} ${tag_size} 0.001" />
+        <mesh filename="${tag_mesh}" />
       </geometry>
     </visual>
   </link>
 
   <joint name="apriltag_joint" type="fixed">
-    <!-- Tag mounted on EE tip, face pointing along X axis, rotated 45 deg -->
-    <origin xyz="0.04 0 0" rpy="0 1.5708 0.7854" />
+    <!-- Tag mounted on EE tip, offset along X, face pointing in +X direction.
+         The DAE quad face is on the Z plane, so rotate 90 deg around Y to face +X. -->
+    <origin xyz="0.04 0 0" rpy="0 ${pi/2} 0" />
     <parent link="right_arm_tip_link" />
     <child link="apriltag_link" />
   </joint>
 
   <gazebo reference="apriltag_joint">
     <preserveFixedJoint>true</preserveFixedJoint>
-  </gazebo>
-
-  <!-- Apply the AprilTag texture in Gazebo -->
-  <gazebo reference="apriltag_link">
-    <visual name="apriltag_visual">
-      <material>
-        <diffuse>1 1 1 1</diffuse>
-        <specular>0 0 0 0</specular>
-        <pbr>
-          <metal>
-            <albedo_map>${tag_texture_path}</albedo_map>
-            <metalness>0.0</metalness>
-            <roughness>1.0</roughness>
-          </metal>
-        </pbr>
-      </material>
-    </visual>
   </gazebo>
 
 </robot>
