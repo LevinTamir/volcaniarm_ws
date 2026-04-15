@@ -2,10 +2,10 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>volcaniarm_calibration</name>
-  <version>0.0.0</version>
-  <description>Hand-eye calibration for Volcaniarm using ArUco markers and easy_handeye2</description>
+  <version>0.1.0</version>
+  <description>AprilTag-based hand-eye calibration and EE accuracy testing for Volcaniarm</description>
   <maintainer email="tamirlvn@gmail.com">tamir</maintainer>
-  <license>TODO: License declaration</license>
+  <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
@@ -13,11 +13,15 @@
   <depend>rclpy</depend>
   <depend>tf2_ros</depend>
   <depend>geometry_msgs</depend>
-  <depend>visualization_msgs</depend>
   <depend>sensor_msgs</depend>
-  <depend>cv_bridge</depend>
-  <depend>easy_handeye2</depend>
-  <depend>aruco_opencv_msgs</depend>
+  <depend>control_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>volcaniarm_msgs</depend>
+
+  <exec_depend>apriltag_ros</exec_depend>
+  <exec_depend>realsense2_camera</exec_depend>
+  <exec_depend>easy_handeye2</exec_depend>
+  <exec_depend>rviz2</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

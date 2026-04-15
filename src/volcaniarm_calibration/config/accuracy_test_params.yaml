@@ -1,0 +1,38 @@
+accuracy_test_node:
+  ros__parameters:
+    # -- Target positions --
+    # Each target is [y, z] in the arm base_link frame.
+    # The node will cycle through these positions.
+    targets:
+      - [0.0, 0.6]
+      - [0.15, 0.5]
+      - [-0.15, 0.5]
+
+    # -- Test routine --
+    # Number of full cycles (visit every target once = 1 cycle)
+    num_cycles: 5
+    # Seconds to wait at each target before recording measurements
+    settle_time: 2.0
+    # Number of pose samples to collect at each visit (averaged)
+    samples_per_visit: 20
+    # Delay between consecutive pose samples [s]
+    sample_interval: 0.1
+
+    # -- Arm control --
+    joint_names:
+      - volcaniarm_right_elbow_joint
+      - volcaniarm_left_elbow_joint
+    trajectory_duration: 2.0
+    home_position: [0.0, 0.0]
+    return_home_between_targets: true
+
+    # -- AprilTag tracking --
+    # TF frames used to look up the EE pose via the apriltag
+    camera_frame: camera_color_optical_frame
+    tag_frame: apriltag_marker
+
+    # -- Output --
+    # Directory where CSV results are saved (~ is expanded)
+    output_dir: ~/volcaniarm_calibration_data
+    # Prefix for output filenames (timestamp is appended automatically)
+    output_prefix: ee_accuracy

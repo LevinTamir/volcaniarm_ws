@@ -1,0 +1,13 @@
+# RealSense camera launch arguments shared across calibration launch files.
+# These are passed as launch_arguments, not ROS parameters.
+realsense:
+  camera_name: camera
+  camera_namespace: ""
+  enable_color: "true"
+  enable_depth: "false"
+  enable_infra1: "false"
+  enable_infra2: "false"
+  align_depth.enable: "false"
+  rgb_camera.color_profile: "1920x1080x30"
+  pointcloud.enable: "false"
+  initial_reset: "false"

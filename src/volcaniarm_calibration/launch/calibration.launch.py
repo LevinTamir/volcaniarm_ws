@@ -1,4 +1,13 @@
+"""Launch hand-eye calibration using AprilTag and easy_handeye2.
+
+Starts the RealSense camera, AprilTag detector (which publishes TF directly),
+and the easy_handeye2 calibration GUI.
+The arm must already be running (bringup launched separately).
+"""
+
 import os
+import yaml
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -9,84 +18,82 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     calibration_share = get_package_share_directory('volcaniarm_calibration')
+    easy_handeye2_share = get_package_share_directory('easy_handeye2')
 
-    # --- Arguments ---
-    marker_size_arg = DeclareLaunchArgument(
-        'marker_size', default_value='0.05',
-        description='ArUco marker side length in meters')
+    # Load realsense config
+    rs_config_path = os.path.join(calibration_share, 'config', 'realsense_params.yaml')
+    with open(rs_config_path, 'r') as f:
+        rs_args = yaml.safe_load(f)['realsense']
 
-    marker_id_arg = DeclareLaunchArgument(
-        'marker_id', default_value='0',
-        description='ArUco marker ID on the end effector')
+    apriltag_config = os.path.join(calibration_share, 'config', 'apriltag_params.yaml')
 
-    # --- Config files ---
-    aruco_config = os.path.join(calibration_share, 'config', 'aruco_params.yaml')
-    calibration_config = os.path.join(calibration_share, 'config', 'calibration_params.yaml')
+    # -- Arguments --
+    calibration_type_arg = DeclareLaunchArgument(
+        'calibration_type', default_value='eye_on_base',
+        description='eye_on_base (camera fixed, tag on EE) or eye_in_hand')
 
-    # --- RealSense camera ---
+    robot_base_frame_arg = DeclareLaunchArgument(
+        'robot_base_frame', default_value='volcaniarm_base_link',
+        description='Robot base TF frame')
+
+    robot_effector_frame_arg = DeclareLaunchArgument(
+        'robot_effector_frame', default_value='right_arm_tip_link',
+        description='Robot end-effector TF frame')
+
+    tracking_base_frame_arg = DeclareLaunchArgument(
+        'tracking_base_frame', default_value='camera_color_optical_frame',
+        description='Camera TF frame')
+
+    tracking_marker_frame_arg = DeclareLaunchArgument(
+        'tracking_marker_frame', default_value='apriltag_marker',
+        description='AprilTag marker TF frame (must match tag.frames in apriltag_params)')
+
+    # -- RealSense camera --
     realsense_camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             os.path.join(
                 get_package_share_directory('realsense2_camera'),
                 'launch', 'rs_launch.py')
         ]),
-        launch_arguments={
-            'camera_name': 'camera',
-            'camera_namespace': '',
-            'enable_depth': 'true',
-            'enable_color': 'true',
-            'enable_infra1': 'false',
-            'enable_infra2': 'false',
-            'depth_module.depth_profile': '848x480x30',
-            'rgb_camera.color_profile': '848x480x30',
-            'align_depth.enable': 'true',
-            'pointcloud.enable': 'false',
-            'publish_tf': 'false',
-        }.items(),
+        launch_arguments=rs_args.items(),
     )
 
-    # --- ArUco marker detector (aruco_opencv) ---
-    aruco_node = Node(
-        package='aruco_opencv',
-        executable='aruco_tracker_autostart',
-        parameters=[aruco_config, {
-            'marker_size': LaunchConfiguration('marker_size'),
-        }],
+    # -- AprilTag detector (publishes TF: camera_optical -> apriltag_marker) --
+    apriltag_node = Node(
+        package='apriltag_ros',
+        executable='apriltag_node',
+        name='apriltag',
+        parameters=[apriltag_config],
+        remappings=[
+            ('image_rect', '/camera/camera/color/image_raw'),
+            ('camera_info', '/camera/camera/color/camera_info'),
+        ],
         output='screen',
     )
 
-    # --- ArUco TF bridge (publishes marker pose as TF) ---
-    aruco_tf_publisher = Node(
-        package='volcaniarm_calibration',
-        executable='aruco_tf_publisher',
-        parameters=[calibration_config, {
-            'marker_id': LaunchConfiguration('marker_id'),
-        }],
-        output='screen',
-    )
-
-    # --- easy_handeye2 calibration ---
-    easy_handeye2_share = get_package_share_directory('easy_handeye2')
+    # -- easy_handeye2 calibration --
     handeye_calibration = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             os.path.join(easy_handeye2_share, 'launch', 'calibrate.launch.py')
         ]),
         launch_arguments={
             'name': 'volcaniarm_calibration',
-            'calibration_type': 'eye_on_base',
-            'robot_base_frame': 'volcaniarm_base_link',
-            'robot_effector_frame': 'right_arm_tip_link',
-            'tracking_base_frame': 'camera_color_optical_frame',
-            'tracking_marker_frame': 'aruco_marker',
+            'calibration_type': LaunchConfiguration('calibration_type'),
+            'robot_base_frame': LaunchConfiguration('robot_base_frame'),
+            'robot_effector_frame': LaunchConfiguration('robot_effector_frame'),
+            'tracking_base_frame': LaunchConfiguration('tracking_base_frame'),
+            'tracking_marker_frame': LaunchConfiguration('tracking_marker_frame'),
             'freehand_robot_movement': 'true',
         }.items(),
     )
 
     return LaunchDescription([
-        marker_size_arg,
-        marker_id_arg,
+        calibration_type_arg,
+        robot_base_frame_arg,
+        robot_effector_frame_arg,
+        tracking_base_frame_arg,
+        tracking_marker_frame_arg,
         realsense_camera,
-        aruco_node,
-        aruco_tf_publisher,
+        apriltag_node,
         handeye_calibration,
     ])
