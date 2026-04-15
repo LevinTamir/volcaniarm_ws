@@ -10,7 +10,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
 
-  <depend>volcaniarm_interfaces</depend>
+  <depend>volcaniarm_msgs</depend>
   <depend>geometry_msgs</depend>
 
   <exec_depend>rclpy</exec_depend>

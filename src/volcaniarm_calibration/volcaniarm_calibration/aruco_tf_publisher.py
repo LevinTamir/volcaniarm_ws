@@ -1,18 +1,17 @@
 import rclpy
 from rclpy.node import Node
-from ros2_aruco_interfaces.msg import ArucoMarkers
+from aruco_opencv_msgs.msg import ArucoDetection
 from geometry_msgs.msg import TransformStamped
 from visualization_msgs.msg import Marker
 import tf2_ros
-import numpy as np
 
 
 class ArucoTfPublisher(Node):
     """Bridges ArUco marker detections to TF transforms for hand-eye calibration.
 
-    Subscribes to ArUco marker detections and publishes the marker pose
+    Subscribes to aruco_opencv detections and publishes the marker pose
     as a TF transform from the camera frame to the marker frame.
-    This is the glue between ros2_aruco and easy_handeye2.
+    This is the glue between aruco_opencv and easy_handeye2.
     """
 
     def __init__(self):
@@ -29,7 +28,7 @@ class ArucoTfPublisher(Node):
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
         self.sub = self.create_subscription(
-            ArucoMarkers, '/aruco_markers', self.aruco_callback, 10)
+            ArucoDetection, '/aruco_detections', self.aruco_callback, 10)
 
         self.marker_pub = self.create_publisher(
             Marker, '/calibration_marker', 10)
@@ -37,13 +36,14 @@ class ArucoTfPublisher(Node):
         self.get_logger().info(
             f'Waiting for ArUco marker ID {self.marker_id} detections...')
 
-    def aruco_callback(self, msg: ArucoMarkers):
-        try:
-            idx = list(msg.marker_ids).index(self.marker_id)
-        except ValueError:
+    def aruco_callback(self, msg: ArucoDetection):
+        for marker_pose in msg.markers:
+            if marker_pose.marker_id == self.marker_id:
+                break
+        else:
             return
 
-        pose = msg.poses[idx]
+        pose = marker_pose.pose
 
         t = TransformStamped()
         t.header.stamp = msg.header.stamp
