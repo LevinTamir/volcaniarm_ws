@@ -22,6 +22,12 @@ def generate_launch_description():
         description="Gazebo world name (without .sdf extension)",
     )
 
+    calibration_arg = DeclareLaunchArgument(
+        "calibration",
+        default_value="false",
+        description="Add AprilTag to EE for calibration testing",
+    )
+
     # Get package paths
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
@@ -39,6 +45,7 @@ def generate_launch_description():
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
             ("world_name", LaunchConfiguration("world_name")),
+            ("calibration", LaunchConfiguration("calibration")),
         ],
     )
 
@@ -88,6 +95,7 @@ def generate_launch_description():
         [
             use_sim_time_arg,
             world_name_arg,
+            calibration_arg,
             gazebo_launch,
             controller_launch,
             display_launch,

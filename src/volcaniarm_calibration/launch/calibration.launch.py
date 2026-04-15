@@ -1,12 +1,10 @@
-"""Launch hand-eye calibration using AprilTag and easy_handeye2.
+"""Launch AprilTag detector and easy_handeye2 for hand-eye calibration.
 
-Starts the RealSense camera, AprilTag detector (which publishes TF directly),
-and the easy_handeye2 calibration GUI.
-The arm must already be running (bringup launched separately).
+This launch file only starts the calibration-specific nodes (apriltag + handeye).
+The camera and arm should already be running via a bringup launch.
 """
 
 import os
-import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -20,14 +18,17 @@ def generate_launch_description():
     calibration_share = get_package_share_directory('volcaniarm_calibration')
     easy_handeye2_share = get_package_share_directory('easy_handeye2')
 
-    # Load realsense config
-    rs_config_path = os.path.join(calibration_share, 'config', 'realsense_params.yaml')
-    with open(rs_config_path, 'r') as f:
-        rs_args = yaml.safe_load(f)['realsense']
-
     apriltag_config = os.path.join(calibration_share, 'config', 'apriltag_params.yaml')
 
     # -- Arguments --
+    image_topic_arg = DeclareLaunchArgument(
+        'image_topic', default_value='/camera/camera/color/image_raw',
+        description='Camera image topic (real: /camera/camera/..., sim: /camera/...)')
+
+    camera_info_topic_arg = DeclareLaunchArgument(
+        'camera_info_topic', default_value='/camera/camera/color/camera_info',
+        description='Camera info topic')
+
     calibration_type_arg = DeclareLaunchArgument(
         'calibration_type', default_value='eye_on_base',
         description='eye_on_base (camera fixed, tag on EE) or eye_in_hand')
@@ -48,25 +49,15 @@ def generate_launch_description():
         'tracking_marker_frame', default_value='apriltag_marker',
         description='AprilTag marker TF frame (must match tag.frames in apriltag_params)')
 
-    # -- RealSense camera --
-    realsense_camera = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            os.path.join(
-                get_package_share_directory('realsense2_camera'),
-                'launch', 'rs_launch.py')
-        ]),
-        launch_arguments=rs_args.items(),
-    )
-
-    # -- AprilTag detector (publishes TF: camera_optical -> apriltag_marker) --
+    # -- AprilTag detector --
     apriltag_node = Node(
         package='apriltag_ros',
         executable='apriltag_node',
         name='apriltag',
         parameters=[apriltag_config],
         remappings=[
-            ('image_rect', '/camera/camera/color/image_raw'),
-            ('camera_info', '/camera/camera/color/camera_info'),
+            ('image_rect', LaunchConfiguration('image_topic')),
+            ('camera_info', LaunchConfiguration('camera_info_topic')),
         ],
         output='screen',
     )
@@ -88,12 +79,13 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        image_topic_arg,
+        camera_info_topic_arg,
         calibration_type_arg,
         robot_base_frame_arg,
         robot_effector_frame_arg,
         tracking_base_frame_arg,
         tracking_marker_frame_arg,
-        realsense_camera,
         apriltag_node,
         handeye_calibration,
     ])

@@ -25,6 +25,6 @@
 
     # Tag configuration
     tag:
-      ids: [0]
+      ids: [20]
       frames: [apriltag_marker]
       sizes: [0.064]

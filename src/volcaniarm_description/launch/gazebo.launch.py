@@ -30,6 +30,11 @@ def generate_launch_description():
 
     world_name_arg = DeclareLaunchArgument(name="world_name", default_value="empty")
 
+    calibration_arg = DeclareLaunchArgument(
+        name="calibration", default_value="false",
+        description="Add AprilTag to EE for calibration in simulation"
+    )
+
     world_path = PathJoinSubstitution(
         [
             volcaniarm_description,
@@ -51,7 +56,10 @@ def generate_launch_description():
 
     robot_description = ParameterValue(
         Command(
-            ["xacro ", LaunchConfiguration("model")]
+            [
+                "xacro ", LaunchConfiguration("model"),
+                " calibration:=", LaunchConfiguration("calibration"),
+            ]
         ),
         value_type=str,
     )
@@ -128,6 +136,7 @@ def generate_launch_description():
         [
             model_arg,
             world_name_arg,
+            calibration_arg,
             robot_state_publisher_node,
             gazebo_resource_path,
             gazebo,

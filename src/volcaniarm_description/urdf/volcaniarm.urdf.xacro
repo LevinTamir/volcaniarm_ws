@@ -3,6 +3,7 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm">
 
   <xacro:arg name="use_sim" default="true" />
+  <xacro:arg name="calibration" default="false" />
 
   <!-- Camera mount position tuning
        camera_mount_x range: 0.155 to 0.655
@@ -18,6 +19,11 @@
 
   <!-- Include RealSense camera frames for real hardware -->
   <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_realsense.xacro" />
+
+  <!-- Include AprilTag on EE for calibration in simulation -->
+  <xacro:if value="$(arg calibration)">
+    <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_apriltag.xacro" />
+  </xacro:if>
 
   <!-- World fixed link -->
   <link name="world" />
