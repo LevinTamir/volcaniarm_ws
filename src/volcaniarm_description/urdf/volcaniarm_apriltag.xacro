@@ -25,11 +25,32 @@
     </visual>
   </link>
 
-  <joint name="apriltag_joint" type="fixed">
-    <!-- Tag mounted on EE tip, offset along X, face pointing in +X direction.
-         The DAE quad face is on the Z plane, so rotate 90 deg around Y to face +X. -->
-    <origin xyz="0.04 0 0" rpy="0 ${pi/2} 0" />
+  <!-- Intermediate link to counter-rotate the EE angle so the tag is
+       parallel to the ground plane. The EE is tilted ~45 deg around X,
+       so rotate -45 deg to level it out. -->
+  <link name="apriltag_mount_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.001" />
+      <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9" />
+    </inertial>
+  </link>
+
+  <joint name="apriltag_mount_joint" type="fixed">
+    <origin xyz="0.04 0 0" rpy="${-pi/3.4} 0 0" />
     <parent link="right_arm_tip_link" />
+    <child link="apriltag_mount_link" />
+  </joint>
+
+  <gazebo reference="apriltag_mount_joint">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+
+  <joint name="apriltag_joint" type="fixed">
+    <!-- Tag face pointing in +X direction.
+         The DAE quad face is on the Z plane, so rotate 90 deg around Y to face +X. -->
+    <origin xyz="0 0 0" rpy="0 ${pi/2} 0" />
+    <parent link="apriltag_mount_link" />
     <child link="apriltag_link" />
   </joint>
 
