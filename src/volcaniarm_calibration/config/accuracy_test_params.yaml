@@ -31,6 +31,6 @@ accuracy_test_node:
 
     # -- Output --
     # Directory where CSV results are saved (~ is expanded)
-    output_dir: ~/volcaniarm_calibration_data
+    output_dir: ~/workspaces/volcaniarm_ws/data
     # Prefix for output filenames (timestamp is appended automatically)
     output_prefix: ee_accuracy
