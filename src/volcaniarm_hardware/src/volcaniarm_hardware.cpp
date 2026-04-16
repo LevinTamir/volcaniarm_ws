@@ -132,6 +132,17 @@ VolcaniArmHardware::on_configure(const rclcpp_lifecycle::State &)
     return hardware_interface::CallbackReturn::ERROR;
   }
 
+  // Create auxiliary node with home service
+  service_node_ = rclcpp::Node::make_shared("volcaniarm_hardware_services");
+  home_service_ = service_node_->create_service<std_srvs::srv::Trigger>(
+    "volcaniarm_hardware/home",
+    std::bind(&VolcaniArmHardware::home_service_callback_, this,
+              std::placeholders::_1, std::placeholders::_2));
+
+  executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+  executor_->add_node(service_node_);
+  executor_thread_ = std::thread([this]() { executor_->spin(); });
+
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -152,6 +163,16 @@ VolcaniArmHardware::on_activate(const rclcpp_lifecycle::State &)
 hardware_interface::CallbackReturn
 VolcaniArmHardware::on_deactivate(const rclcpp_lifecycle::State &)
 {
+  if (executor_) {
+    executor_->cancel();
+  }
+  if (executor_thread_.joinable()) {
+    executor_thread_.join();
+  }
+  home_service_.reset();
+  executor_.reset();
+  service_node_.reset();
+
   if (fd_ >= 0)
   {
     ::close(fd_);
@@ -163,16 +184,52 @@ VolcaniArmHardware::on_deactivate(const rclcpp_lifecycle::State &)
 hardware_interface::return_type
 VolcaniArmHardware::read(const rclcpp::Time &, const rclcpp::Duration & period)
 {
-  // Open-loop approximation: position = last command
-  // You can replace this with real feedback later.
-  hw_position_right_elbow_ = hw_position_command_right_elbow_;
-  hw_velocity_right_elbow_ = 0.0;
+  read_serial_();
 
-  hw_position_left_elbow_ = hw_position_command_left_elbow_;
-  hw_velocity_left_elbow_ = 0.0;
+  double dt = period.seconds();
+  if (dt > 0.0) {
+    hw_velocity_right_elbow_ = (hw_position_right_elbow_ - prev_position_right_elbow_) / dt;
+    hw_velocity_left_elbow_ = (hw_position_left_elbow_ - prev_position_left_elbow_) / dt;
+  }
+  prev_position_right_elbow_ = hw_position_right_elbow_;
+  prev_position_left_elbow_ = hw_position_left_elbow_;
 
-  (void)period;
   return hardware_interface::return_type::OK;
+}
+
+void VolcaniArmHardware::read_serial_()
+{
+  if (fd_ < 0) return;
+
+  // Read available bytes into buffer
+  char tmp[128];
+  ssize_t n = ::read(fd_, tmp, sizeof(tmp));
+  if (n <= 0) return;
+
+  for (ssize_t i = 0; i < n; i++) {
+    char c = tmp[i];
+    if (c == '\r') continue;
+
+    if (c == '\n') {
+      serial_buf_[serial_buf_pos_] = '\0';
+
+      // Parse position report: "S <steps1> <steps2>"
+      long steps1 = 0, steps2 = 0;
+      if (std::sscanf(serial_buf_, "S %ld %ld", &steps1, &steps2) == 2) {
+        double rad_per_step = (2.0 * M_PI) / steps_per_rev_;
+        hw_position_right_elbow_ = steps1 * rad_per_step + right_elbow_home_offset_;
+        hw_position_left_elbow_ = steps2 * rad_per_step + left_elbow_home_offset_;
+      }
+
+      serial_buf_pos_ = 0;
+    } else {
+      if (serial_buf_pos_ < SERIAL_BUF_SIZE - 1) {
+        serial_buf_[serial_buf_pos_++] = c;
+      } else {
+        serial_buf_pos_ = 0;
+      }
+    }
+  }
 }
 
 hardware_interface::return_type
@@ -265,6 +322,19 @@ bool VolcaniArmHardware::send_position_command_rad_(double position_rad_right, d
   }
 
   return true;
+}
+
+void VolcaniArmHardware::home_service_callback_(
+  const std_srvs::srv::Trigger::Request::SharedPtr /*request*/,
+  std_srvs::srv::Trigger::Response::SharedPtr response)
+{
+  if (home_()) {
+    response->success = true;
+    response->message = "Homing complete, positions reset to 0,0";
+  } else {
+    response->success = false;
+    response->message = "Homing failed: serial write error";
+  }
 }
 
 bool VolcaniArmHardware::home_()

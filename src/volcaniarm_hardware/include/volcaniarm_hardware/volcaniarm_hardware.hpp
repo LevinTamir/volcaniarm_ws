@@ -1,12 +1,15 @@
 #pragma once
 
+#include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "hardware_interface/system_interface.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
+#include "std_srvs/srv/trigger.hpp"
 
 namespace volcaniarm_hardware
 {
@@ -59,12 +62,32 @@ private:
   double right_elbow_home_offset_{0.0};
   double left_elbow_home_offset_{0.0};
 
+  // Serial read buffer for parsing ESP responses
+  static const int SERIAL_BUF_SIZE = 256;
+  char serial_buf_[SERIAL_BUF_SIZE];
+  int serial_buf_pos_{0};
+
+  // Previous position for velocity calculation
+  double prev_position_right_elbow_{0.0};
+  double prev_position_left_elbow_{0.0};
+
   bool configure_port_();
   bool send_position_command_rad_(double position_rad_right, double position_rad_left);
+  void read_serial_();
 
   /// Run homing sequence. Currently sends 'H' to ESP which resets to 0,0.
   /// TODO: replace with limit switch homing.
   bool home_();
+
+  // Auxiliary node for hosting the home service
+  rclcpp::Node::SharedPtr service_node_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr home_service_;
+  rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;
+  std::thread executor_thread_;
+
+  void home_service_callback_(
+    const std_srvs::srv::Trigger::Request::SharedPtr request,
+    std_srvs::srv::Trigger::Response::SharedPtr response);
 };
 
 }  // namespace volcaniarm_hardware
