@@ -61,6 +61,10 @@ private:
 
   bool configure_port_();
   bool send_position_command_rad_(double position_rad_right, double position_rad_left);
+
+  /// Run homing sequence. Currently sends 'H' to ESP which resets to 0,0.
+  /// TODO: replace with limit switch homing.
+  bool home_();
 };
 
 }  // namespace volcaniarm_hardware

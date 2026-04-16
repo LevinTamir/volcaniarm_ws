@@ -14,9 +14,9 @@
             </xacro:if>
             <xacro:unless value="$(arg use_sim)">
                 <plugin>volcaniarm_hardware/VolcaniArmHardware</plugin>
-                <param name="serial_port">/dev/ttyACM0</param>
+                <param name="serial_port">/dev/ttyUSB0</param>
                 <param name="baud_rate">115200</param>
-                <param name="steps_per_rev">1600.0</param>
+                <param name="steps_per_rev">4800.0</param>
             </xacro:unless>
         </hardware>
 

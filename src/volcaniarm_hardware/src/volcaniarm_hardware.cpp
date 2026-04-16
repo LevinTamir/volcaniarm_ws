@@ -125,6 +125,13 @@ VolcaniArmHardware::on_configure(const rclcpp_lifecycle::State &)
 
   ::usleep(200000);  // small delay for Arduino reset
 
+  if (!home_()) {
+    std::cerr << "[VolcaniArmHardware] Homing failed" << std::endl;
+    ::close(fd_);
+    fd_ = -1;
+    return hardware_interface::CallbackReturn::ERROR;
+  }
+
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -257,6 +264,27 @@ bool VolcaniArmHardware::send_position_command_rad_(double position_rad_right, d
     written += n;
   }
 
+  return true;
+}
+
+bool VolcaniArmHardware::home_()
+{
+  // TODO: implement full homing with limit switches.
+  // For now, send 'H' to the ESP which resets its position to 0,0.
+  const char cmd[] = "H\n";
+  ssize_t n = ::write(fd_, cmd, sizeof(cmd) - 1);
+  if (n < 0) {
+    std::cerr << "[VolcaniArmHardware] home command write failed: "
+              << std::strerror(errno) << std::endl;
+    return false;
+  }
+
+  hw_position_right_elbow_ = 0.0;
+  hw_position_command_right_elbow_ = 0.0;
+  hw_position_left_elbow_ = 0.0;
+  hw_position_command_left_elbow_ = 0.0;
+
+  std::cout << "[VolcaniArmHardware] Home: positions set to 0,0" << std::endl;
   return true;
 }
 
