@@ -1,5 +1,6 @@
 #include "volcaniarm_hardware/volcaniarm_hardware.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fcntl.h>
@@ -7,6 +8,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include "controller_manager_msgs/srv/switch_controller.hpp"
 #include "pluginlib/class_list_macros.hpp"
 
 namespace volcaniarm_hardware
@@ -138,6 +140,11 @@ VolcaniArmHardware::on_configure(const rclcpp_lifecycle::State &)
     "volcaniarm_hardware/home",
     std::bind(&VolcaniArmHardware::home_service_callback_, this,
               std::placeholders::_1, std::placeholders::_2));
+
+  // Read controller name from hardware parameter if provided
+  if (info_.hardware_parameters.count("controller_name")) {
+    controller_name_ = info_.hardware_parameters.at("controller_name");
+  }
 
   executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
   executor_->add_node(service_node_);
@@ -328,19 +335,80 @@ void VolcaniArmHardware::home_service_callback_(
   const std_srvs::srv::Trigger::Request::SharedPtr /*request*/,
   std_srvs::srv::Trigger::Response::SharedPtr response)
 {
-  if (home_()) {
-    response->success = true;
-    response->message = "Homing complete, positions reset to 0,0";
-  } else {
+  if (!home_()) {
     response->success = false;
     response->message = "Homing failed: serial write error";
+    return;
   }
+
+  if (!reset_controller_()) {
+    response->success = true;
+    response->message = "Homing complete, but controller reset failed -- send a trajectory to 0,0 manually";
+    return;
+  }
+
+  response->success = true;
+  response->message = "Homing complete, controller reset";
+}
+
+bool VolcaniArmHardware::reset_controller_()
+{
+  using SwitchController = controller_manager_msgs::srv::SwitchController;
+
+  // Use a dedicated node + executor for the service call to avoid deadlocking
+  // the main service executor (which is busy handling the home callback).
+  auto call_node = rclcpp::Node::make_shared("volcaniarm_hw_ctrl_reset");
+  auto client = call_node->create_client<SwitchController>(
+    "controller_manager/switch_controller");
+
+  if (!client->wait_for_service(std::chrono::seconds(2))) {
+    std::cerr << "[VolcaniArmHardware] controller_manager/switch_controller service not available" << std::endl;
+    return false;
+  }
+
+  rclcpp::executors::SingleThreadedExecutor call_executor;
+  call_executor.add_node(call_node);
+
+  // Deactivate
+  auto deactivate_req = std::make_shared<SwitchController::Request>();
+  deactivate_req->deactivate_controllers = {controller_name_};
+  deactivate_req->strictness = SwitchController::Request::STRICT;
+
+  auto deactivate_future = client->async_send_request(deactivate_req);
+  if (call_executor.spin_until_future_complete(deactivate_future, std::chrono::seconds(5)) !=
+      rclcpp::FutureReturnCode::SUCCESS)
+  {
+    std::cerr << "[VolcaniArmHardware] Deactivate controller timed out" << std::endl;
+    return false;
+  }
+  if (!deactivate_future.get()->ok) {
+    std::cerr << "[VolcaniArmHardware] Deactivate controller failed" << std::endl;
+    return false;
+  }
+
+  // Activate
+  auto activate_req = std::make_shared<SwitchController::Request>();
+  activate_req->activate_controllers = {controller_name_};
+  activate_req->strictness = SwitchController::Request::STRICT;
+
+  auto activate_future = client->async_send_request(activate_req);
+  if (call_executor.spin_until_future_complete(activate_future, std::chrono::seconds(5)) !=
+      rclcpp::FutureReturnCode::SUCCESS)
+  {
+    std::cerr << "[VolcaniArmHardware] Activate controller timed out" << std::endl;
+    return false;
+  }
+  if (!activate_future.get()->ok) {
+    std::cerr << "[VolcaniArmHardware] Activate controller failed" << std::endl;
+    return false;
+  }
+
+  std::cout << "[VolcaniArmHardware] Controller '" << controller_name_ << "' reset after homing" << std::endl;
+  return true;
 }
 
 bool VolcaniArmHardware::home_()
 {
-  // TODO: implement full homing with limit switches.
-  // For now, send 'H' to the ESP which resets its position to 0,0.
   const char cmd[] = "H\n";
   ssize_t n = ::write(fd_, cmd, sizeof(cmd) - 1);
   if (n < 0) {
@@ -349,13 +417,62 @@ bool VolcaniArmHardware::home_()
     return false;
   }
 
-  hw_position_right_elbow_ = 0.0;
-  hw_position_command_right_elbow_ = 0.0;
-  hw_position_left_elbow_ = 0.0;
-  hw_position_command_left_elbow_ = 0.0;
+  std::cout << "[VolcaniArmHardware] Homing started, waiting for completion..." << std::endl;
 
-  std::cout << "[VolcaniArmHardware] Home: positions set to 0,0" << std::endl;
-  return true;
+  // Wait for the ESP to complete homing and reply with "H 0 0".
+  // The ESP first sends "HOMING_START", then performs limit switch seeking,
+  // and finally sends "H 0 0" when done. This can take up to 30 seconds.
+  const int HOMING_TIMEOUT_SEC = 30;
+  char buf[256];
+  int buf_pos = 0;
+  auto start = std::chrono::steady_clock::now();
+
+  while (true) {
+    auto elapsed = std::chrono::steady_clock::now() - start;
+    if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() >= HOMING_TIMEOUT_SEC) {
+      std::cerr << "[VolcaniArmHardware] Homing timed out after "
+                << HOMING_TIMEOUT_SEC << "s" << std::endl;
+      return false;
+    }
+
+    char tmp[64];
+    ssize_t nr = ::read(fd_, tmp, sizeof(tmp));
+    if (nr <= 0) {
+      ::usleep(10000);  // 10ms poll interval
+      continue;
+    }
+
+    for (ssize_t i = 0; i < nr; i++) {
+      char c = tmp[i];
+      if (c == '\r') continue;
+
+      if (c == '\n') {
+        buf[buf_pos] = '\0';
+
+        // Check for homing complete response
+        long s1 = 0, s2 = 0;
+        if (std::sscanf(buf, "H %ld %ld", &s1, &s2) == 2) {
+          hw_position_right_elbow_ = right_elbow_home_offset_;
+          hw_position_command_right_elbow_ = right_elbow_home_offset_;
+          hw_position_left_elbow_ = left_elbow_home_offset_;
+          hw_position_command_left_elbow_ = left_elbow_home_offset_;
+
+          std::cout << "[VolcaniArmHardware] Homing complete" << std::endl;
+          return true;
+        }
+
+        // Log other messages from ESP during homing
+        std::cout << "[VolcaniArmHardware] ESP: " << buf << std::endl;
+        buf_pos = 0;
+      } else {
+        if (buf_pos < (int)sizeof(buf) - 1) {
+          buf[buf_pos++] = c;
+        } else {
+          buf_pos = 0;
+        }
+      }
+    }
+  }
 }
 
 }  // namespace volcaniarm_hardware

@@ -10,6 +10,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "std_srvs/srv/trigger.hpp"
+#include "controller_manager_msgs/srv/switch_controller.hpp"
 
 namespace volcaniarm_hardware
 {
@@ -88,6 +89,10 @@ private:
   void home_service_callback_(
     const std_srvs::srv::Trigger::Request::SharedPtr request,
     std_srvs::srv::Trigger::Response::SharedPtr response);
+
+  // Controller reset after homing
+  std::string controller_name_{"volcaniarm_controller"};
+  bool reset_controller_();
 };
 
 }  // namespace volcaniarm_hardware
