@@ -1,0 +1,108 @@
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <asset>
+    <up_axis>Z_UP</up_axis>
+  </asset>
+  <library_images>
+    <image id="tag_image" name="tag_image">
+      <init_from>materials/textures/tag36_11_00005.png</init_from>
+    </image>
+  </library_images>
+  <library_effects>
+    <effect id="tag_effect">
+      <profile_COMMON>
+        <newparam sid="tag_surface">
+          <surface type="2D">
+            <init_from>tag_image</init_from>
+          </surface>
+        </newparam>
+        <newparam sid="tag_sampler">
+          <sampler2D>
+            <source>tag_surface</source>
+            <minfilter>NEAREST</minfilter>
+            <magfilter>NEAREST</magfilter>
+          </sampler2D>
+        </newparam>
+        <technique sid="common">
+          <lambert>
+            <emission>
+              <color>0 0 0 1</color>
+            </emission>
+            <ambient>
+              <color>1 1 1 1</color>
+            </ambient>
+            <diffuse>
+              <texture texture="tag_sampler" texcoord="UVMap"/>
+            </diffuse>
+          </lambert>
+        </technique>
+      </profile_COMMON>
+    </effect>
+  </library_effects>
+  <library_materials>
+    <material id="tag_material" name="tag_material">
+      <instance_effect url="#tag_effect"/>
+    </material>
+  </library_materials>
+  <library_geometries>
+    <geometry id="tag_geom" name="apriltag">
+      <mesh>
+        <source id="tag_positions">
+          <float_array id="tag_positions_array" count="12">-0.032 -0.032 0 0.032 -0.032 0 0.032 0.032 0 -0.032 0.032 0</float_array>
+          <technique_common>
+            <accessor source="#tag_positions_array" count="4" stride="3">
+              <param name="X" type="float"/>
+              <param name="Y" type="float"/>
+              <param name="Z" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <source id="tag_normals">
+          <float_array id="tag_normals_array" count="24">0 0 1 0 0 1 0 0 1 0 0 1 0 0 -1 0 0 -1 0 0 -1 0 0 -1</float_array>
+          <technique_common>
+            <accessor source="#tag_normals_array" count="8" stride="3">
+              <param name="X" type="float"/>
+              <param name="Y" type="float"/>
+              <param name="Z" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <source id="tag_uvs">
+          <float_array id="tag_uvs_array" count="8">0 0 1 0 1 1 0 1</float_array>
+          <technique_common>
+            <accessor source="#tag_uvs_array" count="4" stride="2">
+              <param name="S" type="float"/>
+              <param name="T" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <vertices id="tag_vertices">
+          <input semantic="POSITION" source="#tag_positions"/>
+        </vertices>
+        <triangles count="4" material="tag_material">
+          <input semantic="VERTEX" source="#tag_vertices" offset="0"/>
+          <input semantic="NORMAL" source="#tag_normals" offset="1"/>
+          <input semantic="TEXCOORD" source="#tag_uvs" offset="2" set="0"/>
+          <p>0 0 0 1 1 1 2 2 2 0 0 0 2 2 2 3 3 3 2 4 2 1 5 1 0 6 0 3 7 3 2 4 2 0 6 0</p>
+        </triangles>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_visual_scenes>
+    <visual_scene id="tag_scene" name="tag_scene">
+      <node id="tag_node" name="tag_node" type="NODE">
+        <instance_geometry url="#tag_geom">
+          <bind_material>
+            <technique_common>
+              <instance_material symbol="tag_material" target="#tag_material">
+                <bind_vertex_input semantic="UVMap" input_semantic="TEXCOORD" input_set="0"/>
+              </instance_material>
+            </technique_common>
+          </bind_material>
+        </instance_geometry>
+      </node>
+    </visual_scene>
+  </library_visual_scenes>
+  <scene>
+    <instance_visual_scene url="#tag_scene"/>
+  </scene>
+</COLLADA>
