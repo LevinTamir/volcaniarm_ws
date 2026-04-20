@@ -7,6 +7,11 @@ integrates velocity from the stick, clamps to the workspace, calls
 ComputeIK, and streams a short-horizon JointTrajectory point to the
 volcaniarm_controller.
 
+On every deadman rising edge the node snaps its internal target to
+the arm's current EE position (computed via ComputeFK on the latest
+/joint_states), so pressing the deadman never teleports the arm —
+motion continues from wherever the arm already is.
+
 The /volcaniarm_controller/joint_trajectory topic is used (not the
 follow_joint_trajectory action) because the action handshake is too
 heavy for a 20 Hz streaming setpoint — the controller preempts
@@ -15,10 +20,10 @@ whatever was in flight the moment a new point arrives.
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Joy
+from sensor_msgs.msg import Joy, JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
-from volcaniarm_interfaces.srv import ComputeIK
+from volcaniarm_interfaces.srv import ComputeIK, ComputeFK
 
 
 class JoystickTeleopNode(Node):
@@ -27,31 +32,45 @@ class JoystickTeleopNode(Node):
 
         p = self._declare_params()
 
-        # Mutable EE target, seeded at home.
-        self.target_y = p['home_y']
-        self.target_z = p['home_z']
+        # EE target is None until the first deadman-press syncs it to
+        # the arm's current pose. While None, ticks are no-ops.
+        self.target_y = None
+        self.target_z = None
 
         # Latest joystick snapshot; updated in joy_cb, consumed on tick.
         self.deadman_held = False
+        self.deadman_prev = False
         self.axis_y_val = 0.0
         self.axis_z_val = 0.0
 
-        # Prevents overlapping IK calls when a previous one is in flight.
+        # Latest elbow joint positions, keyed by name (populated from
+        # /joint_states). Needed to FK → current EE when deadman is
+        # first pressed.
+        self.joint_positions = {}
+
+        # Prevents overlapping service calls.
         self.ik_pending = False
+        self.fk_pending = False
 
         self.ik_client = self.create_client(ComputeIK, 'compute_ik')
+        self.fk_client = self.create_client(ComputeFK, 'compute_fk')
         self.traj_pub = self.create_publisher(
             JointTrajectory, p['trajectory_topic'], 10)
         self.create_subscription(Joy, '/joy', self._joy_cb, 10)
+        self.create_subscription(JointState, '/joint_states',
+                                 self._joint_state_cb, 10)
         self.create_timer(1.0 / p['rate_hz'], self._tick)
 
         self.params = p
         self.dt = 1.0 / p['rate_hz']
+        self.right_joint = p['joint_names'][0]
+        self.left_joint = p['joint_names'][1]
 
         self.get_logger().info(
             f"Joystick teleop ready — deadman=btn{p['deadman_button']}, "
-            f"home=({p['home_y']:.2f}, {p['home_z']:.2f}), "
-            f"workspace Y[{p['y_min']}, {p['y_max']}] Z[{p['z_min']}, {p['z_max']}]"
+            f"workspace Y[{p['y_min']}, {p['y_max']}] "
+            f"Z[{p['z_min']}, {p['z_max']}]. "
+            "Target will sync to arm's current pose on first deadman press."
         )
 
     def _declare_params(self):
@@ -66,7 +85,6 @@ class JoystickTeleopNode(Node):
             'scale_z': 0.15,
             'y_min': -0.35, 'y_max': 0.35,
             'z_min': 0.30, 'z_max': 1.00,
-            'home_y': 0.0, 'home_z': 0.65,
             'trajectory_horizon': 0.2,
             'trajectory_topic': '/volcaniarm_controller/joint_trajectory',
             'joint_names': ['volcaniarm_right_elbow_joint',
@@ -85,8 +103,25 @@ class JoystickTeleopNode(Node):
         self.axis_y_val = msg.axes[y_idx] if y_idx < len(msg.axes) else 0.0
         self.axis_z_val = msg.axes[z_idx] if z_idx < len(msg.axes) else 0.0
 
+    def _joint_state_cb(self, msg: JointState):
+        for name, pos in zip(msg.name, msg.position):
+            self.joint_positions[name] = pos
+
     def _tick(self):
+        # Detect deadman rising edge → resync target to current EE.
+        rising_edge = self.deadman_held and not self.deadman_prev
+        self.deadman_prev = self.deadman_held
+
+        if rising_edge:
+            self._resync_target_from_current_pose()
+            return  # Skip this tick; next one commands from synced target.
+
         if not self.deadman_held or self.ik_pending:
+            return
+
+        # No target yet (first deadman press didn't complete / FK failed) →
+        # don't send anything.
+        if self.target_y is None or self.target_z is None:
             return
 
         # Integrate velocity → new target
@@ -123,6 +158,46 @@ class JoystickTeleopNode(Node):
         self.ik_pending = True
         future = self.ik_client.call_async(req)
         future.add_done_callback(self._on_ik_done)
+
+    def _resync_target_from_current_pose(self):
+        """Snap internal target to current EE via FK on live joint states."""
+        if self.fk_pending:
+            return
+        if self.right_joint not in self.joint_positions or \
+           self.left_joint not in self.joint_positions:
+            self.get_logger().warn(
+                'No /joint_states yet — deadman press ignored, '
+                'target not synced.', throttle_duration_sec=2.0)
+            return
+        if not self.fk_client.service_is_ready():
+            self.get_logger().warn(
+                'compute_fk service not ready — is volcaniarm_kinematics running?',
+                throttle_duration_sec=2.0,
+            )
+            return
+
+        # ComputeFK convention (see volcaniarm_kinematics.py): theta1 is
+        # the URDF right_elbow angle, theta2 is the URDF left_elbow angle.
+        req = ComputeFK.Request()
+        req.theta1 = self.joint_positions[self.right_joint]
+        req.theta2 = self.joint_positions[self.left_joint]
+        self.fk_pending = True
+        future = self.fk_client.call_async(req)
+        future.add_done_callback(self._on_fk_done)
+
+    def _on_fk_done(self, future):
+        self.fk_pending = False
+        try:
+            resp = future.result()
+        except Exception as e:
+            self.get_logger().error(f'FK call raised: {e}')
+            return
+        if not resp.success:
+            self.get_logger().warn(f'FK rejected: {resp.message}')
+            return
+        self.target_y, self.target_z = resp.y, resp.z
+        self.get_logger().info(
+            f'Target synced to current EE: y={resp.y:.3f}, z={resp.z:.3f}')
 
     def _on_ik_done(self, future):
         self.ik_pending = False
