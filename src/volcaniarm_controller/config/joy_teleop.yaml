@@ -1,0 +1,42 @@
+volcaniarm_joystick_teleop:
+  ros__parameters:
+    # Integration / publish rate
+    rate_hz: 20.0
+
+    # Hold-to-activate button (axes ignored unless held).
+    # Default 5 = RB (Xbox) / R1 (PS).
+    deadman_button: 5
+
+    # Axis mappings: left-stick X -> EE Y (arm plane),
+    #                left-stick Y -> EE Z (world up).
+    axis_y: 0
+    axis_z: 1
+    invert_y: false
+    invert_z: false
+
+    # Max velocities at full stick deflection [m/s].
+    scale_y: 0.15
+    scale_z: 0.15
+
+    # Workspace clamps [m] — keep in sync with
+    # volcaniarm_kinematics IK workspace box.
+    y_min: -0.35
+    y_max:  0.35
+    z_min:  0.30
+    z_max:  1.00
+
+    # Starting EE target [m]. Picked centered in the workspace.
+    home_y: 0.0
+    home_z: 0.65
+
+    # How far ahead each published trajectory point targets [s].
+    # Long enough that consecutive points interpolate smoothly,
+    # short enough that the controller tracks the stick responsively.
+    trajectory_horizon: 0.2
+
+    # Published trajectory topic + joint order (must match
+    # volcaniarm_controllers.yaml "joints" order: right first, left second).
+    trajectory_topic: /volcaniarm_controller/joint_trajectory
+    joint_names:
+      - volcaniarm_right_elbow_joint
+      - volcaniarm_left_elbow_joint

@@ -19,6 +19,10 @@
   <depend>visualization_msgs</depend>
   <depend>geometry_msgs</depend>
 
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>joy</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>volcaniarm_interfaces</exec_depend>
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>xacro</exec_depend>
