@@ -23,7 +23,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Joy, JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
-from volcaniarm_interfaces.srv import ComputeIK, ComputeFK
+from volcaniarm_msgs.srv import ComputeIK, ComputeFK
 
 
 class JoystickTeleopNode(Node):
