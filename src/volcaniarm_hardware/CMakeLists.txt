@@ -14,6 +14,8 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
+find_package(std_srvs REQUIRED)
+find_package(controller_manager_msgs REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/volcaniarm_hardware.cpp
@@ -30,6 +32,8 @@ ament_target_dependencies(${PROJECT_NAME}
   rclcpp_lifecycle
   hardware_interface
   pluginlib
+  std_srvs
+  controller_manager_msgs
 )
 
 pluginlib_export_plugin_description_file(hardware_interface
@@ -60,6 +64,8 @@ ament_export_dependencies(
   rclcpp_lifecycle
   hardware_interface
   pluginlib
+  std_srvs
+  controller_manager_msgs
 )
 
 ament_package()

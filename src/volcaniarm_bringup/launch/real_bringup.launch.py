@@ -5,6 +5,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -18,41 +19,13 @@ def generate_launch_description():
 
     serial_port_arg = DeclareLaunchArgument(
         "serial_port",
-        default_value="/dev/ttyACM0",
+        default_value="/dev/ttyUSB0",
         description="Serial port for hardware interface",
     )
 
     # Get package paths
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
-
-    # Display (RViz) launch
-    display_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_description_share,
-                "launch",
-                "display.launch.py",
-            )
-        ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
-        ],
-    )
-
-    # Controller launch (includes end effector marker)
-    controller_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_controller_share,
-                "launch",
-                "controller.launch.py",
-            )
-        ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
-        ],
-    )
 
     # Load controllers config
     controller_config_file = os.path.join(
@@ -61,21 +34,27 @@ def generate_launch_description():
         "volcaniarm_controllers.yaml",
     )
 
-    # Robot state publisher with real hardware (use_sim=false)
+    # Robot description with real hardware (use_sim=false)
+    robot_description_content = ParameterValue(
+        Command([
+            "xacro ",
+            os.path.join(
+                volcaniarm_description_share,
+                "urdf",
+                "volcaniarm.urdf.xacro",
+            ),
+            " use_sim:=false",
+        ]),
+        value_type=str,
+    )
+
+    # Robot state publisher
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
         parameters=[
             {
-                "robot_description": Command([
-                    "xacro ",
-                    os.path.join(
-                        volcaniarm_description_share,
-                        "urdf",
-                        "volcaniarm.urdf.xacro",
-                    ),
-                    " use_sim:=false",
-                ]),
+                "robot_description": robot_description_content,
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
             }
         ],
@@ -83,11 +62,11 @@ def generate_launch_description():
     )
 
     # Controller manager node (runs on PC, not in Gazebo)
-    # Gets robot_description from robot_state_publisher topic
     controller_manager = Node(
         package="controller_manager",
         executable="ros2_control_node",
         parameters=[
+            {"robot_description": robot_description_content},
             controller_config_file,
             {"use_sim_time": LaunchConfiguration("use_sim_time")},
         ],
@@ -118,6 +97,20 @@ def generate_launch_description():
         ],
         parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
         output="screen",
+    )
+
+    # Controller launch (includes end effector marker)
+    controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_controller_share,
+                "launch",
+                "controller.launch.py",
+            )
+        ),
+        launch_arguments=[
+            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ],
     )
 
     # Display (RViz) launch

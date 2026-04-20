@@ -1,8 +1,6 @@
 /*
 
 !.gitignore
-!/.claude/
-.claude/settings.local.json
 !/src/
 !/volcaniarm_firmware/
 
@@ -23,3 +21,6 @@ __pycache__/
 
 # Colcon
 .colcon/
+
+# Claude Code
+.claude/

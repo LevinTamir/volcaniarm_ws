@@ -8,7 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rclpy REQUIRED)
-find_package(volcaniarm_interfaces REQUIRED)
+find_package(volcaniarm_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
 install(

@@ -1,0 +1,30 @@
+/**:
+  ros__parameters:
+    # Image transport
+    image_transport: raw
+    # AprilTag family (36h11 is the most robust)
+    family: 36h11
+    # Default tag edge size in meters (0.2m in sim, 0.064m on real hardware)
+    size: 0.2
+    # Reject detections with bit errors above this threshold
+    max_hamming: 0
+    # QoS profile for image subscription
+    qos_profile: sensor_data
+
+    # Detector tuning
+    detector:
+      threads: 4
+      decimate: 1.0
+      blur: 0.0
+      refine: true
+      sharpening: 0.25
+      debug: false
+
+    # Pose estimation: "pnp" (more accurate) or "homography" (faster)
+    pose_estimation_method: "pnp"
+
+    # Tag configuration
+    tag:
+      ids: [20]
+      frames: [apriltag_marker]
+      sizes: [0.2]

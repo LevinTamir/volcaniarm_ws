@@ -2,9 +2,20 @@
 
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm_realsense">
 
-  <!-- RealSense D435i camera frames (only when using real hardware) -->
+  <!-- Calibration mode: camera at fixed position in front of robot (sim only).
+       base_link is at world (0,0,0.98) with yaw=pi, so base_link +X = world -X.
+       Camera at world (-1.5, 0, 0.5) facing world +X (toward robot):
+         In base_link frame: xyz=(1.5, 0, -0.48), yaw=pi to face base_link -X = world +X. -->
+  <xacro:if value="$(arg calibration)">
+    <joint name="calibration_camera_joint" type="fixed">
+      <origin xyz="0.8 0 -0.68" rpy="0 0 ${pi}" />
+      <parent link="base_link" />
+      <child link="camera_link" />
+    </joint>
+  </xacro:if>
+
+  <!-- Real hardware: RealSense D435i extra frames (only when not simulating) -->
   <xacro:unless value="$(arg use_sim)">
-    <!-- RealSense base link -->
     <link name="camera_camera_link" />
     <joint name="camera_to_realsense" type="fixed">
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -12,7 +23,6 @@
       <child link="camera_camera_link" />
     </joint>
 
-    <!-- RealSense depth frame -->
     <link name="camera_depth_frame" />
     <joint name="camera_depth_joint" type="fixed">
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -20,7 +30,6 @@
       <child link="camera_depth_frame" />
     </joint>
 
-    <!-- RealSense depth optical frame -->
     <link name="camera_depth_optical_frame" />
     <joint name="camera_depth_optical_joint" type="fixed">
       <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708" />
@@ -28,7 +37,6 @@
       <child link="camera_depth_optical_frame" />
     </joint>
 
-    <!-- RealSense color frame -->
     <link name="camera_color_frame" />
     <joint name="camera_color_joint" type="fixed">
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -36,7 +44,6 @@
       <child link="camera_color_frame" />
     </joint>
 
-    <!-- RealSense color optical frame -->
     <link name="camera_color_optical_frame" />
     <joint name="camera_color_optical_joint" type="fixed">
       <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708" />

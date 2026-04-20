@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from volcaniarm_calibration.export_calibration import main
+main()

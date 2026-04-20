@@ -1,5 +1,5 @@
 <sdf version="1.6">
-  <world name="lab">
+  <world name="calibration">
     <physics name="fast" type="dart">
       <max_step_size>0.005</max_step_size>
       <real_time_factor>1.0</real_time_factor>
@@ -55,7 +55,7 @@
       <grid>false</grid>
     </scene>
 
-    <!-- Small ground plane under the robot -->
+    <!-- Ground plane -->
     <model name="ground_plane">
       <static>true</static>
       <link name="link">
@@ -86,40 +86,6 @@
             <diffuse>0.45 0.3 0.15 1</diffuse>
             <specular>0.1 0.1 0.1 1</specular>
           </material>
-        </visual>
-      </link>
-    </model>
-
-    <!-- Potted weed: vase + plant as one model, origin at vase bottom -->
-    <model name="weed_target">
-      <static>true</static>
-      <pose>-0.12 0.25 0 0 0 0</pose>
-
-      <link name="vase_link">
-        <!-- Vase cylinder: 0.15m tall, shifted up so bottom sits at Z=0 -->
-        <visual name="vase_visual">
-          <pose>0 0 0.075 0 0 0</pose>
-          <geometry>
-            <cylinder>
-              <radius>0.04</radius>
-              <length>0.15</length>
-            </cylinder>
-          </geometry>
-          <material>
-            <ambient>0.05 0.05 0.05 1</ambient>
-            <diffuse>0.1 0.1 0.1 1</diffuse>
-          </material>
-        </visual>
-
-        <!-- Plant mesh sitting on top of the vase (Z=0.15) -->
-        <visual name="plant_visual">
-          <pose>0 0 0.15 0 0 0</pose>
-          <geometry>
-            <mesh>
-              <uri>model://plant/meshes/plant.dae</uri>
-              <scale>1 1 1</scale>
-            </mesh>
-          </geometry>
         </visual>
       </link>
     </model>

@@ -30,6 +30,21 @@ def generate_launch_description():
 
     world_name_arg = DeclareLaunchArgument(name="world_name", default_value="empty")
 
+    calibration_arg = DeclareLaunchArgument(
+        name="calibration", default_value="false",
+        description="Add AprilTag to EE for calibration in simulation"
+    )
+
+    camera_mount_x_arg = DeclareLaunchArgument(
+        name="camera_mount_x", default_value="0.25",
+        description="Camera mount position along X (range: 0.155 to 0.655)"
+    )
+
+    camera_mount_pitch_arg = DeclareLaunchArgument(
+        name="camera_mount_pitch", default_value="1.3",
+        description="Camera mount pitch in radians"
+    )
+
     world_path = PathJoinSubstitution(
         [
             volcaniarm_description,
@@ -51,7 +66,12 @@ def generate_launch_description():
 
     robot_description = ParameterValue(
         Command(
-            ["xacro ", LaunchConfiguration("model")]
+            [
+                "xacro ", LaunchConfiguration("model"),
+                " calibration:=", LaunchConfiguration("calibration"),
+                " camera_mount_x:=", LaunchConfiguration("camera_mount_x"),
+                " camera_mount_pitch:=", LaunchConfiguration("camera_mount_pitch"),
+            ]
         ),
         value_type=str,
     )
@@ -128,6 +148,9 @@ def generate_launch_description():
         [
             model_arg,
             world_name_arg,
+            calibration_arg,
+            camera_mount_x_arg,
+            camera_mount_pitch_arg,
             robot_state_publisher_node,
             gazebo_resource_path,
             gazebo,

@@ -11,6 +11,7 @@
 
   <depend>volcaniarm_description</depend>
   <depend>volcaniarm_controller</depend>
+  <depend>volcaniarm_calibration</depend>
   <depend>gazebo_ros</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>

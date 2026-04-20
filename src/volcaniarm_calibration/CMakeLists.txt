@@ -9,7 +9,8 @@ ament_python_install_package(${PROJECT_NAME})
 
 # Install Python executables
 install(PROGRAMS
-  src/aruco_tf_publisher
+  src/accuracy_test
+  src/export_calibration
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -21,6 +22,11 @@ install(DIRECTORY launch/
 # Install config files
 install(DIRECTORY config/
   DESTINATION share/${PROJECT_NAME}/config
+)
+
+# Install scripts
+install(DIRECTORY scripts/
+  DESTINATION share/${PROJECT_NAME}/scripts
 )
 
 ament_package()
