@@ -4,13 +4,28 @@
 
     <!-- Argument to switch between simulation and real hardware -->
     <xacro:arg name="use_sim" default="true" />
+    <!-- Simulation engine selection: "gazebo" or "isaac" (only used when use_sim=true) -->
+    <xacro:arg name="sim_engine" default="gazebo" />
+    <xacro:property name="sim_engine" value="$(arg sim_engine)" />
 
     <ros2_control name="RobotSystem" type="system">
 
     <!-- ros2_control Hardware Selection -->
         <hardware>
             <xacro:if value="$(arg use_sim)">
-                <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+                <xacro:if value="${sim_engine == 'gazebo'}">
+                    <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+                </xacro:if>
+                <xacro:if value="${sim_engine == 'isaac'}">
+                    <plugin>joint_state_topic_hardware_interface/JointStateTopicSystem</plugin>
+                    <param name="joint_commands_topic">/joint_commands</param>
+                    <!-- Read from Isaac's raw 4-joint publisher, not /joint_states.
+                         This keeps /joint_states owned by joint_state_broadcaster +
+                         the custom passive-joint publisher, avoiding duplicate
+                         joint-name entries on the same topic. -->
+                    <param name="joint_states_topic">/isaac_joint_states</param>
+                    <param name="sum_wrapped_joint_states">true</param>
+                </xacro:if>
             </xacro:if>
             <xacro:unless value="$(arg use_sim)">
                 <plugin>volcaniarm_hardware/VolcaniArmHardware</plugin>
@@ -30,6 +45,9 @@
               <param name="initial_value">0.0</param>
             </state_interface>
             <state_interface name="velocity" />
+            <!-- effort state_interface required by joint_state_topic_hardware_interface (Isaac path);
+                 harmless in Gazebo and real-hw paths where the field stays at 0. -->
+            <state_interface name="effort" />
         </joint>
 
         <joint name="volcaniarm_left_elbow_joint">
@@ -41,6 +59,7 @@
               <param name="initial_value">0.0</param>
             </state_interface>
             <state_interface name="velocity" />
+            <state_interface name="effort" />
         </joint>
 
     </ros2_control>
