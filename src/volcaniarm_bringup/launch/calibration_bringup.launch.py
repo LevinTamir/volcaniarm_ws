@@ -8,7 +8,7 @@ Calibration test nodes (e.g. accuracy test) should be launched separately:
   ros2 launch volcaniarm_calibration sim_accuracy_test.launch.py
 
 Usage:
-  ros2 launch volcaniarm_bringup sim_calibration_bringup.launch.py
+  ros2 launch volcaniarm_bringup calibration_bringup.launch.py
 """
 
 import os

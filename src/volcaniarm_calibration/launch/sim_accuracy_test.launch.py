@@ -2,7 +2,7 @@
 
 This launch file only starts the calibration-specific nodes.
 It expects the simulation (Gazebo, controllers, etc.) to already be running,
-typically launched via volcaniarm_bringup/sim_calibration_bringup.launch.py.
+typically launched via volcaniarm_bringup/calibration_bringup.launch.py.
 """
 
 import os
