@@ -1,11 +1,13 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "controller_interface/controller_interface.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "onnxruntime_cxx_api.h"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 #include "realtime_tools/realtime_buffer.hpp"
@@ -34,9 +36,13 @@ public:
     const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
 private:
-  // Runs the policy on the assembled observation vector. Phase 1 stub:
-  // returns zeros (so commanded target = default_joint_positions). Phase 2
-  // will load an ONNX model and run real inference.
+  // Loads the ONNX policy from `model_path_`. Returns true on success.
+  // If `model_path_` is empty or load fails, the controller keeps running
+  // with zero actions (arm holds at default) — useful for wiring tests.
+  bool load_model();
+
+  // Runs the policy on the observation. If the model isn't loaded,
+  // returns zeros (so commanded target = default_joint_positions).
   std::vector<double> run_inference(const std::vector<double> & observation);
 
   // Configuration (from parameters).
@@ -49,6 +55,17 @@ private:
 
   // Runtime state.
   std::vector<double> last_action_;
+
+  // ONNX runtime state.
+  std::unique_ptr<Ort::Env> onnx_env_;
+  std::unique_ptr<Ort::MemoryInfo> onnx_memory_info_;
+  std::unique_ptr<Ort::Session> onnx_session_;
+  std::vector<std::string> input_names_owned_;
+  std::vector<std::string> output_names_owned_;
+  std::vector<const char *> input_name_ptrs_;
+  std::vector<const char *> output_name_ptrs_;
+  std::vector<int64_t> input_shape_;
+  bool model_loaded_{false};
 
   // ROS I/O.
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr target_sub_;

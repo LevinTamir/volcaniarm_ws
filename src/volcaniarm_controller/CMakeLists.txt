@@ -9,6 +9,7 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(controller_interface REQUIRED)
 find_package(joint_trajectory_controller REQUIRED)
+find_package(onnxruntime_vendor REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
@@ -55,6 +56,7 @@ ament_target_dependencies(rl_policy_controller
   realtime_tools
   geometry_msgs
 )
+target_link_libraries(rl_policy_controller onnxruntime::onnxruntime)
 pluginlib_export_plugin_description_file(
   controller_interface rl_policy_controller.xml
 )
@@ -94,6 +96,7 @@ ament_export_include_directories(include)
 ament_export_dependencies(
   controller_interface
   joint_trajectory_controller
+  onnxruntime_vendor
   pluginlib
   rclcpp
   rclcpp_lifecycle

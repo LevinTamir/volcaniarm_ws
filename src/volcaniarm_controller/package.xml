@@ -12,6 +12,7 @@
 
   <depend>controller_interface</depend>
   <depend>joint_trajectory_controller</depend>
+  <depend>onnxruntime_vendor</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_lifecycle</depend>

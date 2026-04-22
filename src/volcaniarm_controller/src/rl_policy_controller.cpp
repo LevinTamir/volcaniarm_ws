@@ -61,11 +61,24 @@ RLPolicyController::on_configure(const rclcpp_lifecycle::State & /*previous_stat
       target_buffer_.writeFromNonRT(msg);
     });
 
+  if (!model_path_.empty()) {
+    if (!load_model()) {
+      RCLCPP_ERROR(
+        get_node()->get_logger(), "Failed to load ONNX model from '%s'", model_path_.c_str());
+      return controller_interface::CallbackReturn::ERROR;
+    }
+  } else {
+    RCLCPP_WARN(
+      get_node()->get_logger(),
+      "'model_path' is empty — running in stub mode (zero actions). "
+      "Set model_path to a trained policy.onnx to enable inference.");
+  }
+
   RCLCPP_INFO(
     get_node()->get_logger(),
     "RLPolicyController configured: %zu joints, action_scale=%.3f, target_topic=%s, model=%s",
     joint_names_.size(), action_scale_, target_topic_.c_str(),
-    model_path_.empty() ? "<stub>" : model_path_.c_str());
+    model_loaded_ ? model_path_.c_str() : "<stub>");
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -175,12 +188,100 @@ RLPolicyController::update(const rclcpp::Time & /*time*/, const rclcpp::Duration
   return controller_interface::return_type::OK;
 }
 
-std::vector<double>
-RLPolicyController::run_inference(const std::vector<double> & /*observation*/)
+bool
+RLPolicyController::load_model()
 {
-  // Phase 1 stub: return zeros so commanded target = default_joint_positions.
-  // Phase 2 will load an ONNX model and run real inference here.
-  return std::vector<double>(joint_names_.size(), 0.0);
+  try {
+    onnx_env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "RLPolicyController");
+    onnx_memory_info_ = std::make_unique<Ort::MemoryInfo>(
+      Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault));
+
+    Ort::SessionOptions opts;
+    opts.SetIntraOpNumThreads(1);
+    opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_BASIC);
+    onnx_session_ = std::make_unique<Ort::Session>(*onnx_env_, model_path_.c_str(), opts);
+
+    Ort::AllocatorWithDefaultOptions allocator;
+    const size_t n_inputs = onnx_session_->GetInputCount();
+    const size_t n_outputs = onnx_session_->GetOutputCount();
+    if (n_inputs != 1 || n_outputs != 1) {
+      RCLCPP_ERROR(
+        get_node()->get_logger(),
+        "ONNX model must have exactly 1 input and 1 output (got %zu / %zu)",
+        n_inputs, n_outputs);
+      return false;
+    }
+
+    input_names_owned_.emplace_back(onnx_session_->GetInputNameAllocated(0, allocator).get());
+    output_names_owned_.emplace_back(onnx_session_->GetOutputNameAllocated(0, allocator).get());
+    input_name_ptrs_ = {input_names_owned_[0].c_str()};
+    output_name_ptrs_ = {output_names_owned_[0].c_str()};
+
+    // Resolve any dynamic dim (-1) to 1. rsl_rl's exported policy expects
+    // shape [1, obs_dim], but some exporters leave batch as dynamic.
+    auto type_info = onnx_session_->GetInputTypeInfo(0);
+    auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+    input_shape_ = tensor_info.GetShape();
+    for (auto & d : input_shape_) {
+      if (d < 0) {
+        d = 1;
+      }
+    }
+
+    model_loaded_ = true;
+    RCLCPP_INFO(
+      get_node()->get_logger(), "Loaded ONNX policy: input=%s, output=%s",
+      input_name_ptrs_[0], output_name_ptrs_[0]);
+    return true;
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(get_node()->get_logger(), "ONNX load failed: %s", e.what());
+    model_loaded_ = false;
+    return false;
+  }
+}
+
+std::vector<double>
+RLPolicyController::run_inference(const std::vector<double> & observation)
+{
+  const size_t n = joint_names_.size();
+  if (!model_loaded_) {
+    return std::vector<double>(n, 0.0);
+  }
+
+  try {
+    std::vector<float> input(observation.begin(), observation.end());
+    Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
+      *onnx_memory_info_, input.data(), input.size(),
+      input_shape_.data(), input_shape_.size());
+
+    auto output_tensors = onnx_session_->Run(
+      Ort::RunOptions{nullptr},
+      input_name_ptrs_.data(), &input_tensor, 1,
+      output_name_ptrs_.data(), 1);
+
+    const float * out_data = output_tensors.front().GetTensorData<float>();
+    const auto out_shape = output_tensors.front().GetTensorTypeAndShapeInfo().GetShape();
+    size_t out_count = 1;
+    for (const auto d : out_shape) {
+      out_count *= (d > 0 ? static_cast<size_t>(d) : 1u);
+    }
+    if (out_count != n) {
+      RCLCPP_ERROR_THROTTLE(
+        get_node()->get_logger(), *get_node()->get_clock(), 1000,
+        "ONNX output count %zu != joint count %zu", out_count, n);
+      return std::vector<double>(n, 0.0);
+    }
+    std::vector<double> out(n);
+    for (size_t i = 0; i < n; ++i) {
+      out[i] = static_cast<double>(out_data[i]);
+    }
+    return out;
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR_THROTTLE(
+      get_node()->get_logger(), *get_node()->get_clock(), 1000,
+      "ONNX inference failed: %s", e.what());
+    return std::vector<double>(n, 0.0);
+  }
 }
 
 }  // namespace volcaniarm_controller
