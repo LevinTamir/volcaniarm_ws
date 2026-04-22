@@ -2,9 +2,9 @@ volcaniarm_kinematics:
   ros__parameters:
     # Link lengths
     L1: 0.41621           # Upper link (elbow) [m]
-    L2: 0.6225            # Lower link (arm) [m]
+    L2: 0.62243           # Lower link (arm) [m]
     l0: 0.215             # Shoulder separation from center [m]
-    base_z: 0.0582        # Shoulder Z offset in FK model [m]
+    base_z: 0.0632        # Shoulder Z offset in FK model [m]
 
     # FK ↔ URDF angle offsets
     left_fk_offset: 2.356   # ~3*pi/4
