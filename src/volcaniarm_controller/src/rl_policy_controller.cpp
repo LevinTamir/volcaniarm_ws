@@ -143,12 +143,29 @@ RLPolicyController::state_interface_configuration() const
 controller_interface::return_type
 RLPolicyController::update(const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
+  const size_t n = joint_names_.size();
+
   const auto target_ptr = target_buffer_.readFromRT();
   const bool has_target = target_ptr != nullptr && *target_ptr != nullptr;
 
+  // No target message yet → hold the default (home) pose instead of
+  // feeding a zero target into the policy. The policy was trained on a
+  // specific target distribution; feeding out-of-distribution poses
+  // produces unpredictable joint commands at startup.
+  if (!has_target) {
+    for (size_t i = 0; i < n; ++i) {
+      if (!command_interfaces_[i].set_value(default_joint_positions_[i])) {
+        RCLCPP_WARN_THROTTLE(
+          get_node()->get_logger(), *get_node()->get_clock(), 1000,
+          "Failed to write command on %s", command_interfaces_[i].get_name().c_str());
+      }
+    }
+    std::fill(last_action_.begin(), last_action_.end(), 0.0);
+    return controller_interface::return_type::OK;
+  }
+
   // Observation vector matching Volcaniarm-Reach-v0 obs order:
   //   [joint_pos_rel (N), pose_command (7), last_action (N)]
-  const size_t n = joint_names_.size();
   std::vector<double> observation;
   observation.reserve(2 * n + 7);
 
@@ -165,20 +182,15 @@ RLPolicyController::update(const rclcpp::Time & /*time*/, const rclcpp::Duration
   }
 
   // pose_command: [x, y, z, qw, qx, qy, qz] in target_frame
-  if (has_target) {
-    const auto & p = (*target_ptr)->pose.position;
-    const auto & o = (*target_ptr)->pose.orientation;
-    observation.push_back(p.x);
-    observation.push_back(p.y);
-    observation.push_back(p.z);
-    observation.push_back(o.w);
-    observation.push_back(o.x);
-    observation.push_back(o.y);
-    observation.push_back(o.z);
-  } else {
-    // No target yet — zero pose (identity quat). Policy will effectively idle.
-    observation.insert(observation.end(), {0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0});
-  }
+  const auto & p = (*target_ptr)->pose.position;
+  const auto & o = (*target_ptr)->pose.orientation;
+  observation.push_back(p.x);
+  observation.push_back(p.y);
+  observation.push_back(p.z);
+  observation.push_back(o.w);
+  observation.push_back(o.x);
+  observation.push_back(o.y);
+  observation.push_back(o.z);
 
   // last_action (raw, pre-scale)
   for (const double a : last_action_) {
