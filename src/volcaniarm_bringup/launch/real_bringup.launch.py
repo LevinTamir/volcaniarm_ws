@@ -2,8 +2,9 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -23,15 +24,39 @@ def generate_launch_description():
         description="Serial port for hardware interface",
     )
 
+    # Controller selector. Both controllers' YAMLs are always loaded
+    # into controller_manager, so runtime switching with
+    # `ros2 control switch_controllers ...` works regardless of the
+    # initial choice.
+    controller_arg = DeclareLaunchArgument(
+        "controller",
+        default_value="trajectory",
+        choices=["trajectory", "rl"],
+        description="Which controller to auto-spawn at startup",
+    )
+    is_trajectory = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'trajectory'"])
+    )
+    is_rl = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'rl'"])
+    )
+
     # Get package paths
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
 
-    # Load controllers config
+    # Load controllers config. Both files are passed so both controller
+    # types are registered with controller_manager and runtime switching
+    # is possible.
     controller_config_file = os.path.join(
         volcaniarm_controller_share,
         "config",
         "volcaniarm_controllers.yaml",
+    )
+    rl_controller_config_file = os.path.join(
+        volcaniarm_controller_share,
+        "config",
+        "volcaniarm_rl_controller.yaml",
     )
 
     # Robot description with real hardware (use_sim=false)
@@ -68,38 +93,14 @@ def generate_launch_description():
         parameters=[
             {"robot_description": robot_description_content},
             controller_config_file,
+            rl_controller_config_file,
             {"use_sim_time": LaunchConfiguration("use_sim_time")},
         ],
         output="screen",
     )
 
-    # Joint state broadcaster spawner
-    joint_state_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "joint_state_broadcaster",
-            "--controller-manager",
-            "/controller_manager",
-        ],
-        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
-        output="screen",
-    )
-
-    # Main arm controller spawner
-    volcaniarm_controller_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "volcaniarm_controller",
-            "--controller-manager",
-            "/controller_manager",
-        ],
-        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
-        output="screen",
-    )
-
-    # Controller launch (includes end effector marker)
+    # Trajectory-controller launch (spawns joint_state_broadcaster +
+    # volcaniarm_controller). Only included when controller:=trajectory.
     controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -111,6 +112,23 @@ def generate_launch_description():
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
         ],
+        condition=is_trajectory,
+    )
+
+    # RL-controller launch (spawns joint_state_broadcaster +
+    # volcaniarm_rl_controller). Only included when controller:=rl.
+    rl_controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_controller_share,
+                "launch",
+                "rl_controller.launch.py",
+            )
+        ),
+        launch_arguments=[
+            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ],
+        condition=is_rl,
     )
 
     # Display (RViz) launch
@@ -155,12 +173,12 @@ def generate_launch_description():
         [
             use_sim_time_arg,
             serial_port_arg,
+            controller_arg,
             robot_state_publisher,
             controller_manager,
-            joint_state_broadcaster_spawner,
-            volcaniarm_controller_spawner,
             display_launch,
             controller_launch,
+            rl_controller_launch,
             realsense_camera,
         ]
     )

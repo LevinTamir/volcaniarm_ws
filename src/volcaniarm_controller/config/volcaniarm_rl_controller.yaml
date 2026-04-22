@@ -1,0 +1,35 @@
+# Registered alongside `volcaniarm_controllers.yaml` — both must be
+# loaded into controller_manager at startup for runtime switching
+# (`ros2 control switch_controllers ...`) between trajectory and RL.
+
+controller_manager:
+  ros__parameters:
+    volcaniarm_rl_controller:
+      type: volcaniarm_controller/RLPolicyController
+
+
+volcaniarm_rl_controller:
+  ros__parameters:
+    # Actuated joints the policy commands. Must match the Isaac Lab
+    # training contract (order matters for obs + action vectors).
+    joints:
+      - volcaniarm_left_elbow_joint
+      - volcaniarm_right_elbow_joint
+
+    # Default joint positions used as the relative-obs baseline and as
+    # the action offset. Must match Isaac's `init_state.joint_pos`.
+    default_joint_positions: [0.0, 0.0]
+
+    # Action scale: target_q = default + action_scale * raw_action.
+    # Must match training's JointPositionActionCfg(scale=0.5).
+    action_scale: 0.5
+
+    # Policy model (ONNX, exported by play.py). Supports
+    # `$(find-pkg-share <pkg>)` substitution. Leave empty to run in
+    # stub mode (holds the arm at default_joint_positions).
+    model_path: "$(find-pkg-share volcaniarm_controller)/models/policy.onnx"
+
+    # EE target pose topic (geometry_msgs/PoseStamped, pose expressed
+    # in `target_frame`).
+    target_topic: /ee_target_pose
+    target_frame: volcaniarm_base_link

@@ -1,0 +1,3 @@
+# Trained policy artifacts live here but aren't committed.
+*.onnx
+*.pt

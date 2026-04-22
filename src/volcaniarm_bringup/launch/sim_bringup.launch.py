@@ -49,11 +49,27 @@ def generate_launch_description():
                     "(expects Isaac Sim already running with the ROS2 bridge and the scene loaded)",
     )
 
+    # Both controllers' YAMLs are loaded into controller_manager (via
+    # gazebo.launch.py / isaac.launch.py), so runtime switching works.
+    # This only selects which controller gets auto-spawned at startup.
+    controller_arg = DeclareLaunchArgument(
+        "controller",
+        default_value="trajectory",
+        choices=["trajectory", "rl"],
+        description="Which controller to auto-spawn at startup",
+    )
+
     is_gazebo = IfCondition(
         PythonExpression(["'", LaunchConfiguration("sim"), "' == 'gazebo'"])
     )
     is_isaac = IfCondition(
         PythonExpression(["'", LaunchConfiguration("sim"), "' == 'isaac'"])
+    )
+    is_trajectory = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'trajectory'"])
+    )
+    is_rl = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'rl'"])
     )
 
     # Get package paths
@@ -95,7 +111,8 @@ def generate_launch_description():
         condition=is_isaac,
     )
 
-    # Controller launch
+    # Trajectory-controller launch (spawns joint_state_broadcaster +
+    # volcaniarm_controller). Only included when controller:=trajectory.
     controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -107,6 +124,22 @@ def generate_launch_description():
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
         ],
+        condition=is_trajectory,
+    )
+
+    # RL-controller launch. Only included when controller:=rl.
+    rl_controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_controller_share,
+                "launch",
+                "rl_controller.launch.py",
+            )
+        ),
+        launch_arguments=[
+            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ],
+        condition=is_rl,
     )
 
     # Display (RViz) launch
@@ -145,9 +178,11 @@ def generate_launch_description():
             camera_mount_x_arg,
             camera_mount_pitch_arg,
             sim_arg,
+            controller_arg,
             gazebo_launch,
             isaac_launch,
             controller_launch,
+            rl_controller_launch,
             display_launch,
             motion_launch,
         ]

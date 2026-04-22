@@ -7,6 +7,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(controller_interface REQUIRED)
 find_package(joint_trajectory_controller REQUIRED)
 find_package(onnxruntime_vendor REQUIRED)
@@ -49,6 +50,7 @@ target_include_directories(rl_policy_controller PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 ament_target_dependencies(rl_policy_controller
+  ament_index_cpp
   controller_interface
   pluginlib
   rclcpp
@@ -74,7 +76,7 @@ install(
 )
 
 install(
-  DIRECTORY config launch
+  DIRECTORY config launch models
   DESTINATION share/${PROJECT_NAME}
 )
 
@@ -94,6 +96,7 @@ endif()
 ament_export_libraries(closed_loop_trajectory_controller rl_policy_controller)
 ament_export_include_directories(include)
 ament_export_dependencies(
+  ament_index_cpp
   controller_interface
   joint_trajectory_controller
   onnxruntime_vendor

@@ -44,6 +44,9 @@ def generate_launch_description():
     controllers_yaml = os.path.join(
         volcaniarm_controller, "config", "volcaniarm_controllers.yaml"
     )
+    rl_controllers_yaml = os.path.join(
+        volcaniarm_controller, "config", "volcaniarm_rl_controller.yaml"
+    )
 
     controller_manager_node = Node(
         package="controller_manager",
@@ -54,6 +57,7 @@ def generate_launch_description():
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
             },
             controllers_yaml,
+            rl_controllers_yaml,
         ],
         output="screen",
     )

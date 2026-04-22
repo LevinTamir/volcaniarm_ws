@@ -1,9 +1,11 @@
 #include "volcaniarm_controller/rl_policy_controller.hpp"
 
 #include <algorithm>
+#include <regex>
 #include <string>
 #include <vector>
 
+#include "ament_index_cpp/get_package_share_directory.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "rclcpp/logging.hpp"
 
@@ -62,10 +64,28 @@ RLPolicyController::on_configure(const rclcpp_lifecycle::State & /*previous_stat
     });
 
   if (!model_path_.empty()) {
+    // Expand $(find-pkg-share <pkg>) substitutions so configs can be
+    // deployment-agnostic (matching ros2_control_demos example 18 idiom).
+    static const std::regex pkg_share_regex(R"(\$\(find-pkg-share\s+([^\)]+)\))");
+    std::smatch match;
+    while (std::regex_search(model_path_, match, pkg_share_regex)) {
+      try {
+        const std::string share = ament_index_cpp::get_package_share_directory(match[1].str());
+        model_path_.replace(match.position(0), match.length(0), share);
+      } catch (const std::exception & e) {
+        RCLCPP_ERROR(
+          get_node()->get_logger(),
+          "Cannot resolve $(find-pkg-share %s): %s", match[1].str().c_str(), e.what());
+        return controller_interface::CallbackReturn::ERROR;
+      }
+    }
+
     if (!load_model()) {
-      RCLCPP_ERROR(
-        get_node()->get_logger(), "Failed to load ONNX model from '%s'", model_path_.c_str());
-      return controller_interface::CallbackReturn::ERROR;
+      RCLCPP_WARN(
+        get_node()->get_logger(),
+        "Failed to load ONNX model from '%s' — running in stub mode. "
+        "Drop a trained policy.onnx there and reload the controller.",
+        model_path_.c_str());
     }
   } else {
     RCLCPP_WARN(
