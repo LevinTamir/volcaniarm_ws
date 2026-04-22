@@ -20,9 +20,9 @@ class VolcaniarmKinematics(Node):
 
         # Kinematic parameters
         self.declare_parameter('L1', 0.41621)
-        self.declare_parameter('L2', 0.65)
+        self.declare_parameter('L2', 0.62243)
         self.declare_parameter('l0', 0.215)
-        self.declare_parameter('base_z', 0.0582)
+        self.declare_parameter('base_z', 0.0632)
         self.declare_parameter('left_fk_offset', 3.0 * math.pi / 4.0)
         self.declare_parameter('right_fk_offset', math.pi / 4.0)
 
