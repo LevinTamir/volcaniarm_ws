@@ -14,42 +14,44 @@
     </joint>
   </xacro:if>
 
-  <!-- Real hardware: RealSense D435i extra frames (only when not simulating) -->
-  <xacro:unless value="$(arg use_sim)">
-    <link name="camera_camera_link" />
-    <joint name="camera_to_realsense" type="fixed">
-      <origin xyz="0 0 0" rpy="0 0 0" />
-      <parent link="camera_link" />
-      <child link="camera_camera_link" />
-    </joint>
+  <!-- RealSense D435i extra frames. Defined in every mode (real and sim)
+       so that topics published with `frame_id=camera_color_optical_frame`
+       or `camera_depth_optical_frame` — by the real camera driver, by
+       Isaac Sim's ROS2 graph, or by Gazebo's sensor plugin — resolve in
+       TF. Harmless to have in Gazebo: no visuals/collisions/inertials. -->
+  <link name="camera_camera_link" />
+  <joint name="camera_to_realsense" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="camera_link" />
+    <child link="camera_camera_link" />
+  </joint>
 
-    <link name="camera_depth_frame" />
-    <joint name="camera_depth_joint" type="fixed">
-      <origin xyz="0 0 0" rpy="0 0 0" />
-      <parent link="camera_camera_link" />
-      <child link="camera_depth_frame" />
-    </joint>
+  <link name="camera_depth_frame" />
+  <joint name="camera_depth_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="camera_camera_link" />
+    <child link="camera_depth_frame" />
+  </joint>
 
-    <link name="camera_depth_optical_frame" />
-    <joint name="camera_depth_optical_joint" type="fixed">
-      <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708" />
-      <parent link="camera_depth_frame" />
-      <child link="camera_depth_optical_frame" />
-    </joint>
+  <link name="camera_depth_optical_frame" />
+  <joint name="camera_depth_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708" />
+    <parent link="camera_depth_frame" />
+    <child link="camera_depth_optical_frame" />
+  </joint>
 
-    <link name="camera_color_frame" />
-    <joint name="camera_color_joint" type="fixed">
-      <origin xyz="0 0 0" rpy="0 0 0" />
-      <parent link="camera_camera_link" />
-      <child link="camera_color_frame" />
-    </joint>
+  <link name="camera_color_frame" />
+  <joint name="camera_color_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="camera_camera_link" />
+    <child link="camera_color_frame" />
+  </joint>
 
-    <link name="camera_color_optical_frame" />
-    <joint name="camera_color_optical_joint" type="fixed">
-      <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708" />
-      <parent link="camera_color_frame" />
-      <child link="camera_color_optical_frame" />
-    </joint>
-  </xacro:unless>
+  <link name="camera_color_optical_frame" />
+  <joint name="camera_color_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708" />
+    <parent link="camera_color_frame" />
+    <child link="camera_color_optical_frame" />
+  </joint>
 
 </robot>
