@@ -1,7 +1,7 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
@@ -9,9 +9,32 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
+def _build_controller_manager(context, robot_description_content):
+    volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
+    mode = LaunchConfiguration("controller").perform(context)
+
+    yamls = []
+    if mode in ("traj", "all"):
+        yamls.append(os.path.join(
+            volcaniarm_controller_share, "config", "volcaniarm_controllers.yaml"))
+    if mode in ("policy", "all"):
+        yamls.append(os.path.join(
+            volcaniarm_controller_share, "config", "volcaniarm_rl_controller.yaml"))
+
+    return [Node(
+        package="controller_manager",
+        executable="ros2_control_node",
+        parameters=[
+            {"robot_description": robot_description_content},
+            *yamls,
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+        ],
+        output="screen",
+    )]
+
+
 def generate_launch_description():
 
-    # Arguments
     use_sim_time_arg = DeclareLaunchArgument(
         "use_sim_time",
         default_value="False",
@@ -24,56 +47,42 @@ def generate_launch_description():
         description="Serial port for hardware interface",
     )
 
-    # Controller selector. Both controllers' YAMLs are always loaded
-    # into controller_manager, so runtime switching with
-    # `ros2 control switch_controllers ...` works regardless of the
-    # initial choice.
+    # Controller mode:
+    #   traj   → only trajectory controller loaded + active (default)
+    #   policy → only RL policy controller loaded + active
+    #   all    → both loaded; trajectory active, policy inactive
+    #            (available to claim via `ros2 control switch_controllers`)
     controller_arg = DeclareLaunchArgument(
         "controller",
-        default_value="trajectory",
-        choices=["trajectory", "rl"],
-        description="Which controller to auto-spawn at startup",
-    )
-    is_trajectory = IfCondition(
-        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'trajectory'"])
-    )
-    is_rl = IfCondition(
-        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'rl'"])
+        default_value="traj",
+        choices=["traj", "policy", "all"],
+        description="Which controller(s) to load",
     )
 
-    # Get package paths
+    is_traj_active = IfCondition(
+        PythonExpression(
+            ["'", LaunchConfiguration("controller"), "' in ('traj', 'all')"]
+        )
+    )
+    is_policy_only = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'policy'"])
+    )
+    is_all = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'all'"])
+    )
+
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
 
-    # Load controllers config. Both files are passed so both controller
-    # types are registered with controller_manager and runtime switching
-    # is possible.
-    controller_config_file = os.path.join(
-        volcaniarm_controller_share,
-        "config",
-        "volcaniarm_controllers.yaml",
-    )
-    rl_controller_config_file = os.path.join(
-        volcaniarm_controller_share,
-        "config",
-        "volcaniarm_rl_controller.yaml",
-    )
-
-    # Robot description with real hardware (use_sim=false)
     robot_description_content = ParameterValue(
         Command([
             "xacro ",
-            os.path.join(
-                volcaniarm_description_share,
-                "urdf",
-                "volcaniarm.urdf.xacro",
-            ),
+            os.path.join(volcaniarm_description_share, "urdf", "volcaniarm.urdf.xacro"),
             " use_sim:=false",
         ]),
         value_type=str,
     )
 
-    # Robot state publisher
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -86,72 +95,52 @@ def generate_launch_description():
         output="screen",
     )
 
-    # Controller manager node (runs on PC, not in Gazebo)
-    controller_manager = Node(
-        package="controller_manager",
-        executable="ros2_control_node",
-        parameters=[
-            {"robot_description": robot_description_content},
-            controller_config_file,
-            rl_controller_config_file,
-            {"use_sim_time": LaunchConfiguration("use_sim_time")},
-        ],
-        output="screen",
-    )
-
-    # Trajectory-controller launch (spawns joint_state_broadcaster +
-    # volcaniarm_controller). Only included when controller:=trajectory.
+    # Trajectory sub-launch (JSB + trajectory active). Included for
+    # `traj` and `all`.
     controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_controller_share,
-                "launch",
-                "controller.launch.py",
-            )
+            os.path.join(volcaniarm_controller_share, "launch", "controller.launch.py")
         ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
-        ],
-        condition=is_trajectory,
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_traj_active,
     )
 
-    # RL-controller launch (spawns joint_state_broadcaster +
-    # volcaniarm_rl_controller). Only included when controller:=rl.
+    # Policy sub-launch (JSB + policy active). Included only for `policy`.
     rl_controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_controller_share,
-                "launch",
-                "rl_controller.launch.py",
-            )
+            os.path.join(volcaniarm_controller_share, "launch", "rl_controller.launch.py")
         ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
-        ],
-        condition=is_rl,
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_policy_only,
     )
 
-    # Display (RViz) launch
+    # For `all`: load the policy controller but leave it inactive so it
+    # can be claimed later via `ros2 control switch_controllers`.
+    rl_inactive_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            "volcaniarm_rl_controller",
+            "--controller-manager", "/controller_manager",
+            "--inactive",
+        ],
+        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        output="screen",
+        condition=is_all,
+    )
+
     display_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_description_share,
-                "launch",
-                "display.launch.py",
-            )
+            os.path.join(volcaniarm_description_share, "launch", "display.launch.py")
         ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
-        ],
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
     )
 
-    # RealSense camera launch (D435i)
     realsense_camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             os.path.join(
                 get_package_share_directory('realsense2_camera'),
-                'launch',
-                'rs_launch.py'
+                'launch', 'rs_launch.py'
             )
         ]),
         launch_arguments={
@@ -165,7 +154,7 @@ def generate_launch_description():
             'rgb_camera.color_profile': '848x480x30',
             'align_depth.enable': 'true',
             'pointcloud.enable': 'false',
-            'publish_tf': 'false',  # Disable - URDF handles all TF
+            'publish_tf': 'false',  # URDF handles all TF
         }.items(),
     )
 
@@ -175,10 +164,13 @@ def generate_launch_description():
             serial_port_arg,
             controller_arg,
             robot_state_publisher,
-            controller_manager,
+            OpaqueFunction(
+                function=lambda ctx: _build_controller_manager(ctx, robot_description_content)
+            ),
             display_launch,
             controller_launch,
             rl_controller_launch,
+            rl_inactive_spawner,
             realsense_camera,
         ]
     )

@@ -5,6 +5,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -49,14 +50,16 @@ def generate_launch_description():
                     "(expects Isaac Sim already running with the ROS2 bridge and the scene loaded)",
     )
 
-    # Both controllers' YAMLs are loaded into controller_manager (via
-    # gazebo.launch.py / isaac.launch.py), so runtime switching works.
-    # This only selects which controller gets auto-spawned at startup.
+    # Controller mode:
+    #   traj   → only trajectory controller loaded + active (default)
+    #   policy → only RL policy controller loaded + active
+    #   all    → both loaded; trajectory active, policy inactive
+    #            (available to claim via `ros2 control switch_controllers`)
     controller_arg = DeclareLaunchArgument(
         "controller",
-        default_value="trajectory",
-        choices=["trajectory", "rl"],
-        description="Which controller to auto-spawn at startup",
+        default_value="traj",
+        choices=["traj", "policy", "all"],
+        description="Which controller(s) to load",
     )
 
     is_gazebo = IfCondition(
@@ -65,11 +68,16 @@ def generate_launch_description():
     is_isaac = IfCondition(
         PythonExpression(["'", LaunchConfiguration("sim"), "' == 'isaac'"])
     )
-    is_trajectory = IfCondition(
-        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'trajectory'"])
+    is_traj_active = IfCondition(
+        PythonExpression(
+            ["'", LaunchConfiguration("controller"), "' in ('traj', 'all')"]
+        )
     )
-    is_rl = IfCondition(
-        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'rl'"])
+    is_policy_only = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'policy'"])
+    )
+    is_all = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'all'"])
     )
 
     # Get package paths
@@ -77,13 +85,12 @@ def generate_launch_description():
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
     volcaniarm_motion_share = get_package_share_directory("volcaniarm_motion")
 
-    # Gazebo launch (simulator + robot spawn + gz bridge + robot_state_publisher)
+    # Gazebo launch — passes `controller` through so the xacro emits
+    # the right <parameters> block(s) into the URDF.
     gazebo_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                volcaniarm_description_share,
-                "launch",
-                "gazebo.launch.py",
+                volcaniarm_description_share, "launch", "gazebo.launch.py"
             )
         ),
         launch_arguments=[
@@ -92,54 +99,56 @@ def generate_launch_description():
             ("calibration", LaunchConfiguration("calibration")),
             ("camera_mount_x", LaunchConfiguration("camera_mount_x")),
             ("camera_mount_pitch", LaunchConfiguration("camera_mount_pitch")),
+            ("controller", LaunchConfiguration("controller")),
         ],
         condition=is_gazebo,
     )
 
-    # Isaac launch (robot_state_publisher + standalone controller_manager with TopicBasedSystem)
+    # Isaac launch — loads the matching YAML(s) into its own controller_manager.
     isaac_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                volcaniarm_description_share,
-                "launch",
-                "isaac.launch.py",
+                volcaniarm_description_share, "launch", "isaac.launch.py"
             )
         ),
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
+            ("controller", LaunchConfiguration("controller")),
         ],
         condition=is_isaac,
     )
 
-    # Trajectory-controller launch (spawns joint_state_broadcaster +
-    # volcaniarm_controller). Only included when controller:=trajectory.
+    # Trajectory sub-launch (JSB + trajectory active). Included for
+    # `traj` and `all`.
     controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_controller_share,
-                "launch",
-                "controller.launch.py",
-            )
+            os.path.join(volcaniarm_controller_share, "launch", "controller.launch.py")
         ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
-        ],
-        condition=is_trajectory,
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_traj_active,
     )
 
-    # RL-controller launch. Only included when controller:=rl.
+    # Policy sub-launch (JSB + policy active). Included only for `policy`.
     rl_controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_controller_share,
-                "launch",
-                "rl_controller.launch.py",
-            )
+            os.path.join(volcaniarm_controller_share, "launch", "rl_controller.launch.py")
         ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_policy_only,
+    )
+
+    # For `all`: load the policy controller inactive so it can be claimed later.
+    rl_inactive_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            "volcaniarm_rl_controller",
+            "--controller-manager", "/controller_manager",
+            "--inactive",
         ],
-        condition=is_rl,
+        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        output="screen",
+        condition=is_all,
     )
 
     # Display (RViz) launch
@@ -183,6 +192,7 @@ def generate_launch_description():
             isaac_launch,
             controller_launch,
             rl_controller_launch,
+            rl_inactive_spawner,
             display_launch,
             motion_launch,
         ]

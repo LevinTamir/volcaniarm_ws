@@ -1,15 +1,40 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
+def _build_controller_manager(context, robot_description):
+    volcaniarm_controller = get_package_share_directory("volcaniarm_controller")
+    mode = LaunchConfiguration("controller").perform(context)
+
+    yamls = []
+    if mode in ("traj", "all"):
+        yamls.append(os.path.join(
+            volcaniarm_controller, "config", "volcaniarm_controllers.yaml"))
+    if mode in ("policy", "all"):
+        yamls.append(os.path.join(
+            volcaniarm_controller, "config", "volcaniarm_rl_controller.yaml"))
+
+    return [Node(
+        package="controller_manager",
+        executable="ros2_control_node",
+        parameters=[
+            {
+                "robot_description": robot_description,
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
+            },
+            *yamls,
+        ],
+        output="screen",
+    )]
+
+
 def generate_launch_description():
     volcaniarm_description = get_package_share_directory("volcaniarm_description")
-    volcaniarm_controller = get_package_share_directory("volcaniarm_controller")
 
     model_arg = DeclareLaunchArgument(
         name="model",
@@ -21,6 +46,13 @@ def generate_launch_description():
         "use_sim_time",
         default_value="True",
         description="Use simulation time (Isaac Sim publishes /clock when configured)",
+    )
+
+    controller_arg = DeclareLaunchArgument(
+        "controller",
+        default_value="traj",
+        choices=["traj", "policy", "all"],
+        description="Which controller(s) to load into controller_manager",
     )
 
     robot_description = ParameterValue(
@@ -41,32 +73,14 @@ def generate_launch_description():
         ],
     )
 
-    controllers_yaml = os.path.join(
-        volcaniarm_controller, "config", "volcaniarm_controllers.yaml"
-    )
-    rl_controllers_yaml = os.path.join(
-        volcaniarm_controller, "config", "volcaniarm_rl_controller.yaml"
-    )
-
-    controller_manager_node = Node(
-        package="controller_manager",
-        executable="ros2_control_node",
-        parameters=[
-            {
-                "robot_description": robot_description,
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            },
-            controllers_yaml,
-            rl_controllers_yaml,
-        ],
-        output="screen",
-    )
-
     return LaunchDescription(
         [
             model_arg,
             use_sim_time_arg,
+            controller_arg,
             robot_state_publisher_node,
-            controller_manager_node,
+            OpaqueFunction(
+                function=lambda ctx: _build_controller_manager(ctx, robot_description)
+            ),
         ]
     )

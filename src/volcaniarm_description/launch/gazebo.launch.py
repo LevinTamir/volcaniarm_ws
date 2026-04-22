@@ -45,6 +45,13 @@ def generate_launch_description():
         description="Camera mount pitch in radians"
     )
 
+    controller_arg = DeclareLaunchArgument(
+        name="controller",
+        default_value="traj",
+        choices=["traj", "policy", "all"],
+        description="Which controller(s) to load into gz_ros2_control",
+    )
+
     world_path = PathJoinSubstitution(
         [
             volcaniarm_description,
@@ -71,6 +78,7 @@ def generate_launch_description():
                 " calibration:=", LaunchConfiguration("calibration"),
                 " camera_mount_x:=", LaunchConfiguration("camera_mount_x"),
                 " camera_mount_pitch:=", LaunchConfiguration("camera_mount_pitch"),
+                " controller:=", LaunchConfiguration("controller"),
             ]
         ),
         value_type=str,
@@ -151,6 +159,7 @@ def generate_launch_description():
             calibration_arg,
             camera_mount_x_arg,
             camera_mount_pitch_arg,
+            controller_arg,
             robot_state_publisher_node,
             gazebo_resource_path,
             gazebo,
