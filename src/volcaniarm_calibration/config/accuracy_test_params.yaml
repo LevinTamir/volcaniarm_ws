@@ -27,7 +27,7 @@ accuracy_test_node:
     # -- AprilTag tracking --
     # TF frames used to look up the EE pose via the apriltag
     camera_frame: camera_color_optical_frame
-    tag_frame: apriltag_marker
+    tag_frame: apriltag_marker_ee
 
     # -- Output --
     # Directory where CSV results are saved (~ is expanded)

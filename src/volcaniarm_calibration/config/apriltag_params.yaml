@@ -4,8 +4,8 @@
     image_transport: raw
     # AprilTag family (36h11 is the most robust)
     family: 36h11
-    # Default tag edge size in meters (0.2m in sim, 0.064m on real hardware)
-    size: 0.2
+    # Default tag edge size in meters (active/black-square size)
+    size: 0.064
     # Reject detections with bit errors above this threshold
     max_hamming: 0
     # QoS profile for image subscription
@@ -24,7 +24,9 @@
     pose_estimation_method: "pnp"
 
     # Tag configuration
+    # ID 20: EE marker (apriltag_marker_ee)
+    # ID 5:  base-link reference marker (apriltag_marker_base)
     tag:
-      ids: [20]
-      frames: [apriltag_marker]
-      sizes: [0.2]
+      ids: [20, 5]
+      frames: [apriltag_marker_ee, apriltag_marker_base]
+      sizes: [0.064, 0.064]
