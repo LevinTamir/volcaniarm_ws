@@ -63,6 +63,11 @@ private:
   double right_elbow_home_offset_{0.0};
   double left_elbow_home_offset_{0.0};
 
+  // Whether to trigger limit-switch homing automatically in on_configure.
+  // When false, the service "volcaniarm_hardware/home" can still be used
+  // to home manually at any time.
+  bool auto_home_on_configure_{false};
+
   // Serial read buffer for parsing ESP responses
   static const int SERIAL_BUF_SIZE = 256;
   char serial_buf_[SERIAL_BUF_SIZE];

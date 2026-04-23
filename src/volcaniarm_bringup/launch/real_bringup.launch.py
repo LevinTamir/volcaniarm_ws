@@ -47,6 +47,15 @@ def generate_launch_description():
         description="Serial port for hardware interface",
     )
 
+    homing_arg = DeclareLaunchArgument(
+        "homing",
+        default_value="false",
+        choices=["true", "false"],
+        description="If true, run limit-switch homing during hardware on_configure. "
+                    "If false, boot without homing and use the volcaniarm_hardware/home "
+                    "service to home manually when ready.",
+    )
+
     # Controller mode:
     #   traj   → only trajectory controller loaded + active (default)
     #   policy → only RL policy controller loaded + active
@@ -79,6 +88,7 @@ def generate_launch_description():
             "xacro ",
             os.path.join(volcaniarm_description_share, "urdf", "volcaniarm.urdf.xacro"),
             " use_sim:=false",
+            " auto_home:=", LaunchConfiguration("homing"),
         ]),
         value_type=str,
     )
@@ -136,6 +146,15 @@ def generate_launch_description():
         launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
     )
 
+    motion_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory("volcaniarm_motion"),
+                "launch", "motion.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+    )
+
     realsense_camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             os.path.join(
@@ -162,6 +181,7 @@ def generate_launch_description():
         [
             use_sim_time_arg,
             serial_port_arg,
+            homing_arg,
             controller_arg,
             robot_state_publisher,
             OpaqueFunction(
@@ -171,6 +191,7 @@ def generate_launch_description():
             controller_launch,
             rl_controller_launch,
             rl_inactive_spawner,
+            motion_launch,
             realsense_camera,
         ]
     )

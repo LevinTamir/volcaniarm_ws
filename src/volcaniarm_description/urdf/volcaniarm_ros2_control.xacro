@@ -7,6 +7,8 @@
     <!-- Simulation engine selection: "gazebo" or "isaac" (only used when use_sim=true) -->
     <xacro:arg name="sim_engine" default="gazebo" />
     <xacro:property name="sim_engine" value="$(arg sim_engine)" />
+    <!-- Auto-home via limit switches during on_configure (real hardware only) -->
+    <xacro:arg name="auto_home" default="false" />
 
     <ros2_control name="RobotSystem" type="system">
 
@@ -32,6 +34,7 @@
                 <param name="serial_port">/dev/ttyUSB0</param>
                 <param name="baud_rate">115200</param>
                 <param name="steps_per_rev">153600.0</param>
+                <param name="auto_home_on_configure">$(arg auto_home)</param>
             </xacro:unless>
         </hardware>
 
@@ -45,9 +48,6 @@
               <param name="initial_value">0.0</param>
             </state_interface>
             <state_interface name="velocity" />
-            <!-- effort state_interface required by joint_state_topic_hardware_interface (Isaac path);
-                 harmless in Gazebo and real-hw paths where the field stays at 0. -->
-            <state_interface name="effort" />
         </joint>
 
         <joint name="volcaniarm_left_elbow_joint">
@@ -59,7 +59,6 @@
               <param name="initial_value">0.0</param>
             </state_interface>
             <state_interface name="velocity" />
-            <state_interface name="effort" />
         </joint>
 
     </ros2_control>
