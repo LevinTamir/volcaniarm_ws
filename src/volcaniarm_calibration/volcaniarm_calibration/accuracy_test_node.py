@@ -54,7 +54,7 @@ class AccuracyTestNode(Node):
         self.declare_parameter('home_position', [0.0, 0.0])
         self.declare_parameter('return_home_between_targets', True)
         self.declare_parameter('camera_frame', 'camera_color_optical_frame')
-        self.declare_parameter('tag_frame', 'apriltag_marker')
+        self.declare_parameter('tag_frame', 'apriltag_marker_ee')
         self.declare_parameter('output_dir', '~/volcaniarm_calibration_data')
         self.declare_parameter('output_prefix', 'ee_accuracy')
 

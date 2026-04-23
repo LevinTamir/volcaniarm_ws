@@ -46,7 +46,7 @@ def generate_launch_description():
         description='Camera TF frame')
 
     tracking_marker_frame_arg = DeclareLaunchArgument(
-        'tracking_marker_frame', default_value='apriltag_marker',
+        'tracking_marker_frame', default_value='apriltag_marker_ee',
         description='AprilTag marker TF frame (must match tag.frames in apriltag_params)')
 
     # -- AprilTag detector --
