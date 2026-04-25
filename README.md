@@ -42,6 +42,7 @@ git clone --recurse-submodules git@github.com:LevinTamir/volcaniarm_ws.git .
 The hardware interface expects the ESP32 at `/dev/volcaniarm`. Plug in the ESP and run the installer once: it auto-detects the device's serial number, fills in the udev rule, and reloads udev.
 
 ```bash
+cd <your_ws_path>/volcaniarm_ws
 src/volcaniarm_hardware/udev/install.sh
 ```
 
@@ -49,16 +50,29 @@ To remove: `src/volcaniarm_hardware/udev/install.sh --uninstall`.
 
 ## Build
 
+Build and source:
+
 ```bash
+cd <your_ws_path>/volcaniarm_ws
 colcon build --symlink-install
 source install/setup.bash
+```
 
-# Simulation
+Simulation:
+
+```bash
 ros2 launch volcaniarm_bringup sim_bringup.launch.py
+```
 
-# Real robot
+Real robot:
+
+```bash
 ros2 launch volcaniarm_bringup real_bringup.launch.py
 ```
+
+> **Note:** Common launch args (run with `--show-args` for the full list):
+> - **sim**: `sim:=gazebo/isaac`, `controller:=traj/policy/all`, `world_name:=<name>`, `calibration:=true/false`
+> - **real**: `controller:=traj/policy/all`, `homing:=true/false`
 
 ### Related repos
 - Firmware: [volcaniarm_firmware](https://github.com/LevinTamir/volcaniarm_firmware)
