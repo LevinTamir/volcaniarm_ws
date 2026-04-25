@@ -43,8 +43,9 @@ def generate_launch_description():
 
     serial_port_arg = DeclareLaunchArgument(
         "serial_port",
-        default_value="/dev/ttyUSB0",
-        description="Serial port for hardware interface",
+        default_value="/dev/volcaniarm",
+        description="Serial port for hardware interface (stable symlink "
+                    "created by the udev rule in volcaniarm_hardware/udev/)",
     )
 
     homing_arg = DeclareLaunchArgument(

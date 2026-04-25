@@ -37,6 +37,16 @@ cd <your_ws_path>/volcaniarm_ws
 git clone --recurse-submodules git@github.com:LevinTamir/volcaniarm_ws.git .
 ```
 
+### Real hardware: pin the ESP32 to a stable port
+
+The hardware interface expects the ESP32 at `/dev/volcaniarm`. Plug in the ESP and run the installer once — it auto-detects the device's serial number, fills in the udev rule, and reloads udev:
+
+```bash
+src/volcaniarm_hardware/udev/install.sh
+```
+
+To remove later: `src/volcaniarm_hardware/udev/install.sh --uninstall`.
+
 ## Build
 
 ```bash

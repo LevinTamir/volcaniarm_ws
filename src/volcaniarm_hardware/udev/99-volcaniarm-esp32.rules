@@ -1,0 +1,16 @@
+# Volcaniarm ESP32 (CP210x USB-UART bridge) -- creates a stable /dev/volcaniarm
+# symlink so ros2_control always finds the controller regardless of which
+# /dev/ttyUSBx the kernel assigns.
+#
+# Setup:
+#   1. Plug in the ESP and confirm a /dev/ttyUSB* device appears.
+#   2. Find your device's serial:
+#        udevadm info -n /dev/ttyUSB0 | grep ID_SERIAL_SHORT
+#   3. Replace <YOUR_ESP_SERIAL> below with the value.
+#   4. Install:
+#        sudo cp 99-volcaniarm-esp32.rules /etc/udev/rules.d/
+#        sudo udevadm control --reload-rules
+#        sudo udevadm trigger
+#   5. Unplug + replug the ESP. Verify /dev/volcaniarm exists.
+
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{serial}=="<YOUR_ESP_SERIAL>", SYMLINK+="volcaniarm", MODE="0666", GROUP="dialout"

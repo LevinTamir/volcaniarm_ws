@@ -31,7 +31,7 @@
             </xacro:if>
             <xacro:unless value="$(arg use_sim)">
                 <plugin>volcaniarm_hardware/VolcaniArmHardware</plugin>
-                <param name="serial_port">/dev/ttyUSB0</param>
+                <param name="serial_port">/dev/volcaniarm</param>
                 <param name="baud_rate">115200</param>
                 <param name="steps_per_rev">153600.0</param>
                 <param name="auto_home_on_configure">$(arg auto_home)</param>
