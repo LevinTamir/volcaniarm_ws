@@ -6,6 +6,8 @@ controller_manager:
   ros__parameters:
     volcaniarm_rl_controller:
       type: volcaniarm_controller/RLPolicyController
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
 
 
 volcaniarm_rl_controller:
