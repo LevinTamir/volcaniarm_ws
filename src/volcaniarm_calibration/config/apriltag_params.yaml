@@ -5,22 +5,43 @@
     # AprilTag family (36h11 is the most robust)
     family: 36h11
     # Default tag edge size in meters (active/black-square size)
-    size: 0.064
-    # Reject detections with bit errors above this threshold
+    size: 0.200
+    # Strict decoding. The 36h11 family has Hamming distance 11, so
+    # 0-bit-error rejection still gives essentially zero false-positive
+    # risk while keeping pose estimates clean. Bump to 1 only if real
+    # detections are dropped at edge poses.
     max_hamming: 0
     # QoS profile for image subscription
     qos_profile: sensor_data
 
-    # Detector tuning
+    # Detector tuning, optimised for accurate pose estimation of
+    # 200 mm tags at ~1.5 m standoff (tag image size ~90 px, ~11 px
+    # per bit). Accuracy at this scale is dominated by sub-pixel
+    # corner precision rather than decoding margin.
     detector:
       threads: 4
+      # 1.0 = no quad-decimation pre-pass. Larger values speed up
+      # detection but truncate corner precision; at our tag size
+      # accuracy matters more than ms per frame.
       decimate: 1.0
+      # No pre-blur for sim renders (clean image, no sensor noise).
+      # Bump to ~0.8 on the real camera if motion blur appears.
       blur: 0.0
+      # Sub-pixel corner refinement. ESSENTIAL for accurate pose;
+      # without it corners snap to integer pixels and pose estimates
+      # quantise visibly at this distance.
       refine: true
-      sharpening: 0.25
+      # Sharpening of the warped tag image before decoding. 0.5
+      # (vs the apriltag default of 0.25) helps marginal decodes at
+      # perspective-distorted poses without affecting corner accuracy.
+      sharpening: 0.5
       debug: false
 
-    # Pose estimation: "pnp" (more accurate) or "homography" (faster)
+    # PnP solves the full 6-DoF pose from the four corner pixel
+    # locations and the known tag size, using the camera_info K matrix.
+    # Strictly more accurate than the homography fallback because it
+    # accounts for lens intrinsics; required for the calibration runs
+    # since the residuals we report are in metres.
     pose_estimation_method: "pnp"
 
     # Tag configuration
