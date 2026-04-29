@@ -121,8 +121,16 @@ class CalibrationRunner:
 
     def request_run(self, request: RunRequest) -> bool:
         if self._run_thread is not None and self._run_thread.is_alive():
-            self._emit_status('busy: another run is in progress')
-            return False
+            # The operator may have just clicked Cancel/Reset and is
+            # immediately starting another test; the previous worker
+            # typically exits within a few hundred ms once the stop
+            # event is set. Give it a short window to die before
+            # refusing, so a quick "cancel then start" sequence works
+            # without an apparent UI lockout.
+            self._run_thread.join(timeout=2.0)
+            if self._run_thread.is_alive():
+                self._emit_status('busy: another run is in progress')
+                return False
         self._stop_event.clear()
         self._continue_event.clear()
         self._run_thread = threading.Thread(
@@ -247,18 +255,32 @@ class CalibrationRunner:
         with RunWriter(request.output_root, request.test.name, config) as writer:
             self._writer = writer
             try:
-                self._execute(request, writer)
+                ok = self._execute(request, writer)
                 if self._stop_event.is_set():
                     writer.finalize('canceled')
-                else:
+                elif ok:
                     writer.finalize('completed')
+                else:
+                    # _execute returned early due to a precondition
+                    # failure (unreachable IK, motion failure, missing
+                    # services, etc.) -- the run did NOT complete
+                    # successfully. Without this the dashboard
+                    # silently reports 'completed' on every aborted
+                    # run, hiding the actual problem.
+                    writer.finalize('failed')
             except Exception as exc:
                 self.node.get_logger().error(f'run failed: {exc}')
                 writer.finalize('failed')
             self._emit_finished(writer.run_dir, writer.status)
         self._writer = None
 
-    def _execute(self, request: RunRequest, writer: RunWriter):
+    def _execute(self, request: RunRequest, writer: RunWriter) -> bool:
+        """Run the test end to end. Returns True only on full success;
+        False on any early exit (IK failure, motion failure, cancel).
+        ``_run`` distinguishes 'canceled' vs 'failed' via _stop_event,
+        so cancellation paths can return False here without confusing
+        the status reporting.
+        """
         # Resolve every pose up front so an unreachable goal aborts
         # before any motion. IK is cheap and the operator gets a clear
         # error rather than watching the arm move halfway then stop.
@@ -267,13 +289,13 @@ class CalibrationRunner:
             self._emit_status(
                 f'IK failed for initial pose y={request.initial_pose[0]:.3f} '
                 f'z={request.initial_pose[1]:.3f}; aborting')
-            return
+            return False
         initial_theta_r, initial_theta_l = initial_ik
 
         goals = list(request.goals)
         if not goals:
             self._emit_status('no goals supplied; aborting')
-            return
+            return False
         goal_iks: list = []
         goal_fks: list = []
         for idx, (gy, gz) in enumerate(goals, start=1):
@@ -281,7 +303,7 @@ class CalibrationRunner:
             if ik is None:
                 self._emit_status(
                     f'IK failed for goal {idx} y={gy:.3f} z={gz:.3f}; aborting')
-                return
+                return False
             goal_iks.append(ik)
             # FK is best-effort; if it fails we still record the
             # commanded (y, z) so the analysis notebook has something.
@@ -295,9 +317,9 @@ class CalibrationRunner:
                 request.joint_names, initial_theta_r, initial_theta_l,
                 request.trajectory_duration):
             self._emit_status('initial-pose move failed; aborting run')
-            return
+            return False
         if not self._settle(request.test.settle_time, 'initial'):
-            return
+            return False
         self._capture_observations(
             request, writer,
             phase='home', cycle=0, target_idx=None,
@@ -313,10 +335,10 @@ class CalibrationRunner:
         visit_count = 0
         for iteration in range(1, total_iterations + 1):
             if self._stop_event.is_set():
-                return
+                return False
             for goal_idx, (gy, gz) in enumerate(goals, start=1):
                 if self._stop_event.is_set():
-                    return
+                    return False
                 theta_r, theta_l = goal_iks[goal_idx - 1]
                 fk_xyz = goal_fks[goal_idx - 1]
 
@@ -328,16 +350,16 @@ class CalibrationRunner:
                         request.joint_names, theta_r, theta_l,
                         request.trajectory_duration):
                     self._emit_status('goal trajectory failed; aborting run')
-                    return
+                    return False
                 if not self._settle(request.test.settle_time, 'goal'):
-                    return
+                    return False
 
                 # Operator-gated wait: detection_state_cb keeps the
                 # dashboard in sync; proceed() / cancel() unblock.
                 self._emit_awaiting_continue(iteration, total_iterations)
                 if not self._wait_for_continue(request):
                     # Either cancelled or the runner was shut down.
-                    return
+                    return False
 
                 self._capture_observations(
                     request, writer,
@@ -371,7 +393,23 @@ class CalibrationRunner:
                             request.trajectory_duration):
                         self._emit_status(
                             'return-to-initial move failed; aborting run')
-                        return
+                        return False
+        # End-of-run park. Single-pose tests already returned to
+        # initial after their last visit, so this is a no-op for them
+        # and we skip it. The workspace sweep ends at the last goal,
+        # so park back at initial here so the arm always ends a
+        # successful run at a known location.
+        if not request.test.return_to_initial_between_visits:
+            self._emit_status('end of run: returning to initial')
+            if not self._send_and_wait(
+                    request.joint_names,
+                    initial_theta_r, initial_theta_l,
+                    request.trajectory_duration):
+                self._emit_status('end-of-run park failed; data is saved')
+                # Data was captured; the cleanup move missing is a
+                # UX issue, not a data corruption -- still report
+                # success.
+        return True
 
     def _goto_worker(self, y: float, z: float,
                      joint_names: tuple, duration: float):

@@ -240,6 +240,23 @@ class CalibrationDashboardWidget(QWidget):
         self._iterations.setEnabled(not is_workspace)
         if is_workspace:
             self._iterations.setValue(1)
+        # Switching test type implies the operator is starting fresh:
+        # cancel anything still running and put the dashboard back
+        # into "ready to start" state. cancel() is safe when nothing
+        # is running -- it just sets the events.
+        self._runner.cancel()
+        self._reset_ui_state(status='idle')
+
+    def _reset_ui_state(self, status: str = 'idle'):
+        """Clear progress / detection / button state so the dashboard
+        is ready for a fresh run. Called from finished, reset, cancel,
+        and test-switch paths."""
+        self._start_btn.setEnabled(True)
+        self._continue_btn.setEnabled(False)
+        self._progress.setValue(0)
+        self._detection_label.setText('detection: idle')
+        self._detection_label.setStyleSheet('')
+        self._status_label.setText(status)
 
     # -- startup helpers ------------------------------------------
 
@@ -365,12 +382,12 @@ class CalibrationDashboardWidget(QWidget):
         # button to use when you want the arm parked at the typed
         # initial pose after halting.
         self._runner.cancel()
-        self._continue_btn.setEnabled(False)
+        self._reset_ui_state(status='cancelled')
 
     @Slot()
     def _on_reset_clicked(self):
         self._runner.reset_to(self._initial_y.value(), self._initial_z.value())
-        self._continue_btn.setEnabled(False)
+        self._reset_ui_state(status='resetting: returning arm to initial')
 
     @Slot()
     def _on_move_initial_clicked(self):
@@ -406,12 +423,8 @@ class CalibrationDashboardWidget(QWidget):
 
     @Slot(str, str)
     def _on_finished(self, run_dir: str, status: str):
-        self._status_label.setText(f'run {status}')
         self._log.appendPlainText(f'output: {run_dir}')
-        self._start_btn.setEnabled(True)
-        self._continue_btn.setEnabled(False)
-        self._detection_label.setText('detection: idle')
-        self._detection_label.setStyleSheet('')
+        self._reset_ui_state(status=f'run {status}')
 
     def shutdown(self):
         self._runner.shutdown()
