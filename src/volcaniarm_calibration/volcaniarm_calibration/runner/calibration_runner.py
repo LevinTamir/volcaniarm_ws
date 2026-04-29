@@ -53,9 +53,12 @@ class RunRequest:
     # positions in volcaniarm_base_link, so residuals are only
     # meaningful when the measured pose is in the same frame.
     analysis_frame: str = 'volcaniarm_base_link'
-    # How long to wait for a fresh AprilTag detection at each target.
-    # The marker can take a moment to come into view / be detected.
-    detection_timeout_s: float = 30.0
+    # How long the TF lookup waits for an AprilTag detection. With the
+    # buffer this is "how long to wait if the tag hasn't been seen yet";
+    # 1 s comfortably covers normal apriltag latency at 30 Hz. A tag
+    # that is undetectable (e.g. edge-on at the current pose) fails
+    # fast instead of stalling the run.
+    detection_timeout_s: float = 1.0
 
 
 @dataclass
