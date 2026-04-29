@@ -3,6 +3,8 @@
 !.gitignore
 !/src/
 !/volcaniarm_firmware/
+!/third_party.repos
+!/README.md
 
 # ROS 2 build artifacts
 /build/
@@ -24,3 +26,8 @@ __pycache__/
 
 # Claude Code
 .claude/
+
+# Third-party packages imported via vcstool (see third_party.repos)
+/src/apriltag_ros/
+/src/easy_handeye2/
+/src/onnxruntime_vendor/

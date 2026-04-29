@@ -1,6 +1,0 @@
-[submodule "src/easy_handeye2"]
-	path = src/easy_handeye2
-	url = https://github.com/marcoesposito1988/easy_handeye2.git
-[submodule "src/apriltag_ros"]
-	path = src/apriltag_ros
-	url = https://github.com/christianrauch/apriltag_ros.git
