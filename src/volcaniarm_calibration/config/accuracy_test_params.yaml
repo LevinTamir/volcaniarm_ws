@@ -25,9 +25,12 @@ accuracy_test_node:
     return_home_between_targets: true
 
     # -- AprilTag tracking --
-    # TF frames used to look up the EE pose via the apriltag
-    camera_frame: camera_color_optical_frame
-    tag_frame: apriltag_marker_ee
+    # Tag frames published by the apriltag detector. Ground truth is
+    # T(base_tag -> ee_tag) looked up via TF (resolved through the
+    # camera). Compared against FK in post-processing after applying
+    # the known link->tag offsets.
+    base_tag_frame: apriltag_marker_base
+    ee_tag_frame: apriltag_marker_ee
 
     # -- Output --
     # Directory where CSV results are saved (~ is expanded)

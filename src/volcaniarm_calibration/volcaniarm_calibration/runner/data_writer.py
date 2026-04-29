@@ -3,46 +3,35 @@
 Layout per run:
 
     data/<YYYYMMDD_HHMMSS>_<test_name>/
-      config.yaml         test config + git SHA + status
-      samples_raw.csv     one row per AprilTag sample
-      fk_poses.csv        analytic FK at each commanded joint state
-      residuals.csv       measured tag pose minus FK-predicted tag pose
-      summary.csv         per-target aggregates
-      run.log             logger output (written by RunWriter.attach_log)
+      config.yaml           test config + git SHA + status
+      tag_observations.csv  base->ee apriltag transform per sample,
+                            tagged with phase (home|target). Ground truth.
+      fk_poses.csv          analytic FK at each commanded joint state.
+      run.log               logger output (written by RunWriter.attach_log)
+
+Residuals, per-target aggregates, and repeatability stats are computed
+in the analysis notebooks from these two CSVs.
 """
 
 import csv
-import math
 import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import yaml
 
 
-SAMPLES_FIELDS = [
-    'run_id', 'cycle', 'target_idx', 'target_y', 'target_z',
-    'sample_idx', 't_ros_ns',
+TAG_OBS_FIELDS = [
+    'run_id', 'phase', 'cycle', 'target_idx', 'sample_idx', 't_ros_ns',
     'theta_right', 'theta_left',
-    'measured_x', 'measured_y', 'measured_z',
-    'measured_qx', 'measured_qy', 'measured_qz', 'measured_qw',
+    'x', 'y', 'z', 'qx', 'qy', 'qz', 'qw',
 ]
 
 FK_FIELDS = [
     'run_id', 'cycle', 'target_idx',
     'theta_right', 'theta_left',
     'fk_x', 'fk_y', 'fk_z',
-]
-
-RESIDUAL_FIELDS = [
-    'run_id', 'cycle', 'target_idx',
-    'dx', 'dy', 'dz', 'd_pos_norm',
-]
-
-HOME_REF_FIELDS = [
-    'run_id', 'tag', 'x', 'y', 'z', 'qx', 'qy', 'qz', 'qw',
 ]
 
 
@@ -52,9 +41,8 @@ class RunWriter:
     Use as a context manager:
 
         with RunWriter(base_dir, test_name, config) as rw:
-            rw.add_sample(...)
+            rw.add_tag_observation(...)
             rw.add_fk(...)
-            rw.add_residual(...)
             rw.finalize(status='completed')
     """
 
@@ -65,68 +53,39 @@ class RunWriter:
         self.run_id = f'{self.timestamp}_{test_name}'
         self.run_dir = Path(base_dir).expanduser() / self.run_id
         self.status: str = 'in_progress'
-        self._samples_file = None
+        self._tag_file = None
         self._fk_file = None
-        self._res_file = None
-        self._home_file = None
-        self._samples_writer = None
+        self._tag_writer = None
         self._fk_writer = None
-        self._res_writer = None
-        self._all_samples: list = []
-        self._all_fk: list = []
 
     def __enter__(self):
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        self._samples_file = (self.run_dir / 'samples_raw.csv').open('w', newline='')
-        self._samples_writer = csv.DictWriter(self._samples_file, fieldnames=SAMPLES_FIELDS)
-        self._samples_writer.writeheader()
+        self._tag_file = (self.run_dir / 'tag_observations.csv').open('w', newline='')
+        self._tag_writer = csv.DictWriter(self._tag_file, fieldnames=TAG_OBS_FIELDS)
+        self._tag_writer.writeheader()
         self._fk_file = (self.run_dir / 'fk_poses.csv').open('w', newline='')
         self._fk_writer = csv.DictWriter(self._fk_file, fieldnames=FK_FIELDS)
         self._fk_writer.writeheader()
-        self._res_file = (self.run_dir / 'residuals.csv').open('w', newline='')
-        self._res_writer = csv.DictWriter(self._res_file, fieldnames=RESIDUAL_FIELDS)
-        self._res_writer.writeheader()
-        self._home_file = (self.run_dir / 'home_reference.csv').open('w', newline='')
-        self._home_writer = csv.DictWriter(self._home_file, fieldnames=HOME_REF_FIELDS)
-        self._home_writer.writeheader()
         self._write_config()
         return self
 
     def __exit__(self, exc_type, exc, tb):
         if exc is not None and self.status == 'in_progress':
             self.status = 'failed'
-        for f in (self._samples_file, self._fk_file, self._res_file, self._home_file):
+        for f in (self._tag_file, self._fk_file):
             if f is not None:
                 f.close()
         self._update_config_status()
-        self._write_summary()
 
-    def add_sample(self, row: dict):
+    def add_tag_observation(self, row: dict):
         row.setdefault('run_id', self.run_id)
-        self._samples_writer.writerow(row)
-        self._samples_file.flush()
-        self._all_samples.append(row)
+        self._tag_writer.writerow(row)
+        self._tag_file.flush()
 
     def add_fk(self, row: dict):
         row.setdefault('run_id', self.run_id)
         self._fk_writer.writerow(row)
         self._fk_file.flush()
-        self._all_fk.append(row)
-
-    def add_residual(self, row: dict):
-        row.setdefault('run_id', self.run_id)
-        self._res_writer.writerow(row)
-        self._res_file.flush()
-
-    def add_home_reference(self, tag_label: str, x: float, y: float, z: float,
-                           qx: float, qy: float, qz: float, qw: float):
-        self._home_writer.writerow({
-            'run_id': self.run_id,
-            'tag': tag_label,
-            'x': x, 'y': y, 'z': z,
-            'qx': qx, 'qy': qy, 'qz': qz, 'qw': qw,
-        })
-        self._home_file.flush()
 
     def finalize(self, status: str):
         self.status = status
@@ -160,45 +119,3 @@ class RunWriter:
         cfg['status'] = self.status
         with path.open('w') as f:
             yaml.safe_dump(cfg, f, sort_keys=False)
-
-    def _write_summary(self):
-        if not self._all_samples:
-            return
-        per_target: dict = {}
-        for s in self._all_samples:
-            key = s['target_idx']
-            d = per_target.setdefault(key, {
-                'target_y': s['target_y'],
-                'target_z': s['target_z'],
-                'xs': [], 'ys': [], 'zs': [],
-            })
-            d['xs'].append(float(s['measured_x']))
-            d['ys'].append(float(s['measured_y']))
-            d['zs'].append(float(s['measured_z']))
-        fields = [
-            'target_idx', 'target_y', 'target_z', 'total_samples',
-            'mean_x', 'mean_y', 'mean_z',
-            'std_x', 'std_y', 'std_z',
-            'repeatability_xyz', 'status',
-        ]
-        with (self.run_dir / 'summary.csv').open('w', newline='') as f:
-            w = csv.DictWriter(f, fieldnames=fields)
-            w.writeheader()
-            for idx in sorted(per_target.keys()):
-                d = per_target[idx]
-                xs, ys, zs = np.array(d['xs']), np.array(d['ys']), np.array(d['zs'])
-                std_x, std_y, std_z = np.std(xs), np.std(ys), np.std(zs)
-                w.writerow({
-                    'target_idx': idx,
-                    'target_y': d['target_y'],
-                    'target_z': d['target_z'],
-                    'total_samples': len(xs),
-                    'mean_x': f'{np.mean(xs):.6f}',
-                    'mean_y': f'{np.mean(ys):.6f}',
-                    'mean_z': f'{np.mean(zs):.6f}',
-                    'std_x': f'{std_x:.6f}',
-                    'std_y': f'{std_y:.6f}',
-                    'std_z': f'{std_z:.6f}',
-                    'repeatability_xyz': f'{math.sqrt(std_x**2 + std_y**2 + std_z**2):.6f}',
-                    'status': self.status,
-                })

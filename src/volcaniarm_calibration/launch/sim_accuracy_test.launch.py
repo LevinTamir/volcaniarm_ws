@@ -31,15 +31,14 @@ def generate_launch_description():
         output='screen',
     )
 
-    # Accuracy test node
-    # Override camera_frame for sim (Gazebo uses camera_link, not camera_color_optical_frame)
+    # Accuracy test node. The runner looks up base_tag -> ee_tag via
+    # TF, which resolves through whatever camera frame the apriltag
+    # detector publishes its tags under, so no per-environment frame
+    # override is needed.
     accuracy_test = Node(
         package='volcaniarm_calibration',
         executable='accuracy_test',
-        parameters=[accuracy_config, {
-            'use_sim_time': True,
-            'camera_frame': 'camera_link',
-        }],
+        parameters=[accuracy_config, {'use_sim_time': True}],
         output='screen',
     )
 

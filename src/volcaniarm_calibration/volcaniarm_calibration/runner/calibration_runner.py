@@ -15,8 +15,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-import numpy as np
-
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -46,19 +44,20 @@ class RunRequest:
     )
     home_position: tuple = (0.0, 0.0)
     trajectory_duration: float = 2.0
-    camera_frame: str = 'camera_color_optical_frame'
-    tag_frame: str = 'apriltag_marker_ee'
-    # Frame the AprilTag detection is transformed into before being
-    # logged and compared with the FK output. compute_fk returns
-    # positions in volcaniarm_base_link, so residuals are only
-    # meaningful when the measured pose is in the same frame.
-    analysis_frame: str = 'volcaniarm_base_link'
-    # How long the TF lookup waits for an AprilTag detection. With the
-    # buffer this is "how long to wait if the tag hasn't been seen yet";
-    # 1 s comfortably covers normal apriltag latency at 30 Hz. A tag
-    # that is undetectable (e.g. edge-on at the current pose) fails
-    # fast instead of stalling the run.
+    # Tag frames published by the apriltag detector. Ground truth is
+    # T_base_to_ee = lookup_transform(base_tag_frame, ee_tag_frame),
+    # which TF resolves through the camera. Compared in post-processing
+    # against FK after applying the known link->tag offsets.
+    base_tag_frame: str = 'apriltag_marker_base'
+    ee_tag_frame: str = 'apriltag_marker_ee'
+    # Wait budget for a single TF lookup. 1 s comfortably covers normal
+    # apriltag latency at 30 Hz; a tag that is undetectable (e.g.
+    # edge-on at the current pose) fails fast instead of stalling.
     detection_timeout_s: float = 1.0
+    # Maximum age of the TF stamp accepted as a fresh detection. Guards
+    # against the TF buffer returning a stale transform from when the
+    # tag was last seen seconds ago.
+    detection_max_age_s: float = 0.5
 
 
 @dataclass
@@ -184,9 +183,10 @@ class CalibrationRunner:
             'joint_names': list(request.joint_names),
             'home_position': list(request.home_position),
             'trajectory_duration': request.trajectory_duration,
-            'camera_frame': request.camera_frame,
-            'tag_frame': request.tag_frame,
-            'analysis_frame': request.analysis_frame,
+            'base_tag_frame': request.base_tag_frame,
+            'ee_tag_frame': request.ee_tag_frame,
+            'detection_timeout_s': request.detection_timeout_s,
+            'detection_max_age_s': request.detection_max_age_s,
         }
 
         with RunWriter(request.output_root, request.test.name, config) as writer:
@@ -219,10 +219,15 @@ class CalibrationRunner:
             self._emit_status('initial home move failed; aborting run')
             return
 
-        # Settle, then capture both tag positions as the home reference.
+        # Settle, then snapshot the base->ee apriltag transform as the
+        # home reference (cycle 0 / no target_idx).
         if not self._settle(request.test.settle_time, 'home'):
             return
-        self._capture_home_reference(request, writer)
+        self._capture_observations(
+            request, writer,
+            phase='home', cycle=0, target_idx=None,
+            theta_right=request.home_position[0],
+            theta_left=request.home_position[1])
 
         for visit_idx, target in enumerate(visits):
             if self._stop_event.is_set():
@@ -270,8 +275,18 @@ class CalibrationRunner:
             if not self._settle(request.test.settle_time, 'target'):
                 return
 
-            self._sample_and_record(request, writer, cycle, in_cycle_idx,
-                                    target, theta_r, theta_l, fk_xyz)
+            self._capture_observations(
+                request, writer,
+                phase='target', cycle=cycle + 1,
+                target_idx=in_cycle_idx + 1,
+                theta_right=theta_r, theta_left=theta_l)
+            writer.add_fk({
+                'cycle': cycle + 1,
+                'target_idx': in_cycle_idx + 1,
+                'theta_right': theta_r,
+                'theta_left': theta_l,
+                'fk_x': fk_xyz[0], 'fk_y': fk_xyz[1], 'fk_z': fk_xyz[2],
+            })
             self._emit_progress(visit_idx + 1, total)
 
             # Always return home after every visit (including the last)
@@ -406,74 +421,84 @@ class CalibrationRunner:
                 return False
         return True
 
-    def _lookup_tag(self, request: RunRequest, frame: str):
-        """Return the latest TF for ``frame`` in ``analysis_frame`` or None."""
+    def _lookup_base_to_ee(self, request: RunRequest, wait_s: float):
+        """Return (tf, reason) where tf is T(base_tag -> ee_tag) or None.
+
+        TF resolves the lookup through the camera (the apriltag detector
+        publishes camera->base_tag and camera->ee_tag). Rejects buffer
+        entries older than ``detection_max_age_s`` so a tag that briefly
+        went undetected does not silently surface a stale pose. The
+        caller controls the per-call wait so we don't burn the full
+        ``detection_timeout_s`` on every retry inside a sample loop.
+        """
         try:
-            return self._tf_buffer.lookup_transform(
-                request.analysis_frame, frame,
+            tf = self._tf_buffer.lookup_transform(
+                request.base_tag_frame, request.ee_tag_frame,
                 RclpyTime(),
-                timeout=RclpyDuration(seconds=request.detection_timeout_s))
+                timeout=RclpyDuration(seconds=wait_s))
         except Exception as exc:
-            self._emit_status(f'tag lookup failed for {frame}: {exc}')
-            return None
+            return None, f'lookup failed: {exc}'
+        stamp = RclpyTime.from_msg(tf.header.stamp)
+        now = self.node.get_clock().now()
+        age_s = (now - stamp).nanoseconds * 1e-9
+        if age_s > request.detection_max_age_s:
+            return None, (f'stale ({age_s:.2f}s > '
+                          f'{request.detection_max_age_s:.2f}s)')
+        return tf, ''
 
-    def _capture_home_reference(self, request: RunRequest, writer: RunWriter):
-        """Snapshot the current EE and base tag poses as the run baseline."""
-        for label, frame in (('ee', request.tag_frame),
-                             ('base', 'apriltag_marker_base')):
-            tf = self._lookup_tag(request, frame)
-            if tf is None:
-                continue
-            t = tf.transform.translation
-            r = tf.transform.rotation
-            writer.add_home_reference(
-                label, t.x, t.y, t.z, r.x, r.y, r.z, r.w)
+    def _capture_observations(self, request: RunRequest, writer: RunWriter,
+                              phase: str, cycle: int,
+                              target_idx: Optional[int],
+                              theta_right: float, theta_left: float):
+        """Take ``samples_per_visit`` snapshots of base->ee at the current pose.
+
+        Each sample is stored as one row in tag_observations.csv tagged
+        with the phase (home|target). Strategy: try the first lookup
+        with the full ``detection_timeout_s`` budget; if it fails (e.g.
+        EE tag edge-on at home), abort the rest of the burst with one
+        log line so the run doesn't stall N * timeout seconds. Once the
+        first sample succeeds, subsequent lookups use a short wait
+        since detections are streaming at camera rate.
+        """
+        n = max(1, request.test.samples_per_visit)
+        interval = max(0.0, request.test.sample_interval)
+        captured = 0
+        last_reason = ''
+        for i in range(n):
+            if self._stop_event.is_set():
+                return
+            wait_s = request.detection_timeout_s if i == 0 else 0.1
+            tf, reason = self._lookup_base_to_ee(request, wait_s)
+            if tf is not None:
+                t = tf.transform.translation
+                r = tf.transform.rotation
+                stamp = RclpyTime.from_msg(tf.header.stamp)
+                writer.add_tag_observation({
+                    'phase': phase,
+                    'cycle': cycle,
+                    'target_idx': '' if target_idx is None else target_idx,
+                    'sample_idx': i + 1,
+                    't_ros_ns': stamp.nanoseconds,
+                    'theta_right': theta_right,
+                    'theta_left': theta_left,
+                    'x': t.x, 'y': t.y, 'z': t.z,
+                    'qx': r.x, 'qy': r.y, 'qz': r.z, 'qw': r.w,
+                })
+                captured += 1
+            else:
+                last_reason = reason
+                if i == 0:
+                    # Tag is not visible at this pose; don't burn the
+                    # rest of the burst trying.
+                    break
+            if i < n - 1 and interval > 0:
+                if self._stop_event.wait(interval):
+                    return
+        if captured == 0:
             self._emit_status(
-                f'home {label} tag: ({t.x:.4f}, {t.y:.4f}, {t.z:.4f})')
-
-    def _sample_and_record(self, request: RunRequest, writer: RunWriter,
-                           cycle: int, target_idx: int, target: Target,
-                           theta_right: float, theta_left: float,
-                           fk_xyz: tuple):
-        """Snapshot the EE tag pose once at the (settled) target."""
-        samples: list = []
-        tf = self._lookup_tag(request, request.tag_frame)
-        if tf is not None:
-            t = tf.transform.translation
-            r = tf.transform.rotation
-            tf_stamp = RclpyTime.from_msg(tf.header.stamp)
-            row = {
-                'cycle': cycle + 1,
-                'target_idx': target_idx + 1,
-                'target_y': target.y,
-                'target_z': target.z,
-                'sample_idx': 1,
-                't_ros_ns': tf_stamp.nanoseconds,
-                'theta_right': theta_right,
-                'theta_left': theta_left,
-                'measured_x': t.x, 'measured_y': t.y, 'measured_z': t.z,
-                'measured_qx': r.x, 'measured_qy': r.y,
-                'measured_qz': r.z, 'measured_qw': r.w,
-            }
-            writer.add_sample(row)
-            samples.append((t.x, t.y, t.z))
-
-        writer.add_fk({
-            'cycle': cycle + 1,
-            'target_idx': target_idx + 1,
-            'theta_right': theta_right,
-            'theta_left': theta_left,
-            'fk_x': fk_xyz[0], 'fk_y': fk_xyz[1], 'fk_z': fk_xyz[2],
-        })
-
-        if samples:
-            measured = np.mean(np.array(samples), axis=0)
-            dx = float(measured[0] - fk_xyz[0])
-            dy = float(measured[1] - fk_xyz[1])
-            dz = float(measured[2] - fk_xyz[2])
-            writer.add_residual({
-                'cycle': cycle + 1,
-                'target_idx': target_idx + 1,
-                'dx': dx, 'dy': dy, 'dz': dz,
-                'd_pos_norm': float(np.sqrt(dx * dx + dy * dy + dz * dz)),
-            })
+                f'{phase} capture: 0 samples (cycle={cycle}, '
+                f'target_idx={target_idx}); {last_reason}')
+        else:
+            self._emit_status(
+                f'{phase} capture: {captured}/{n} samples '
+                f'(cycle={cycle}, target_idx={target_idx})')

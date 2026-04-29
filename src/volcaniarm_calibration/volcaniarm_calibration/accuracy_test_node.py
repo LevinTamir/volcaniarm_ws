@@ -39,8 +39,8 @@ class AccuracyTestNode(Node):
         self.declare_parameter('trajectory_duration', 2.0)
         self.declare_parameter('home_position', [0.0, 0.0])
         self.declare_parameter('return_home_between_targets', True)
-        self.declare_parameter('camera_frame', 'camera_color_optical_frame')
-        self.declare_parameter('tag_frame', 'apriltag_marker_ee')
+        self.declare_parameter('base_tag_frame', 'apriltag_marker_base')
+        self.declare_parameter('ee_tag_frame', 'apriltag_marker_ee')
         self.declare_parameter('output_dir', '~/workspaces/volcaniarm_ws/data')
 
         test_type = self.get_parameter('test_type').value
@@ -67,8 +67,8 @@ class AccuracyTestNode(Node):
             joint_names=tuple(self.get_parameter('joint_names').value),
             home_position=tuple(self.get_parameter('home_position').value),
             trajectory_duration=float(self.get_parameter('trajectory_duration').value),
-            camera_frame=self.get_parameter('camera_frame').value,
-            tag_frame=self.get_parameter('tag_frame').value,
+            base_tag_frame=self.get_parameter('base_tag_frame').value,
+            ee_tag_frame=self.get_parameter('ee_tag_frame').value,
         )
 
         self.create_timer(3.0, self._start_once)
