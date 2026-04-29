@@ -21,6 +21,7 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.duration import Duration as RclpyDuration
+from rclpy.time import Time as RclpyTime
 
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
@@ -255,12 +256,12 @@ class CalibrationRunner:
                 self._emit_status('trajectory failed, skipping target')
                 continue
 
-            self._emit_status(f'settling for {request.test.settle_time:.1f}s')
-            if self._stop_event.wait(request.test.settle_time):
-                return
+            arrival_time = self.node.get_clock().now()
+            self._emit_status('waiting for a fresh AprilTag detection')
 
             self._sample_and_record(request, writer, cycle, in_cycle_idx,
-                                    target, theta_r, theta_l, fk_xyz)
+                                    target, theta_r, theta_l, fk_xyz,
+                                    arrival_time)
             self._emit_progress(visit_idx + 1, total)
 
             # Always return home after every visit (including the last)
@@ -387,35 +388,50 @@ class CalibrationRunner:
     def _sample_and_record(self, request: RunRequest, writer: RunWriter,
                            cycle: int, target_idx: int, target: Target,
                            theta_right: float, theta_left: float,
-                           fk_xyz: tuple):
-        samples = []
-        deadline = time.monotonic() + (
-            request.test.samples_per_visit * request.test.sample_interval + 1.0)
+                           fk_xyz: tuple, arrival_time: RclpyTime):
+        """Wait for a fresh AprilTag detection (TF stamped after the arm
+        arrived at the target) and record it. Repeats up to
+        ``samples_per_visit`` times, requiring each sample to be newer
+        than the previous so we never log a stale frame."""
+
+        samples: list = []
+        # Bound how long we are willing to wait for fresh detections.
+        fresh_deadline = time.monotonic() + max(
+            5.0,
+            request.test.samples_per_visit * max(request.test.sample_interval, 0.1) + 2.0,
+        )
+        last_stamp = arrival_time
         sample_idx = 0
         while sample_idx < request.test.samples_per_visit:
-            if self._stop_event.is_set() or time.monotonic() > deadline:
+            if self._stop_event.is_set():
+                return
+            if time.monotonic() > fresh_deadline:
+                self._emit_status(
+                    f'no fresh tag detection at target {target_idx + 1} '
+                    f'within {fresh_deadline:.1f}s')
                 break
             try:
-                # Look up the tag in the analysis frame (volcaniarm_base_link
-                # by default) so the recorded measured_x/y/z are directly
-                # comparable to the FK output.
                 tf = self._tf_buffer.lookup_transform(
                     request.analysis_frame, request.tag_frame,
-                    self.node.get_clock().now().to_msg(),
-                    timeout=RclpyDuration(seconds=0.5))
+                    RclpyTime(),
+                    timeout=RclpyDuration(seconds=0.2))
             except Exception:
-                time.sleep(request.test.sample_interval)
+                time.sleep(0.05)
+                continue
+            tf_stamp = RclpyTime.from_msg(tf.header.stamp)
+            if tf_stamp <= last_stamp:
+                # Stale: same or older than what we have already accepted.
+                time.sleep(0.05)
                 continue
             t = tf.transform.translation
             r = tf.transform.rotation
-            now = self.node.get_clock().now()
             row = {
                 'cycle': cycle + 1,
                 'target_idx': target_idx + 1,
                 'target_y': target.y,
                 'target_z': target.z,
                 'sample_idx': sample_idx + 1,
-                't_ros_ns': now.nanoseconds,
+                't_ros_ns': tf_stamp.nanoseconds,
                 'theta_right': theta_right,
                 'theta_left': theta_left,
                 'measured_x': t.x, 'measured_y': t.y, 'measured_z': t.z,
@@ -425,7 +441,7 @@ class CalibrationRunner:
             writer.add_sample(row)
             samples.append((t.x, t.y, t.z))
             sample_idx += 1
-            time.sleep(request.test.sample_interval)
+            last_stamp = tf_stamp
 
         writer.add_fk({
             'cycle': cycle + 1,
