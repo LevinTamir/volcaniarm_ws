@@ -4,7 +4,7 @@ project(volcaniarm_calibration)
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 
-# Install Python package
+# Install Python package (recurses into rqt/ and runner/ subpackages)
 ament_python_install_package(${PROJECT_NAME})
 
 # Install Python executables
@@ -27,6 +27,17 @@ install(DIRECTORY config/
 # Install scripts
 install(DIRECTORY scripts/
   DESTINATION share/${PROJECT_NAME}/scripts
+)
+
+# Install rqt plugin manifest and resources
+install(FILES plugin.xml
+  DESTINATION share/${PROJECT_NAME}
+)
+install(DIRECTORY resource/
+  DESTINATION share/${PROJECT_NAME}/resource
+)
+install(DIRECTORY notebooks/
+  DESTINATION share/${PROJECT_NAME}/notebooks
 )
 
 ament_package()

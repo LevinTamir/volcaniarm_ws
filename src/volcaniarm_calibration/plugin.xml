@@ -1,0 +1,13 @@
+<library path="volcaniarm_calibration">
+  <class name="VolcaniarmCalibrationDashboard"
+         type="volcaniarm_calibration.rqt.calibration_dashboard_plugin.CalibrationDashboardPlugin"
+         base_class_type="rqt_gui_py::Plugin">
+    <description>RQt panel for Volcaniarm calibration tests.</description>
+    <qtgui>
+      <group>
+        <label>Volcaniarm</label>
+      </group>
+      <label>Calibration Dashboard</label>
+    </qtgui>
+  </class>
+</library>

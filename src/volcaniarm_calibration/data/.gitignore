@@ -1,0 +1,4 @@
+# Generated calibration runs go here. Keep folder structure, ignore contents.
+*
+!.gitignore
+!.gitkeep

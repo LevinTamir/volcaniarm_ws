@@ -2,16 +2,21 @@
 
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm_apriltag">
 
-  <!-- AprilTag 36h11 ID 20 mounted on the end effector (sim only).
-       Uses a DAE mesh with baked texture so it renders in both Gazebo and RViz.
-       DAE has 64mm geometry, scaled up to 200mm for reliable detection in sim. -->
+  <!-- AprilTag 36h11 markers used for hand-eye calibration and accuracy
+       tests. Both tags use a DAE mesh with baked texture so they render
+       in Gazebo and RViz. The DAE has 64mm geometry, scaled up to 200mm
+       for reliable detection in sim. -->
 
-  <xacro:property name="tag_mesh"
-    value="package://volcaniarm_description/models/Apriltag36_11_00020/apriltag_36h11_id20.dae" />
   <xacro:property name="tag_scale" value="${0.2 / 0.064}" />
 
-  <!-- Tag visual link attached to right_arm_tip_link -->
-  <link name="apriltag_link">
+  <!-- ============================================================= -->
+  <!-- ID 20: end-effector marker (right_arm_tip_link)                -->
+  <!-- ============================================================= -->
+
+  <xacro:property name="ee_tag_mesh"
+    value="package://volcaniarm_description/models/Apriltag36_11_00020/apriltag_36h11_id20.dae" />
+
+  <link name="apriltag_ee_link">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <mass value="0.001" />
@@ -20,15 +25,14 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="${tag_mesh}" scale="${tag_scale} ${tag_scale} ${tag_scale}" />
+        <mesh filename="${ee_tag_mesh}" scale="${tag_scale} ${tag_scale} ${tag_scale}" />
       </geometry>
     </visual>
   </link>
 
-  <!-- Intermediate link to counter-rotate the EE angle so the tag is
-       parallel to the ground plane. The EE is tilted ~45 deg around X,
-       so rotate -45 deg to level it out. -->
-  <link name="apriltag_mount_link">
+  <!-- Intermediate link to counter-rotate the EE so the tag is
+       parallel to the ground plane. -->
+  <link name="apriltag_ee_mount_link">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <mass value="0.001" />
@@ -36,25 +40,76 @@
     </inertial>
   </link>
 
-  <joint name="apriltag_mount_joint" type="fixed">
+  <joint name="apriltag_ee_mount_joint" type="fixed">
     <origin xyz="0.04 0 0" rpy="${-pi/3.4} 0 0" />
     <parent link="right_arm_tip_link" />
-    <child link="apriltag_mount_link" />
+    <child link="apriltag_ee_mount_link" />
   </joint>
 
-  <gazebo reference="apriltag_mount_joint">
+  <gazebo reference="apriltag_ee_mount_joint">
     <preserveFixedJoint>true</preserveFixedJoint>
   </gazebo>
 
-  <joint name="apriltag_joint" type="fixed">
-    <!-- Tag face pointing in +X direction.
-         The DAE quad face is on the Z plane, so rotate 90 deg around Y to face +X. -->
+  <joint name="apriltag_ee_joint" type="fixed">
+    <!-- Tag face pointing in +X. The DAE quad face is on the Z plane,
+         so rotate 90 deg around Y to face +X. -->
     <origin xyz="0 0 0" rpy="0 ${pi/2} 0" />
-    <parent link="apriltag_mount_link" />
-    <child link="apriltag_link" />
+    <parent link="apriltag_ee_mount_link" />
+    <child link="apriltag_ee_link" />
   </joint>
 
-  <gazebo reference="apriltag_joint">
+  <gazebo reference="apriltag_ee_joint">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+
+  <!-- ============================================================= -->
+  <!-- ID 5: base-link reference marker (volcaniarm_base_link)        -->
+  <!-- ============================================================= -->
+
+  <xacro:property name="base_tag_mesh"
+    value="package://volcaniarm_description/models/Apriltag36_11_00005/apriltag_36h11_id05.dae" />
+
+  <link name="apriltag_base_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.001" />
+      <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="${base_tag_mesh}" scale="${tag_scale} ${tag_scale} ${tag_scale}" />
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="apriltag_base_mount_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.001" />
+      <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9" />
+    </inertial>
+  </link>
+
+  <!-- TODO(thesis): replace with the measured mount offset once the
+       printed bracket is fitted on volcaniarm_base_link. -->
+  <joint name="apriltag_base_mount_joint" type="fixed">
+    <origin xyz="0.10 0.0 0.05" rpy="0 0 0" />
+    <parent link="volcaniarm_base_link" />
+    <child link="apriltag_base_mount_link" />
+  </joint>
+
+  <gazebo reference="apriltag_base_mount_joint">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+
+  <joint name="apriltag_base_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 ${pi/2} 0" />
+    <parent link="apriltag_base_mount_link" />
+    <child link="apriltag_base_link" />
+  </joint>
+
+  <gazebo reference="apriltag_base_joint">
     <preserveFixedJoint>true</preserveFixedJoint>
   </gazebo>
 
