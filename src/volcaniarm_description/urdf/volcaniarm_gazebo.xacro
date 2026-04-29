@@ -47,16 +47,25 @@
           <update_rate>30</update_rate>
           <visualize>true</visualize>
           <topic>rgbd_camera</topic>
-          <!-- Diagnostic: optical_frame_id removed so every sensor
-               output (image, depth, pointcloud, camera_info) inherits
-               the gz_frame_id below. Set to camera_link to test
-               whether gz-sim emits pointcloud XYZ in camera_link
-               convention (X forward); if RViz renders the cloud
-               correctly here, the prior optical tagging was double
-               rotating the data. Note: the apriltag detector will
-               see images tagged with camera_link too, so detected
-               poses will be rotated 90 deg until we pick the final
-               combo. -->
+          <!-- All sensor outputs (image, depth, pointcloud,
+               camera_info) tagged with camera_link, matching the
+               convention gz-sim emits XYZ values in. Real hardware
+               (RealSense driver) instead emits everything tagged
+               with camera_color_optical_frame, but downstream code
+               is portable across both because:
+                 - apriltag detection is image-local; the detected
+                   marker TFs are children of whichever frame the
+                   image came in.
+                 - The calibration runner asks for the RELATIVE
+                   transform between base and ee marker TFs, which
+                   is invariant under frame relabeling.
+                 - RViz reads frame_id and renders cloud / image at
+                   that frame's TF, so as long as data convention
+                   matches the tag (link here, optical on real),
+                   visualization is correct.
+               Don't add optical_frame_id back: in this gz-sim
+               version it hijacks every sensor output, including the
+               pointcloud, which then double-rotates in RViz. -->
           <gz_frame_id>camera_link</gz_frame_id>
       </sensor>
   </gazebo>
