@@ -179,8 +179,8 @@ def generate_launch_description():
     )
 
     # Calibration dashboard (apriltag detector + RViz + rqt plugin).
-    # The sim mesh scales the tag to 0.2 m (volcaniarm_apriltag.xacro),
-    # so override the detector's tag size to match.
+    # tag_size is left at the dashboard's default (0.200) since it
+    # matches both the sim mesh and the real printed tags.
     calibration_dashboard = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -190,7 +190,6 @@ def generate_launch_description():
             )
         ),
         launch_arguments=[
-            ("tag_size", "0.200"),
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
         ],
         condition=IfCondition(LaunchConfiguration("calibration")),

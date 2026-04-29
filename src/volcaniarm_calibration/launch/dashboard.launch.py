@@ -32,9 +32,9 @@ def generate_launch_description():
         'use_rqt', default_value='true',
         description='Open the rqt calibration dashboard plugin')
     tag_size_arg = DeclareLaunchArgument(
-        'tag_size', default_value='0.064',
+        'tag_size', default_value='0.200',
         description='AprilTag active (black square) edge length in metres. '
-                    'Real printed tag is 0.064; sim mesh is scaled to 0.200.')
+                    'Both the real printed tags and the sim mesh are 0.200.')
     # Must be propagated to apriltag, rviz, and rqt so the dashboard's
     # node clock matches the TF stamps (which inherit sim time from the
     # Gazebo camera). Otherwise the runner sees apparent ages of ~1.78e9

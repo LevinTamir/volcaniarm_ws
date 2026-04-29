@@ -4,7 +4,9 @@
     image_transport: raw
     # AprilTag family (36h11 is the most robust)
     family: 36h11
-    # Default tag edge size in meters (active/black-square size)
+    # Default tag edge size in metres (active black-square length).
+    # Both the real printed tags and the sim DAE meshes use 0.200,
+    # so the launch wrappers do not need to override this.
     size: 0.200
     # Strict decoding. The 36h11 family has Hamming distance 11, so
     # 0-bit-error rejection still gives essentially zero false-positive
