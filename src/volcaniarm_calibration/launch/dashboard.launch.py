@@ -1,81 +1,37 @@
-"""Launch the calibration dashboard.
+"""Calibration dashboard stack (apriltag detector + RViz + rqt plugin).
 
-Brings up the arm (sim or real), the AprilTag detector, RViz with the
-preview markers visible, and rqt_gui with the calibration dashboard
-plugin pre-loaded.
+Assumes the arm and camera are already running. This launch is normally
+included by the bringup launches when `calibration:=true`, not run
+standalone:
 
-Usage:
-  ros2 launch volcaniarm_calibration dashboard.launch.py            # sim
-  ros2 launch volcaniarm_calibration dashboard.launch.py sim:=false # real
+  ros2 launch volcaniarm_bringup sim_bringup.launch.py calibration:=true
+  ros2 launch volcaniarm_bringup real_bringup.launch.py calibration:=true
 """
 
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import (
-    DeclareLaunchArgument, GroupAction, IncludeLaunchDescription,
-)
-from launch.conditions import IfCondition, UnlessCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
     calibration_share = get_package_share_directory('volcaniarm_calibration')
-    bringup_share = get_package_share_directory('volcaniarm_bringup')
-
-    apriltag_config = os.path.join(calibration_share, 'config', 'apriltag_params.yaml')
+    apriltag_config = os.path.join(
+        calibration_share, 'config', 'apriltag_params.yaml')
     rviz_config = os.path.join(
         calibration_share, 'resource', 'calibration_dashboard.rviz')
 
-    sim_arg = DeclareLaunchArgument(
-        'sim', default_value='true',
-        description='Use simulation (true) or real hardware (false)')
     use_rviz_arg = DeclareLaunchArgument(
         'use_rviz', default_value='true',
-        description='Open RViz on launch')
+        description='Open RViz with the calibration dashboard config')
     use_rqt_arg = DeclareLaunchArgument(
         'use_rqt', default_value='true',
-        description='Open the rqt dashboard plugin on launch')
+        description='Open the rqt calibration dashboard plugin')
 
-    # --- Sim path: calibration_bringup includes sim_bringup with calibration:=true.
-    sim_bringup = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(bringup_share, 'launch', 'calibration_bringup.launch.py')
-        ),
-        condition=IfCondition(LaunchConfiguration('sim')),
-    )
-
-    # --- Real path: real_bringup + RealSense camera. AprilTag detector is
-    # launched separately below so it works in either mode.
-    real_bringup = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(bringup_share, 'launch', 'real_bringup.launch.py')
-        ),
-        condition=UnlessCondition(LaunchConfiguration('sim')),
-    )
-    real_camera = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            FindPackageShare('realsense2_camera'),
-            '/launch/rs_launch.py',
-        ]),
-        launch_arguments={
-            'enable_color': 'true',
-            'enable_depth': 'true',
-            'align_depth.enable': 'true',
-            'enable_infra1': 'false',
-            'enable_infra2': 'false',
-            'rgb_camera.color_profile': '1280x720x30',
-            'pointcloud.enable': 'false',
-            'initial_reset': 'false',
-        }.items(),
-        condition=UnlessCondition(LaunchConfiguration('sim')),
-    )
-
-    # --- AprilTag detector (always on; image topic differs by mode).
     apriltag_node = Node(
         package='apriltag_ros',
         executable='apriltag_node',
@@ -88,7 +44,6 @@ def generate_launch_description():
         output='screen',
     )
 
-    # --- Visualization.
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -97,8 +52,6 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('use_rviz')),
     )
 
-    # rqt_gui --standalone <plugin>: spawns just the dashboard widget.
-    # The plugin is referenced by the qtgui label declared in plugin.xml.
     rqt = Node(
         package='rqt_gui',
         executable='rqt_gui',
@@ -112,12 +65,8 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        sim_arg,
         use_rviz_arg,
         use_rqt_arg,
-        sim_bringup,
-        real_bringup,
-        real_camera,
         apriltag_node,
         rviz,
         rqt,

@@ -2,6 +2,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
@@ -23,9 +24,17 @@ def generate_launch_description():
         description="Serial port for hardware interface",
     )
 
+    calibration_arg = DeclareLaunchArgument(
+        "calibration",
+        default_value="false",
+        description="Add AprilTag links to the URDF and launch the calibration "
+                    "dashboard (assumes physical AprilTags are mounted on the arm)",
+    )
+
     # Get package paths
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
+    volcaniarm_calibration_share = get_package_share_directory("volcaniarm_calibration")
 
     # Load controllers config
     controller_config_file = os.path.join(
@@ -34,7 +43,8 @@ def generate_launch_description():
         "volcaniarm_controllers.yaml",
     )
 
-    # Robot description with real hardware (use_sim=false)
+    # Robot description with real hardware (use_sim=false). The
+    # `calibration` arg toggles the AprilTag link block in the URDF.
     robot_description_content = ParameterValue(
         Command([
             "xacro ",
@@ -44,6 +54,7 @@ def generate_launch_description():
                 "volcaniarm.urdf.xacro",
             ),
             " use_sim:=false",
+            " calibration:=", LaunchConfiguration("calibration"),
         ]),
         value_type=str,
     )
@@ -113,7 +124,8 @@ def generate_launch_description():
         ],
     )
 
-    # Display (RViz) launch
+    # Display (RViz) launch. Skipped in calibration mode so the
+    # calibration dashboard's RViz takes over instead.
     display_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -125,6 +137,20 @@ def generate_launch_description():
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
         ],
+        condition=UnlessCondition(LaunchConfiguration("calibration")),
+    )
+
+    # Calibration dashboard (apriltag detector + RViz + rqt plugin).
+    # Assumes physical AprilTags are already mounted on the arm.
+    calibration_dashboard = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_calibration_share,
+                "launch",
+                "dashboard.launch.py",
+            )
+        ),
+        condition=IfCondition(LaunchConfiguration("calibration")),
     )
 
     # RealSense camera launch (D435i)
@@ -155,6 +181,7 @@ def generate_launch_description():
         [
             use_sim_time_arg,
             serial_port_arg,
+            calibration_arg,
             robot_state_publisher,
             controller_manager,
             joint_state_broadcaster_spawner,
@@ -162,5 +189,6 @@ def generate_launch_description():
             display_launch,
             controller_launch,
             realsense_camera,
+            calibration_dashboard,
         ]
     )

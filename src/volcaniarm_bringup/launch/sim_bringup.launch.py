@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from ament_index_python.packages import get_package_share_directory
@@ -60,6 +60,7 @@ def generate_launch_description():
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
     volcaniarm_motion_share = get_package_share_directory("volcaniarm_motion")
+    volcaniarm_calibration_share = get_package_share_directory("volcaniarm_calibration")
 
     # Gazebo launch (simulator + robot spawn + gz bridge + robot_state_publisher)
     gazebo_launch = IncludeLaunchDescription(
@@ -109,7 +110,8 @@ def generate_launch_description():
         ],
     )
 
-    # Display (RViz) launch
+    # Display (RViz) launch. Skipped in calibration mode so the
+    # calibration dashboard's RViz takes over instead.
     display_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -121,6 +123,19 @@ def generate_launch_description():
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
         ],
+        condition=UnlessCondition(LaunchConfiguration("calibration")),
+    )
+
+    # Calibration dashboard (apriltag detector + RViz + rqt plugin).
+    calibration_dashboard = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_calibration_share,
+                "launch",
+                "dashboard.launch.py",
+            )
+        ),
+        condition=IfCondition(LaunchConfiguration("calibration")),
     )
 
     # Motion launch
@@ -150,5 +165,6 @@ def generate_launch_description():
             controller_launch,
             display_launch,
             motion_launch,
+            calibration_dashboard,
         ]
     )
