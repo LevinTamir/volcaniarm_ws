@@ -4,11 +4,12 @@
 
   <!-- Calibration mode: camera at fixed position in front of robot (sim only).
        base_link is at world (0,0,0.98) with yaw=pi, so base_link +X = world -X.
-       Camera at world (-1.5, 0, 0.5) facing world +X (toward robot):
-         In base_link frame: xyz=(1.5, 0, -0.48), yaw=pi to face base_link -X = world +X. -->
+       Camera pulled out far enough in base_link +X to fit both the base
+       and EE AprilTags in the same frame; height tuned to roughly center
+       on the arm's reachable workspace. -->
   <xacro:if value="$(arg calibration)">
     <joint name="calibration_camera_joint" type="fixed">
-      <origin xyz="0.8 0 -0.68" rpy="0 0 ${pi}" />
+      <origin xyz="1.5 0 -0.48" rpy="0 0 ${pi}" />
       <parent link="base_link" />
       <child link="camera_link" />
     </joint>
