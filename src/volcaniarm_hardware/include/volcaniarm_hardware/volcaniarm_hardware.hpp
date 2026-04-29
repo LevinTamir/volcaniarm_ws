@@ -52,11 +52,13 @@ private:
   // Right elbow joint state + command
   double hw_position_right_elbow_{0.0};
   double hw_velocity_right_elbow_{0.0};
+  double hw_effort_right_elbow_{0.0};
   double hw_position_command_right_elbow_{0.0};
 
   // Left elbow joint state + command
   double hw_position_left_elbow_{0.0};
   double hw_velocity_left_elbow_{0.0};
+  double hw_effort_left_elbow_{0.0};
   double hw_position_command_left_elbow_{0.0};
 
   // Home offsets: URDF_position = physical_position + home_offset

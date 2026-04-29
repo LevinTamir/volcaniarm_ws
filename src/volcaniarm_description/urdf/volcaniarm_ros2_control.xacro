@@ -39,6 +39,9 @@
         </hardware>
 
         <!-- ros2_control Common Interfaces -->
+        <!-- effort is exported (zero on real HW, physics value in Isaac) so the
+             URDF interface set is identical across gazebo / isaac / real and
+             the JointStateTopicSystem plugin can land Isaac's effort field. -->
         <joint name="volcaniarm_right_elbow_joint">
             <command_interface name="position">
               <param name="min">-3.14</param>
@@ -48,6 +51,7 @@
               <param name="initial_value">0.0</param>
             </state_interface>
             <state_interface name="velocity" />
+            <state_interface name="effort" />
         </joint>
 
         <joint name="volcaniarm_left_elbow_joint">
@@ -59,6 +63,7 @@
               <param name="initial_value">0.0</param>
             </state_interface>
             <state_interface name="velocity" />
+            <state_interface name="effort" />
         </joint>
 
     </ros2_control>
