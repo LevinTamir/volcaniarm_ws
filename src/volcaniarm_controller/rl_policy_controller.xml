@@ -1,0 +1,12 @@
+<library path="rl_policy_controller">
+  <class name="volcaniarm_controller/RLPolicyController"
+         type="volcaniarm_controller::RLPolicyController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      RL policy controller for the volcaniarm 5-bar planar arm. Consumes an
+      EE target pose in volcaniarm_base_link frame, runs an ONNX policy
+      trained in Isaac Lab (Volcaniarm-Reach-v0), and writes position
+      targets to the two actuated elbow joints.
+    </description>
+  </class>
+</library>

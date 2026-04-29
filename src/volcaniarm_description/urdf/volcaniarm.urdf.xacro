@@ -6,6 +6,11 @@
   <xacro:arg name="calibration" default="false" />
   <xacro:arg name="camera_mount_x" default="0.25" />
   <xacro:arg name="camera_mount_pitch" default="1.3" />
+  <!-- Which controller(s) to load into the Gazebo controller_manager:
+       traj = trajectory controller only; policy = RL policy controller only;
+       all  = both loaded (trajectory active, policy available to be claimed).
+       Only affects the Gazebo plugin <parameters> blocks. -->
+  <xacro:arg name="controller" default="traj" />
 
   <!-- Camera mount position tuning
        camera_mount_x range: 0.155 to 0.655

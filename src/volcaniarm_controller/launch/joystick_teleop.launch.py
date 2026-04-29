@@ -24,8 +24,8 @@ def generate_launch_description():
 
     use_sim_time_arg = DeclareLaunchArgument(
         'use_sim_time',
-        default_value='True',
-        description='Use simulated time',
+        default_value='False',
+        description='Use simulated time (pass true when running alongside sim_bringup)',
     )
 
     joy_node = Node(

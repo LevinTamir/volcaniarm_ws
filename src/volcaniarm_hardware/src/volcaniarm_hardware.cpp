@@ -52,7 +52,15 @@ hardware_interface::CallbackReturn VolcaniArmHardware::on_init(
     left_elbow_home_offset_ = std::stod(info_.hardware_parameters.at("left_elbow_home_offset"));
   }
 
-  std::cout << "[VolcaniArmHardware] Initialized with steps_per_rev = " << steps_per_rev_ << std::endl;
+  // Whether to auto-home during on_configure (default false; use the service otherwise)
+  if (info_.hardware_parameters.count("auto_home_on_configure")) {
+    const std::string v = info_.hardware_parameters.at("auto_home_on_configure");
+    auto_home_on_configure_ = (v == "true" || v == "True" || v == "1");
+  }
+
+  std::cout << "[VolcaniArmHardware] Initialized with steps_per_rev = " << steps_per_rev_
+            << ", auto_home_on_configure = " << (auto_home_on_configure_ ? "true" : "false")
+            << std::endl;
 
   hw_position_right_elbow_ = 0.0;
   hw_velocity_right_elbow_ = 0.0;
@@ -127,11 +135,22 @@ VolcaniArmHardware::on_configure(const rclcpp_lifecycle::State &)
 
   ::usleep(200000);  // small delay for Arduino reset
 
-  if (!home_()) {
-    std::cerr << "[VolcaniArmHardware] Homing failed" << std::endl;
-    ::close(fd_);
-    fd_ = -1;
-    return hardware_interface::CallbackReturn::ERROR;
+  if (auto_home_on_configure_) {
+    if (!home_()) {
+      std::cerr << "[VolcaniArmHardware] Auto-homing failed" << std::endl;
+      ::close(fd_);
+      fd_ = -1;
+      return hardware_interface::CallbackReturn::ERROR;
+    }
+  } else {
+    // Not auto-homing: seed current state with the home offsets so the
+    // trajectory controller's initial command matches the position state.
+    hw_position_right_elbow_ = right_elbow_home_offset_;
+    hw_position_command_right_elbow_ = right_elbow_home_offset_;
+    hw_position_left_elbow_ = left_elbow_home_offset_;
+    hw_position_command_left_elbow_ = left_elbow_home_offset_;
+    std::cout << "[VolcaniArmHardware] Auto-home disabled. "
+              << "Call the volcaniarm_hardware/home service to home manually." << std::endl;
   }
 
   // Create auxiliary node with home service

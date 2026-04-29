@@ -5,6 +5,7 @@
 !/volcaniarm_firmware/
 !/third_party.repos
 !/README.md
+!/docs/
 
 # ROS 2 build artifacts
 /build/

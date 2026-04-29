@@ -1,0 +1,61 @@
+# Registered alongside `volcaniarm_controllers.yaml` — both must be
+# loaded into controller_manager at startup for runtime switching
+# (`ros2 control switch_controllers ...`) between trajectory and RL.
+
+controller_manager:
+  ros__parameters:
+    volcaniarm_rl_controller:
+      type: volcaniarm_controller/RLPolicyController
+
+
+volcaniarm_rl_controller:
+  ros__parameters:
+    # Actuated joints the policy commands. Must match the Isaac Lab
+    # training contract (order matters for obs + action vectors).
+    joints:
+      - volcaniarm_left_elbow_joint
+      - volcaniarm_right_elbow_joint
+
+    # Default joint positions used as the relative-obs baseline and as
+    # the action offset. Must match Isaac's `init_state.joint_pos`.
+    default_joint_positions: [0.0, 0.0]
+
+    # Action scale: target_q = default + action_scale * raw_action.
+    # Must match training's JointPositionActionCfg(scale=0.5).
+    action_scale: 0.5
+
+    # Policy model (ONNX, exported by play.py). Supports
+    # `$(find-pkg-share <pkg>)` substitution. Leave empty to run in
+    # stub mode (holds the arm at default_joint_positions).
+    model_path: "$(find-pkg-share volcaniarm_controller)/models/policy.onnx"
+
+    # EE target pose topic (geometry_msgs/PoseStamped, pose expressed
+    # in `target_frame`).
+    target_topic: /ee_target_pose
+    target_frame: volcaniarm_base_link
+
+    # -- Safety / polish (all opt-in; defaults preserve original behaviour) --
+
+    # Per-joint position clamps applied AFTER default + scale*action.
+    # Empty arrays (default) disable clamping. Set both arrays with
+    # one entry per joint (same order as `joints` above) to enforce
+    # mechanical / safety limits independent of what the policy
+    # outputs. Recommended on real hardware.
+    joint_position_min: []
+    joint_position_max: []
+
+    # EMA smoothing on raw policy outputs. 1.0 = no smoothing
+    # (policy output passed through unchanged). Lower values damp
+    # high-frequency oscillation but lag the policy by ~1/(1-alpha)
+    # control steps. Try 0.5-0.8 if observing chatter on real
+    # hardware; keep at 1.0 for thesis-grade comparisons against
+    # training-time behaviour.
+    action_smoothing_alpha: 1.0
+
+    # Stale-target watchdog. If the latest target_topic message has a
+    # non-zero header.stamp older than this many seconds, the
+    # controller falls back to holding default_joint_positions.
+    # Skipped automatically when the publisher leaves the stamp at
+    # zero (no degraded watchdog). Set to a large value (e.g. 1e6) to
+    # effectively disable.
+    target_max_age_s: 1.0

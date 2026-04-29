@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>onnxruntime_vendor</name>
+  <version>1.25.0</version>
+  <description>
+    Vendor package for Microsoft ONNX Runtime (prebuilt Linux x64 CPU build).
+    Downloads the official prebuilt tarball and exposes onnxruntime::onnxruntime
+    as a CMake imported target.
+  </description>
+  <maintainer email="tamirlvn@gmail.com">tamir</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

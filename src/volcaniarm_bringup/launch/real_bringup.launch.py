@@ -1,17 +1,40 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
+def _build_controller_manager(context, robot_description_content):
+    volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
+    mode = LaunchConfiguration("controller").perform(context)
+
+    yamls = []
+    if mode in ("traj", "all"):
+        yamls.append(os.path.join(
+            volcaniarm_controller_share, "config", "volcaniarm_controllers.yaml"))
+    if mode in ("policy", "all"):
+        yamls.append(os.path.join(
+            volcaniarm_controller_share, "config", "volcaniarm_rl_controller.yaml"))
+
+    return [Node(
+        package="controller_manager",
+        executable="ros2_control_node",
+        parameters=[
+            {"robot_description": robot_description_content},
+            *yamls,
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+        ],
+        output="screen",
+    )]
+
+
 def generate_launch_description():
 
-    # Arguments
     use_sim_time_arg = DeclareLaunchArgument(
         "use_sim_time",
         default_value="False",
@@ -20,8 +43,30 @@ def generate_launch_description():
 
     serial_port_arg = DeclareLaunchArgument(
         "serial_port",
-        default_value="/dev/ttyUSB0",
-        description="Serial port for hardware interface",
+        default_value="/dev/volcaniarm",
+        description="Serial port for hardware interface (stable symlink "
+                    "created by the udev rule in volcaniarm_hardware/udev/)",
+    )
+
+    homing_arg = DeclareLaunchArgument(
+        "homing",
+        default_value="false",
+        choices=["true", "false"],
+        description="If true, run limit-switch homing during hardware on_configure. "
+                    "If false, boot without homing and use the volcaniarm_hardware/home "
+                    "service to home manually when ready.",
+    )
+
+    # Controller mode:
+    #   traj   → only trajectory controller loaded + active (default)
+    #   policy → only RL policy controller loaded + active
+    #   all    → both loaded; trajectory active, policy inactive
+    #            (available to claim via `ros2 control switch_controllers`)
+    controller_arg = DeclareLaunchArgument(
+        "controller",
+        default_value="traj",
+        choices=["traj", "policy", "all"],
+        description="Which controller(s) to load",
     )
 
     calibration_arg = DeclareLaunchArgument(
@@ -31,35 +76,36 @@ def generate_launch_description():
                     "dashboard (assumes physical AprilTags are mounted on the arm)",
     )
 
-    # Get package paths
+    is_traj_active = IfCondition(
+        PythonExpression(
+            ["'", LaunchConfiguration("controller"), "' in ('traj', 'all')"]
+        )
+    )
+    is_policy_only = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'policy'"])
+    )
+    is_all = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'all'"])
+    )
+
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
     volcaniarm_calibration_share = get_package_share_directory("volcaniarm_calibration")
 
-    # Load controllers config
-    controller_config_file = os.path.join(
-        volcaniarm_controller_share,
-        "config",
-        "volcaniarm_controllers.yaml",
-    )
-
     # Robot description with real hardware (use_sim=false). The
-    # `calibration` arg toggles the AprilTag link block in the URDF.
+    # `calibration` arg toggles the AprilTag link block in the URDF;
+    # `auto_home` toggles limit-switch homing in the hardware interface.
     robot_description_content = ParameterValue(
         Command([
             "xacro ",
-            os.path.join(
-                volcaniarm_description_share,
-                "urdf",
-                "volcaniarm.urdf.xacro",
-            ),
+            os.path.join(volcaniarm_description_share, "urdf", "volcaniarm.urdf.xacro"),
             " use_sim:=false",
+            " auto_home:=", LaunchConfiguration("homing"),
             " calibration:=", LaunchConfiguration("calibration"),
         ]),
         value_type=str,
     )
 
-    # Robot state publisher
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -72,71 +118,47 @@ def generate_launch_description():
         output="screen",
     )
 
-    # Controller manager node (runs on PC, not in Gazebo)
-    controller_manager = Node(
-        package="controller_manager",
-        executable="ros2_control_node",
-        parameters=[
-            {"robot_description": robot_description_content},
-            controller_config_file,
-            {"use_sim_time": LaunchConfiguration("use_sim_time")},
-        ],
-        output="screen",
-    )
-
-    # Joint state broadcaster spawner
-    joint_state_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "joint_state_broadcaster",
-            "--controller-manager",
-            "/controller_manager",
-        ],
-        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
-        output="screen",
-    )
-
-    # Main arm controller spawner
-    volcaniarm_controller_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "volcaniarm_controller",
-            "--controller-manager",
-            "/controller_manager",
-        ],
-        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
-        output="screen",
-    )
-
-    # Controller launch (includes end effector marker)
+    # Trajectory sub-launch (JSB + trajectory active). Included for
+    # `traj` and `all`.
     controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_controller_share,
-                "launch",
-                "controller.launch.py",
-            )
+            os.path.join(volcaniarm_controller_share, "launch", "controller.launch.py")
         ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_traj_active,
+    )
+
+    # Policy sub-launch (JSB + policy active). Included only for `policy`.
+    rl_controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(volcaniarm_controller_share, "launch", "rl_controller.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_policy_only,
+    )
+
+    # For `all`: load the policy controller but leave it inactive so it
+    # can be claimed later via `ros2 control switch_controllers`.
+    rl_inactive_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            "volcaniarm_rl_controller",
+            "--controller-manager", "/controller_manager",
+            "--inactive",
         ],
+        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        output="screen",
+        condition=is_all,
     )
 
     # Display (RViz) launch. Skipped in calibration mode so the
     # calibration dashboard's RViz takes over instead.
     display_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_description_share,
-                "launch",
-                "display.launch.py",
-            )
+            os.path.join(volcaniarm_description_share, "launch", "display.launch.py")
         ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
-        ],
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
         condition=UnlessCondition(LaunchConfiguration("calibration")),
     )
 
@@ -144,22 +166,25 @@ def generate_launch_description():
     # Assumes physical AprilTags are already mounted on the arm.
     calibration_dashboard = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_calibration_share,
-                "launch",
-                "dashboard.launch.py",
-            )
+            os.path.join(volcaniarm_calibration_share, "launch", "dashboard.launch.py")
         ),
         condition=IfCondition(LaunchConfiguration("calibration")),
     )
 
-    # RealSense camera launch (D435i)
+    motion_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory("volcaniarm_motion"),
+                "launch", "motion.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+    )
+
     realsense_camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
             os.path.join(
                 get_package_share_directory('realsense2_camera'),
-                'launch',
-                'rs_launch.py'
+                'launch', 'rs_launch.py'
             )
         ]),
         launch_arguments={
@@ -173,7 +198,7 @@ def generate_launch_description():
             'rgb_camera.color_profile': '848x480x30',
             'align_depth.enable': 'true',
             'pointcloud.enable': 'false',
-            'publish_tf': 'false',  # Disable - URDF handles all TF
+            'publish_tf': 'false',  # URDF handles all TF
         }.items(),
     )
 
@@ -181,13 +206,18 @@ def generate_launch_description():
         [
             use_sim_time_arg,
             serial_port_arg,
+            homing_arg,
+            controller_arg,
             calibration_arg,
             robot_state_publisher,
-            controller_manager,
-            joint_state_broadcaster_spawner,
-            volcaniarm_controller_spawner,
+            OpaqueFunction(
+                function=lambda ctx: _build_controller_manager(ctx, robot_description_content)
+            ),
             display_launch,
             controller_launch,
+            rl_controller_launch,
+            rl_inactive_spawner,
+            motion_launch,
             realsense_camera,
             calibration_dashboard,
         ]
