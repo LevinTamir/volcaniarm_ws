@@ -147,7 +147,10 @@ def generate_launch_description():
                 "dashboard.launch.py",
             )
         ),
-        launch_arguments=[("tag_size", "0.200")],
+        launch_arguments=[
+            ("tag_size", "0.200"),
+            ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ],
         condition=IfCondition(LaunchConfiguration("calibration")),
     )
 

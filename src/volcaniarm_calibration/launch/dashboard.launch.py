@@ -35,15 +35,26 @@ def generate_launch_description():
         'tag_size', default_value='0.064',
         description='AprilTag active (black square) edge length in metres. '
                     'Real printed tag is 0.064; sim mesh is scaled to 0.200.')
+    # Must be propagated to apriltag, rviz, and rqt so the dashboard's
+    # node clock matches the TF stamps (which inherit sim time from the
+    # Gazebo camera). Otherwise the runner sees apparent ages of ~1.78e9
+    # seconds when comparing wall-clock 'now' to sim-time stamps and
+    # flags every detection as stale.
+    use_sim_time_arg = DeclareLaunchArgument(
+        'use_sim_time', default_value='false',
+        description='Use /clock for the dashboard nodes. Pass True from '
+                    'sim_bringup; leave False on real hardware.')
 
     # Coerce to float at launch time (parameters dict needs a real number).
     tag_size = PythonExpression(['float("', LaunchConfiguration('tag_size'), '")'])
+    use_sim_time = LaunchConfiguration('use_sim_time')
 
     apriltag_node = Node(
         package='apriltag_ros',
         executable='apriltag_node',
         name='apriltag',
-        parameters=[apriltag_config, {'size': tag_size}],
+        parameters=[apriltag_config, {'size': tag_size,
+                                      'use_sim_time': use_sim_time}],
         remappings=[
             ('image_rect', '/camera/color/image_raw'),
             ('camera_info', '/camera/color/camera_info'),
@@ -56,6 +67,7 @@ def generate_launch_description():
         executable='rviz2',
         name='rviz2_calibration',
         arguments=['-d', rviz_config],
+        parameters=[{'use_sim_time': use_sim_time}],
         condition=IfCondition(LaunchConfiguration('use_rviz')),
     )
 
@@ -68,6 +80,7 @@ def generate_launch_description():
             '--standalone',
             'volcaniarm_calibration.rqt.calibration_dashboard_plugin.CalibrationDashboardPlugin',
         ],
+        parameters=[{'use_sim_time': use_sim_time}],
         condition=IfCondition(LaunchConfiguration('use_rqt')),
     )
 
@@ -75,6 +88,7 @@ def generate_launch_description():
         use_rviz_arg,
         use_rqt_arg,
         tag_size_arg,
+        use_sim_time_arg,
         apriltag_node,
         rviz,
         rqt,
