@@ -256,12 +256,10 @@ class CalibrationRunner:
                 self._emit_status('trajectory failed, skipping target')
                 continue
 
-            arrival_time = self.node.get_clock().now()
             self._emit_status('waiting for a fresh AprilTag detection')
 
             self._sample_and_record(request, writer, cycle, in_cycle_idx,
-                                    target, theta_r, theta_l, fk_xyz,
-                                    arrival_time)
+                                    target, theta_r, theta_l, fk_xyz)
             self._emit_progress(visit_idx + 1, total)
 
             # Always return home after every visit (including the last)
@@ -388,39 +386,53 @@ class CalibrationRunner:
     def _sample_and_record(self, request: RunRequest, writer: RunWriter,
                            cycle: int, target_idx: int, target: Target,
                            theta_right: float, theta_left: float,
-                           fk_xyz: tuple, arrival_time: RclpyTime):
-        """Wait for a fresh AprilTag detection (TF stamped after the arm
-        arrived at the target) and record it. Repeats up to
-        ``samples_per_visit`` times, requiring each sample to be newer
-        than the previous so we never log a stale frame."""
+                           fk_xyz: tuple):
+        """Wait for a fresh AprilTag detection and record it.
+
+        At entry, capture the latest TF stamp as a baseline. Subsequent
+        samples must have a strictly newer stamp than the baseline (and
+        than any sample already accepted), so we never log a frame that
+        was already in the buffer when the arm arrived. Comparing TF
+        stamps to other TF stamps sidesteps wall-clock vs sim-time skew
+        between the runner node and the apriltag publisher.
+        """
 
         samples: list = []
-        # Bound how long we are willing to wait for fresh detections.
-        fresh_deadline = time.monotonic() + max(
+        budget_s = max(
             5.0,
             request.test.samples_per_visit * max(request.test.sample_interval, 0.1) + 2.0,
         )
-        last_stamp = arrival_time
+        deadline = time.monotonic() + budget_s
+
+        # Baseline: latest TF stamp at the moment we start polling.
+        # Anything strictly newer is a fresh post-arrival detection.
+        last_stamp: Optional[RclpyTime] = None
+        try:
+            tf = self._tf_buffer.lookup_transform(
+                request.analysis_frame, request.tag_frame,
+                RclpyTime(), timeout=RclpyDuration(seconds=0.2))
+            last_stamp = RclpyTime.from_msg(tf.header.stamp)
+        except Exception:
+            pass
+
         sample_idx = 0
         while sample_idx < request.test.samples_per_visit:
             if self._stop_event.is_set():
                 return
-            if time.monotonic() > fresh_deadline:
+            if time.monotonic() > deadline:
                 self._emit_status(
                     f'no fresh tag detection at target {target_idx + 1} '
-                    f'within {fresh_deadline:.1f}s')
+                    f'within {budget_s:.1f}s')
                 break
             try:
                 tf = self._tf_buffer.lookup_transform(
                     request.analysis_frame, request.tag_frame,
-                    RclpyTime(),
-                    timeout=RclpyDuration(seconds=0.2))
+                    RclpyTime(), timeout=RclpyDuration(seconds=0.2))
             except Exception:
                 time.sleep(0.05)
                 continue
             tf_stamp = RclpyTime.from_msg(tf.header.stamp)
-            if tf_stamp <= last_stamp:
-                # Stale: same or older than what we have already accepted.
+            if last_stamp is not None and tf_stamp <= last_stamp:
                 time.sleep(0.05)
                 continue
             t = tf.transform.translation
