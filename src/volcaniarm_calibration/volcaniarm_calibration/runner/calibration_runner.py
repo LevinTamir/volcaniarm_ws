@@ -13,7 +13,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from rclpy.node import Node
 from rclpy.action import ActionClient

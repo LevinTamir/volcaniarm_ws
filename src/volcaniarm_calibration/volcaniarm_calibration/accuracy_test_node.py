@@ -15,7 +15,6 @@ from .runner import (
     CalibrationRunner,
     RunRequest,
     StaticAccuracyTest,
-    RepeatabilityTest,
     TEST_REGISTRY,
 )
 
