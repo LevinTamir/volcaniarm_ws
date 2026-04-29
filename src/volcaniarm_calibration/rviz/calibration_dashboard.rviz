@@ -37,69 +37,11 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: false
-        apriltag_base_link:
-          Value: true
-        apriltag_base_mount_link:
-          Value: true
-        apriltag_ee_link:
-          Value: true
-        apriltag_ee_mount_link:
+        apriltag_marker_base:
           Value: true
         apriltag_marker_ee:
           Value: true
-        base_link:
-          Value: true
-        camera_color_frame:
-          Value: true
         camera_color_optical_frame:
-          Value: true
-        camera_depth_frame:
-          Value: true
-        camera_depth_optical_frame:
-          Value: true
-        camera_link:
-          Value: true
-        camera_link_optical:
-          Value: true
-        closure_dummy_link:
-          Value: true
-        fl_caster_wheel_link:
-          Value: true
-        fl_caster_wheel_mount_link:
-          Value: true
-        fl_table_leg_link:
-          Value: true
-        fr_caster_wheel_link:
-          Value: true
-        fr_caster_wheel_mount_link:
-          Value: true
-        fr_table_leg_link:
-          Value: true
-        right_arm_tip_link:
-          Value: true
-        rl_caster_wheel_link:
-          Value: true
-        rl_caster_wheel_mount_link:
-          Value: true
-        rl_table_leg_link:
-          Value: true
-        rr_caster_wheel_link:
-          Value: true
-        rr_caster_wheel_mount_link:
-          Value: true
-        rr_table_leg_link:
-          Value: true
-        volcaniarm_base_link:
-          Value: true
-        volcaniarm_left_arm_link:
-          Value: true
-        volcaniarm_left_elbow_link:
-          Value: true
-        volcaniarm_right_arm_link:
-          Value: true
-        volcaniarm_right_elbow_link:
-          Value: true
-        world:
           Value: true
       Marker Scale: 0.15000000596046448
       Name: TF
