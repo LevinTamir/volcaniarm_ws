@@ -1,14 +1,17 @@
 """Persists calibration runs to a thesis-friendly directory layout.
 
-Layout per run:
+Layout, grouped by test type then day then start time so weeks of
+runs across multiple test types stay legible:
 
-    data/<YYYYMMDD_HHMMSS>_<test_name>/
+    data/<test_name>/<YYYY-MM-DD>/<HH-MM-SS>/
       config.yaml           test config + git SHA + status
       tag_observations.csv  base->ee apriltag transform per sample,
                             tagged with phase (home|target). Ground truth.
       fk_poses.csv          analytic FK at each commanded joint state.
       run.log               logger output (written by RunWriter.attach_log)
 
+ISO date and dash-separated time make the directory listing sort
+chronologically and avoid colon-in-path issues on tooling.
 Residuals, per-target aggregates, and repeatability stats are computed
 in the analysis notebooks from these two CSVs.
 """
@@ -49,9 +52,15 @@ class RunWriter:
     def __init__(self, base_dir: Path, test_name: str, config: dict):
         self.test_name = test_name
         self.config = dict(config)
-        self.timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.run_id = f'{self.timestamp}_{test_name}'
-        self.run_dir = Path(base_dir).expanduser() / self.run_id
+        now = datetime.now()
+        self.day = now.strftime('%Y-%m-%d')
+        self.clock = now.strftime('%H-%M-%S')
+        # Kept for back-compat with anything reading config.yaml's
+        # `timestamp` field. Schema-stable across the layout change.
+        self.timestamp = now.strftime('%Y%m%d_%H%M%S')
+        self.run_id = f'{test_name}/{self.day}/{self.clock}'
+        self.run_dir = (Path(base_dir).expanduser()
+                        / test_name / self.day / self.clock)
         self.status: str = 'in_progress'
         self._tag_file = None
         self._fk_file = None

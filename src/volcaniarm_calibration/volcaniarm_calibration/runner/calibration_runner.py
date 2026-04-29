@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -29,7 +29,7 @@ from volcaniarm_msgs.srv import ComputeIK, ComputeFK
 import tf2_ros
 
 from .data_writer import RunWriter
-from .tests import BaseTest, Target
+from .tests import BaseTest
 
 
 @dataclass
@@ -37,12 +37,14 @@ class RunRequest:
     """User-supplied parameters for a single calibration run."""
     test: BaseTest
     output_root: Path
-    auto_approve: bool = False
-    approval_timeout_s: float = 60.0
+    # Initial and goal poses in workspace (y, z) metres. The runner
+    # resolves both to (theta_right, theta_left) via compute_ik once
+    # before any motion; if either IK fails the run aborts cleanly.
+    initial_pose: tuple = (0.0, 0.5)
+    goal_pose: tuple = (0.0, 0.5)
     joint_names: tuple = (
         'volcaniarm_right_elbow_joint', 'volcaniarm_left_elbow_joint',
     )
-    home_position: tuple = (0.0, 0.0)
     trajectory_duration: float = 2.0
     # Tag frames published by the apriltag detector. Ground truth is
     # T_base_to_ee = lookup_transform(base_tag_frame, ee_tag_frame),
@@ -60,29 +62,18 @@ class RunRequest:
     detection_max_age_s: float = 0.5
 
 
-@dataclass
-class PreviewPayload:
-    """Snapshot of the upcoming visit, surfaced to the dashboard.
-
-    The dashboard renders the marker preview and waits for the user to
-    approve before the runner sends the trajectory.
-    """
-    cycle: int
-    cycle_total: int
-    target_idx: int
-    target_total: int
-    target: Target
-    theta_right: float
-    theta_left: float
-    fk_xyz: tuple = field(default=(0.0, 0.0, 0.0))
-    joint_path_xyz: list = field(default_factory=list)
-
-
 # Callback signatures used by the runner. The widget wires Qt signals.
 StatusCb = Callable[[str], None]
-PreviewCb = Callable[[PreviewPayload], None]
 ProgressCb = Callable[[int, int], None]
 FinishedCb = Callable[[Path, str], None]
+# Fired once per iteration just before the operator-gated wait. Lets
+# the dashboard switch into "waiting for continue" UI state.
+AwaitingContinueCb = Callable[[int, int], None]
+# Fired ~10 Hz while the runner is waiting at a goal pose. The widget
+# uses this to enable/disable the Continue button and update the
+# freshness label. ``age_s`` is meaningful only when ``is_fresh`` is
+# True; otherwise pass 0.0.
+DetectionStateCb = Callable[[bool, float], None]
 
 
 class CalibrationRunner:
@@ -105,15 +96,22 @@ class CalibrationRunner:
             callback_group=self._cb_group)
 
         self._run_thread: Optional[threading.Thread] = None
+        self._goto_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        self._approval_event = threading.Event()
-        self._approval_decision: bool = False
+        self._continue_event = threading.Event()
         self._writer: Optional[RunWriter] = None
+        # Default joint names used by goto / reset_to when no run is
+        # active. Mirrors RunRequest's default.
+        self._default_joint_names = (
+            'volcaniarm_right_elbow_joint', 'volcaniarm_left_elbow_joint',
+        )
+        self._default_trajectory_duration = 2.0
 
         self.status_cb: Optional[StatusCb] = None
-        self.preview_cb: Optional[PreviewCb] = None
         self.progress_cb: Optional[ProgressCb] = None
         self.finished_cb: Optional[FinishedCb] = None
+        self.awaiting_continue_cb: Optional[AwaitingContinueCb] = None
+        self.detection_state_cb: Optional[DetectionStateCb] = None
 
     # -- public control surface ------------------------------------
 
@@ -122,28 +120,78 @@ class CalibrationRunner:
             self._emit_status('busy: another run is in progress')
             return False
         self._stop_event.clear()
-        self._approval_event.clear()
+        self._continue_event.clear()
         self._run_thread = threading.Thread(
             target=self._run, args=(request,), daemon=True)
         self._run_thread.start()
         return True
 
-    def approve(self):
-        self._approval_decision = True
-        self._approval_event.set()
-
-    def reject(self):
-        self._approval_decision = False
-        self._approval_event.set()
+    def proceed(self):
+        """Operator clicked Continue: capture and move on."""
+        self._continue_event.set()
 
     def cancel(self):
+        """Operator clicked Cancel: abort the run as soon as possible.
+
+        Stops in place. Any in-flight trajectory goal is cancelled at
+        the action server too, so the arm coasts to a halt rather than
+        completing the move. Use ``reset_to`` if you want the arm
+        returned somewhere safe after cancelling.
+        """
         self._stop_event.set()
-        self._approval_event.set()
+        self._continue_event.set()
+
+    def goto(self, y: float, z: float,
+             joint_names: Optional[tuple] = None,
+             trajectory_duration: Optional[float] = None) -> bool:
+        """Send the arm to (y, z) workspace pose. Refuses while a run
+        or another goto is in flight.
+
+        Used by the dashboard's "Move to initial" affordance and by the
+        Reset flow (via reset_to) to park the arm at a known pose
+        outside of a test run.
+        """
+        if self._run_thread is not None and self._run_thread.is_alive():
+            self._emit_status('busy: cannot move while a run is in progress')
+            return False
+        if self._goto_thread is not None and self._goto_thread.is_alive():
+            self._emit_status('busy: another move is in progress')
+            return False
+        # Clear stop_event in case it was set by a prior cancel; the
+        # goto worker honours it the same way the run loop does.
+        self._stop_event.clear()
+        self._goto_thread = threading.Thread(
+            target=self._goto_worker,
+            args=(y, z,
+                  joint_names or self._default_joint_names,
+                  trajectory_duration or self._default_trajectory_duration),
+            daemon=True)
+        self._goto_thread.start()
+        return True
+
+    def reset_to(self, y: float, z: float,
+                 joint_names: Optional[tuple] = None,
+                 trajectory_duration: Optional[float] = None):
+        """Cancel any in-flight run and return the arm to (y, z).
+
+        Spawns a worker that waits for the run thread to die before
+        sending the move, so the caller (the GUI thread) returns
+        immediately and stays responsive.
+        """
+        self.cancel()
+        threading.Thread(
+            target=self._reset_worker,
+            args=(y, z,
+                  joint_names or self._default_joint_names,
+                  trajectory_duration or self._default_trajectory_duration),
+            daemon=True).start()
 
     def shutdown(self):
         self.cancel()
         if self._run_thread is not None:
             self._run_thread.join(timeout=5.0)
+        if self._goto_thread is not None:
+            self._goto_thread.join(timeout=5.0)
 
     # -- emit helpers ----------------------------------------------
 
@@ -152,10 +200,6 @@ class CalibrationRunner:
         if self.status_cb:
             self.status_cb(msg)
 
-    def _emit_preview(self, payload: PreviewPayload):
-        if self.preview_cb:
-            self.preview_cb(payload)
-
     def _emit_progress(self, current: int, total: int):
         if self.progress_cb:
             self.progress_cb(current, total)
@@ -163,6 +207,14 @@ class CalibrationRunner:
     def _emit_finished(self, path: Path, status: str):
         if self.finished_cb:
             self.finished_cb(path, status)
+
+    def _emit_awaiting_continue(self, iteration: int, total: int):
+        if self.awaiting_continue_cb:
+            self.awaiting_continue_cb(iteration, total)
+
+    def _emit_detection_state(self, is_fresh: bool, age_s: float):
+        if self.detection_state_cb:
+            self.detection_state_cb(is_fresh, age_s)
 
     # -- main run loop --------------------------------------------
 
@@ -178,10 +230,9 @@ class CalibrationRunner:
             'samples_per_visit': request.test.samples_per_visit,
             'settle_time': request.test.settle_time,
             'sample_interval': request.test.sample_interval,
-            'targets': request.test.targets,
-            'auto_approve': request.auto_approve,
+            'initial_pose': list(request.initial_pose),
+            'goal_pose': list(request.goal_pose),
             'joint_names': list(request.joint_names),
-            'home_position': list(request.home_position),
             'trajectory_duration': request.trajectory_duration,
             'base_tag_frame': request.base_tag_frame,
             'ee_tag_frame': request.ee_tag_frame,
@@ -204,101 +255,125 @@ class CalibrationRunner:
         self._writer = None
 
     def _execute(self, request: RunRequest, writer: RunWriter):
-        total = request.test.total_visits()
-        visits = list(request.test.iter_visits())
-        per_cycle = len(request.test.targets)
-
-        # Always start at the home pose before any test movement.
-        self._emit_status(
-            f'homing to theta=({request.home_position[0]:.3f}, '
-            f'{request.home_position[1]:.3f})')
-        if not self._send_and_wait(
-            request,
-            request.home_position[0], request.home_position[1],
-            request.trajectory_duration):
-            self._emit_status('initial home move failed; aborting run')
+        # Resolve both poses up front so an unreachable goal aborts
+        # before any motion. IK is cheap and the operator gets a clear
+        # error rather than watching the arm move halfway then stop.
+        initial_ik = self._call_ik(*request.initial_pose)
+        if initial_ik is None:
+            self._emit_status(
+                f'IK failed for initial pose y={request.initial_pose[0]:.3f} '
+                f'z={request.initial_pose[1]:.3f}; aborting')
             return
+        goal_ik = self._call_ik(*request.goal_pose)
+        if goal_ik is None:
+            self._emit_status(
+                f'IK failed for goal pose y={request.goal_pose[0]:.3f} '
+                f'z={request.goal_pose[1]:.3f}; aborting')
+            return
+        initial_theta_r, initial_theta_l = initial_ik
+        goal_theta_r, goal_theta_l = goal_ik
 
-        # Settle, then snapshot the base->ee apriltag transform as the
-        # home reference (cycle 0 / no target_idx).
-        if not self._settle(request.test.settle_time, 'home'):
+        goal_fk_xyz = self._call_fk(goal_theta_r, goal_theta_l) or (
+            0.0, request.goal_pose[0], request.goal_pose[1])
+
+        # Move to initial pose, settle, snapshot the home reference.
+        self._emit_status(
+            f'moving to initial pose y={request.initial_pose[0]:.3f} '
+            f'z={request.initial_pose[1]:.3f}')
+        if not self._send_and_wait(
+                request.joint_names, initial_theta_r, initial_theta_l,
+                request.trajectory_duration):
+            self._emit_status('initial-pose move failed; aborting run')
+            return
+        if not self._settle(request.test.settle_time, 'initial'):
             return
         self._capture_observations(
             request, writer,
             phase='home', cycle=0, target_idx=None,
-            theta_right=request.home_position[0],
-            theta_left=request.home_position[1])
+            theta_right=initial_theta_r, theta_left=initial_theta_l)
 
-        for visit_idx, target in enumerate(visits):
+        total = request.test.num_cycles
+        for iteration in range(1, total + 1):
             if self._stop_event.is_set():
                 return
-            cycle = visit_idx // per_cycle
-            in_cycle_idx = visit_idx % per_cycle
 
             self._emit_status(
-                f'planning cycle {cycle + 1}/{request.test.num_cycles}, '
-                f'target {in_cycle_idx + 1}/{per_cycle}: '
-                f'y={target.y:.3f} z={target.z:.3f}')
-
-            ik = self._call_ik(target.y, target.z)
-            if ik is None:
-                self._emit_status(f'IK failed at target {target.label}, skipping')
-                continue
-            theta_r, theta_l = ik
-
-            fk_xyz = self._call_fk(theta_r, theta_l) or (0.0, 0.0, 0.0)
-            joint_path = self._sweep_fk_path(
-                request.home_position[0], request.home_position[1],
-                theta_r, theta_l, samples=10)
-            payload = PreviewPayload(
-                cycle=cycle + 1,
-                cycle_total=request.test.num_cycles,
-                target_idx=in_cycle_idx + 1,
-                target_total=per_cycle,
-                target=target,
-                theta_right=theta_r,
-                theta_left=theta_l,
-                fk_xyz=fk_xyz,
-                joint_path_xyz=joint_path,
-            )
-            self._emit_preview(payload)
-
-            if not self._wait_for_approval(request):
-                self._emit_status('move not approved, skipping')
-                continue
-
+                f'iteration {iteration}/{total}: moving to goal '
+                f'y={request.goal_pose[0]:.3f} z={request.goal_pose[1]:.3f}')
             if not self._send_and_wait(
-                request, theta_r, theta_l, request.trajectory_duration):
-                self._emit_status('trajectory failed, skipping target')
-                continue
+                    request.joint_names, goal_theta_r, goal_theta_l,
+                    request.trajectory_duration):
+                self._emit_status('goal trajectory failed; aborting run')
+                return
+            if not self._settle(request.test.settle_time, 'goal'):
+                return
 
-            if not self._settle(request.test.settle_time, 'target'):
+            # Operator-gated wait: detection_state_cb keeps the dashboard
+            # in sync; proceed() / cancel() unblock.
+            self._emit_awaiting_continue(iteration, total)
+            if not self._wait_for_continue(request):
+                # Either cancelled or the runner was shut down.
                 return
 
             self._capture_observations(
                 request, writer,
-                phase='target', cycle=cycle + 1,
-                target_idx=in_cycle_idx + 1,
-                theta_right=theta_r, theta_left=theta_l)
+                phase='target', cycle=iteration, target_idx=1,
+                theta_right=goal_theta_r, theta_left=goal_theta_l)
             writer.add_fk({
-                'cycle': cycle + 1,
-                'target_idx': in_cycle_idx + 1,
-                'theta_right': theta_r,
-                'theta_left': theta_l,
-                'fk_x': fk_xyz[0], 'fk_y': fk_xyz[1], 'fk_z': fk_xyz[2],
+                'cycle': iteration,
+                'target_idx': 1,
+                'theta_right': goal_theta_r,
+                'theta_left': goal_theta_l,
+                'fk_x': goal_fk_xyz[0],
+                'fk_y': goal_fk_xyz[1],
+                'fk_z': goal_fk_xyz[2],
             })
-            self._emit_progress(visit_idx + 1, total)
+            self._emit_progress(iteration, total)
 
-            # Always return home after every visit (including the last)
-            # so each cycle is home -> target -> measure -> home and the
-            # run ends with the arm at the home pose.
-            self._emit_status('returning home')
+            # Always return to the initial pose between iterations so
+            # each iteration starts from a known state and the run ends
+            # with the arm parked at the operator-chosen initial.
+            self._emit_status(f'iteration {iteration}/{total}: returning to initial')
             if not self._send_and_wait(
-                request,
-                request.home_position[0], request.home_position[1],
-                request.trajectory_duration):
-                self._emit_status('home move failed; aborting run')
+                    request.joint_names, initial_theta_r, initial_theta_l,
+                    request.trajectory_duration):
+                self._emit_status('return-to-initial move failed; aborting run')
                 return
+
+    def _goto_worker(self, y: float, z: float,
+                     joint_names: tuple, duration: float):
+        """Background worker for ``goto``. Runs IK then sends a single
+        trajectory. Mirrors the wait/abort semantics of the run loop."""
+        if not self._wait_for_clients():
+            self._emit_status('cannot move: required services unavailable')
+            return
+        ik = self._call_ik(y, z)
+        if ik is None:
+            self._emit_status(f'IK failed for ({y:.3f}, {z:.3f}); not moving')
+            return
+        theta_r, theta_l = ik
+        self._emit_status(f'moving to y={y:.3f} z={z:.3f}')
+        if self._send_and_wait(joint_names, theta_r, theta_l, duration):
+            self._emit_status(f'arrived at y={y:.3f} z={z:.3f}')
+        else:
+            self._emit_status(f'move to y={y:.3f} z={z:.3f} failed')
+
+    def _reset_worker(self, y: float, z: float,
+                      joint_names: tuple, duration: float):
+        """Background worker for ``reset_to``: wait for the active run
+        (if any) to wind down, then drive the arm to (y, z)."""
+        if self._run_thread is not None:
+            self._run_thread.join(timeout=10.0)
+        if self._goto_thread is not None and self._goto_thread.is_alive():
+            self._goto_thread.join(timeout=10.0)
+        # The cancel that preceded us left _stop_event set; clear it so
+        # the goto worker doesn't bail out before sending the move.
+        self._stop_event.clear()
+        self._goto_thread = threading.Thread(
+            target=self._goto_worker,
+            args=(y, z, joint_names, duration),
+            daemon=True)
+        self._goto_thread.start()
 
     # -- ROS plumbing ---------------------------------------------
 
@@ -329,21 +404,6 @@ class CalibrationRunner:
             return None
         return float(resp.theta1), float(resp.theta2)
 
-    def _sweep_fk_path(self, theta_r0: float, theta_l0: float,
-                       theta_r1: float, theta_l1: float,
-                       samples: int = 10) -> list:
-        """Linearly interpolate joint-space and return the cartesian path
-        from each sampled FK call. Falls back to start+end if FK fails."""
-        path: list = []
-        for i in range(samples + 1):
-            alpha = i / samples
-            tr = theta_r0 + alpha * (theta_r1 - theta_r0)
-            tl = theta_l0 + alpha * (theta_l1 - theta_l0)
-            xyz = self._call_fk(tr, tl)
-            if xyz is not None:
-                path.append(xyz)
-        return path
-
     def _call_fk(self, theta_right: float, theta_left: float):
         req = ComputeFK.Request()
         req.theta1 = theta_right
@@ -361,11 +421,10 @@ class CalibrationRunner:
             return None
         return float(resp.x), float(resp.y), float(resp.z)
 
-    def _send_and_wait(self, request: RunRequest,
-                       theta_right: float, theta_left: float,
-                       duration: float) -> bool:
+    def _send_and_wait(self, joint_names, theta_right: float,
+                       theta_left: float, duration: float) -> bool:
         goal = FollowJointTrajectory.Goal()
-        goal.trajectory.joint_names = list(request.joint_names)
+        goal.trajectory.joint_names = list(joint_names)
         point = JointTrajectoryPoint()
         point.positions = [theta_right, theta_left]
         point.velocities = [0.0, 0.0]
@@ -397,18 +456,53 @@ class CalibrationRunner:
             return False
         return result_future.result().result.error_code == 0
 
-    def _wait_for_approval(self, request: RunRequest) -> bool:
-        if request.auto_approve:
-            return True
-        self._approval_event.clear()
-        self._emit_status('waiting for approval (preview shown)')
-        approved = self._approval_event.wait(timeout=request.approval_timeout_s)
+    def _wait_for_continue(self, request: RunRequest) -> bool:
+        """Block until the operator clicks Continue or Cancel.
+
+        While blocked, the runner polls the apriltag TF at ~10 Hz and
+        emits ``detection_state_cb(is_fresh, age_s)`` so the dashboard
+        can gate the Continue button. There's no hard timeout: the
+        operator may need an arbitrary amount of time to physically
+        reposition the camera until both markers appear.
+
+        Freshness is tracked by stamp *progression*, not by comparing
+        the stamp against any node clock. Each poll, if the TF stamp
+        differs from the previous poll's stamp, a new detection has
+        arrived and we record the monotonic time of change. The
+        detection is reported fresh while the most recent change was
+        within ``detection_max_age_s`` monotonic seconds. Works
+        identically in sim (where stamps are sim-time and the rqt
+        clock may be wall-time) and on real hardware.
+        """
+        self._continue_event.clear()
+        # Reset the detection indicator so the dashboard starts in the
+        # "no detection yet" state on each gate entry.
+        self._emit_detection_state(False, 0.0)
+        last_stamp_ns: Optional[int] = None
+        last_change_mono: Optional[float] = None
+        fresh_window_s = max(request.detection_max_age_s, 0.1)
+        while not self._continue_event.wait(0.1):
+            if self._stop_event.is_set():
+                return False
+            tf, _ = self._lookup_base_to_ee(request, 0.0)
+            now_mono = time.monotonic()
+            if tf is None:
+                self._emit_detection_state(False, 0.0)
+                continue
+            stamp_ns = (tf.header.stamp.sec * 1_000_000_000
+                        + tf.header.stamp.nanosec)
+            if last_stamp_ns is None or stamp_ns != last_stamp_ns:
+                last_stamp_ns = stamp_ns
+                last_change_mono = now_mono
+            age_since_new_stamp = now_mono - (last_change_mono or now_mono)
+            self._emit_detection_state(
+                age_since_new_stamp < fresh_window_s, age_since_new_stamp)
+        # Either the operator clicked Continue (proceed) or Cancel
+        # (also signals the event but sets _stop_event). Re-check stop
+        # so we don't capture/save during a cancelled run.
         if self._stop_event.is_set():
             return False
-        if not approved:
-            self._emit_status('approval timed out')
-            return False
-        return self._approval_decision
+        return True
 
     def _settle(self, settle_time: float, label: str) -> bool:
         """Wait `settle_time` for motors and camera latency before sampling.
@@ -424,12 +518,15 @@ class CalibrationRunner:
     def _lookup_base_to_ee(self, request: RunRequest, wait_s: float):
         """Return (tf, reason) where tf is T(base_tag -> ee_tag) or None.
 
-        TF resolves the lookup through the camera (the apriltag detector
-        publishes camera->base_tag and camera->ee_tag). Rejects buffer
-        entries older than ``detection_max_age_s`` so a tag that briefly
-        went undetected does not silently surface a stale pose. The
-        caller controls the per-call wait so we don't burn the full
-        ``detection_timeout_s`` on every retry inside a sample loop.
+        Pure TF lookup, no clock-based freshness check. Freshness, when
+        wanted, is tracked by the caller via stamp progression: poll
+        repeatedly and treat a stamp that has just changed as a fresh
+        detection. That approach is independent of the node's
+        ``use_sim_time`` setting, which previously made every
+        comparison against ``self.node.get_clock().now()`` register the
+        stamp as ~1.78e9 seconds stale when the dashboard ran with
+        wall-clock time and the apriltag detections inherited sim-time
+        stamps from the Gazebo camera.
         """
         try:
             tf = self._tf_buffer.lookup_transform(
@@ -438,12 +535,6 @@ class CalibrationRunner:
                 timeout=RclpyDuration(seconds=wait_s))
         except Exception as exc:
             return None, f'lookup failed: {exc}'
-        stamp = RclpyTime.from_msg(tf.header.stamp)
-        now = self.node.get_clock().now()
-        age_s = (now - stamp).nanoseconds * 1e-9
-        if age_s > request.detection_max_age_s:
-            return None, (f'stale ({age_s:.2f}s > '
-                          f'{request.detection_max_age_s:.2f}s)')
         return tf, ''
 
     def _capture_observations(self, request: RunRequest, writer: RunWriter,

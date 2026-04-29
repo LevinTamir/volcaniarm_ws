@@ -1,19 +1,27 @@
 accuracy_test_node:
   ros__parameters:
-    # -- Target positions --
-    # Each target is [y, z] in the arm base_link frame.
-    # The node will cycle through these positions.
-    # Flat list of [y1, z1, y2, z2, ...] pairs
-    targets: [0.0, 0.6, 0.15, 0.5, -0.15, 0.5]
+    # Which test class to run (see TEST_REGISTRY in
+    # volcaniarm_calibration/runner/tests/__init__.py).
+    test_type: static_accuracy
+
+    # -- Pose configuration --
+    # Initial pose: where the arm parks at run start and between
+    # iterations. Goal pose: the single target visited each iteration.
+    # Both are in workspace (y, z) metres in volcaniarm_base_link
+    # frame, resolved to joint angles via compute_ik before any motion.
+    initial_y: 0.0
+    initial_z: 0.5
+    goal_y: 0.0
+    goal_z: 0.6
 
     # -- Test routine --
-    # Number of full cycles (visit every target once = 1 cycle)
+    # Number of iterations (one goal visit each).
     num_cycles: 5
-    # Seconds to wait at each target before recording measurements
+    # Seconds to wait after each move for motors and camera to settle.
     settle_time: 2.0
-    # Number of pose samples to collect at each visit (averaged)
+    # Number of pose samples to average at each settled visit.
     samples_per_visit: 20
-    # Delay between consecutive pose samples [s]
+    # Delay between consecutive pose samples [s].
     sample_interval: 0.1
 
     # -- Arm control --
@@ -21,8 +29,6 @@ accuracy_test_node:
       - volcaniarm_right_elbow_joint
       - volcaniarm_left_elbow_joint
     trajectory_duration: 2.0
-    home_position: [0.0, 0.0]
-    return_home_between_targets: true
 
     # -- AprilTag tracking --
     # Tag frames published by the apriltag detector. Ground truth is
@@ -33,7 +39,5 @@ accuracy_test_node:
     ee_tag_frame: apriltag_marker_ee
 
     # -- Output --
-    # Directory where CSV results are saved (~ is expanded)
-    output_dir: ~/workspaces/volcaniarm_ws/data
-    # Prefix for output filenames (timestamp is appended automatically)
-    output_prefix: ee_accuracy
+    # Per-run directory layout: <output_dir>/<test_type>/<YYYY-MM-DD>/<HH-MM-SS>/
+    output_dir: ~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/data
