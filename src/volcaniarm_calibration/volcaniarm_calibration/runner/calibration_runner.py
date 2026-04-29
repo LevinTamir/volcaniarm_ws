@@ -53,6 +53,9 @@ class RunRequest:
     # positions in volcaniarm_base_link, so residuals are only
     # meaningful when the measured pose is in the same frame.
     analysis_frame: str = 'volcaniarm_base_link'
+    # How long to wait for a fresh AprilTag detection at each target.
+    # The marker can take a moment to come into view / be detected.
+    detection_timeout_s: float = 30.0
 
 
 @dataclass
@@ -399,7 +402,7 @@ class CalibrationRunner:
 
         samples: list = []
         budget_s = max(
-            5.0,
+            request.detection_timeout_s,
             request.test.samples_per_visit * max(request.test.sample_interval, 0.1) + 2.0,
         )
         deadline = time.monotonic() + budget_s
