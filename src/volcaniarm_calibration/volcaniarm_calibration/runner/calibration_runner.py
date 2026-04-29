@@ -47,6 +47,11 @@ class RunRequest:
     trajectory_duration: float = 2.0
     camera_frame: str = 'camera_color_optical_frame'
     tag_frame: str = 'apriltag_marker_ee'
+    # Frame the AprilTag detection is transformed into before being
+    # logged and compared with the FK output. compute_fk returns
+    # positions in volcaniarm_base_link, so residuals are only
+    # meaningful when the measured pose is in the same frame.
+    analysis_frame: str = 'volcaniarm_base_link'
 
 
 @dataclass
@@ -174,6 +179,7 @@ class CalibrationRunner:
             'trajectory_duration': request.trajectory_duration,
             'camera_frame': request.camera_frame,
             'tag_frame': request.tag_frame,
+            'analysis_frame': request.analysis_frame,
         }
 
         with RunWriter(request.output_root, request.test.name, config) as writer:
@@ -390,8 +396,11 @@ class CalibrationRunner:
             if self._stop_event.is_set() or time.monotonic() > deadline:
                 break
             try:
+                # Look up the tag in the analysis frame (volcaniarm_base_link
+                # by default) so the recorded measured_x/y/z are directly
+                # comparable to the FK output.
                 tf = self._tf_buffer.lookup_transform(
-                    request.camera_frame, request.tag_frame,
+                    request.analysis_frame, request.tag_frame,
                     self.node.get_clock().now().to_msg(),
                     timeout=RclpyDuration(seconds=0.5))
             except Exception:
