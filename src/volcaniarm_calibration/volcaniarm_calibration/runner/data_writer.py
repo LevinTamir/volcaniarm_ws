@@ -41,6 +41,10 @@ RESIDUAL_FIELDS = [
     'dx', 'dy', 'dz', 'd_pos_norm',
 ]
 
+HOME_REF_FIELDS = [
+    'run_id', 'tag', 'x', 'y', 'z', 'qx', 'qy', 'qz', 'qw',
+]
+
 
 class RunWriter:
     """Owns the per-run output directory and CSV writers.
@@ -64,6 +68,7 @@ class RunWriter:
         self._samples_file = None
         self._fk_file = None
         self._res_file = None
+        self._home_file = None
         self._samples_writer = None
         self._fk_writer = None
         self._res_writer = None
@@ -81,13 +86,16 @@ class RunWriter:
         self._res_file = (self.run_dir / 'residuals.csv').open('w', newline='')
         self._res_writer = csv.DictWriter(self._res_file, fieldnames=RESIDUAL_FIELDS)
         self._res_writer.writeheader()
+        self._home_file = (self.run_dir / 'home_reference.csv').open('w', newline='')
+        self._home_writer = csv.DictWriter(self._home_file, fieldnames=HOME_REF_FIELDS)
+        self._home_writer.writeheader()
         self._write_config()
         return self
 
     def __exit__(self, exc_type, exc, tb):
         if exc is not None and self.status == 'in_progress':
             self.status = 'failed'
-        for f in (self._samples_file, self._fk_file, self._res_file):
+        for f in (self._samples_file, self._fk_file, self._res_file, self._home_file):
             if f is not None:
                 f.close()
         self._update_config_status()
@@ -109,6 +117,16 @@ class RunWriter:
         row.setdefault('run_id', self.run_id)
         self._res_writer.writerow(row)
         self._res_file.flush()
+
+    def add_home_reference(self, tag_label: str, x: float, y: float, z: float,
+                           qx: float, qy: float, qz: float, qw: float):
+        self._home_writer.writerow({
+            'run_id': self.run_id,
+            'tag': tag_label,
+            'x': x, 'y': y, 'z': z,
+            'qx': qx, 'qy': qy, 'qz': qz, 'qw': qw,
+        })
+        self._home_file.flush()
 
     def finalize(self, status: str):
         self.status = status
