@@ -169,12 +169,10 @@ class CalibrationDashboardWidget(QWidget):
             return
         label = (f'cycle {payload.cycle}/{payload.cycle_total} '
                  f'target {payload.target_idx}/{payload.target_total}')
-        # Joint-space interpolation path is left as a single-point placeholder
-        # for now (full FK sweep arrives in the next pass).
-        joint_path = [payload.fk_xyz]
+        path = payload.joint_path_xyz or [payload.fk_xyz]
         self._preview_pub.publish_preview(
             target_xyz=payload.fk_xyz,
-            joint_path_xyz=joint_path,
+            joint_path_xyz=path,
             label=label,
         )
         self._approve_btn.setEnabled(True)

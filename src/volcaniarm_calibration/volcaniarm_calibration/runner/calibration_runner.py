@@ -64,6 +64,7 @@ class PreviewPayload:
     theta_right: float
     theta_left: float
     fk_xyz: tuple = field(default=(0.0, 0.0, 0.0))
+    joint_path_xyz: list = field(default_factory=list)
 
 
 # Callback signatures used by the runner. The widget wires Qt signals.
@@ -211,6 +212,9 @@ class CalibrationRunner:
             theta_r, theta_l = ik
 
             fk_xyz = self._call_fk(theta_r, theta_l) or (0.0, 0.0, 0.0)
+            joint_path = self._sweep_fk_path(
+                request.home_position[0], request.home_position[1],
+                theta_r, theta_l, samples=10)
             payload = PreviewPayload(
                 cycle=cycle + 1,
                 cycle_total=request.test.num_cycles,
@@ -220,6 +224,7 @@ class CalibrationRunner:
                 theta_right=theta_r,
                 theta_left=theta_l,
                 fk_xyz=fk_xyz,
+                joint_path_xyz=joint_path,
             )
             self._emit_preview(payload)
 
@@ -276,6 +281,21 @@ class CalibrationRunner:
         if resp is None or not resp.success:
             return None
         return float(resp.theta1), float(resp.theta2)
+
+    def _sweep_fk_path(self, theta_r0: float, theta_l0: float,
+                       theta_r1: float, theta_l1: float,
+                       samples: int = 10) -> list:
+        """Linearly interpolate joint-space and return the cartesian path
+        from each sampled FK call. Falls back to start+end if FK fails."""
+        path: list = []
+        for i in range(samples + 1):
+            alpha = i / samples
+            tr = theta_r0 + alpha * (theta_r1 - theta_r0)
+            tl = theta_l0 + alpha * (theta_l1 - theta_l0)
+            xyz = self._call_fk(tr, tl)
+            if xyz is not None:
+                path.append(xyz)
+        return path
 
     def _call_fk(self, theta_right: float, theta_left: float):
         req = ComputeFK.Request()
