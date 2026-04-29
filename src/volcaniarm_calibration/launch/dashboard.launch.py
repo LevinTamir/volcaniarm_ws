@@ -14,7 +14,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -31,12 +31,19 @@ def generate_launch_description():
     use_rqt_arg = DeclareLaunchArgument(
         'use_rqt', default_value='true',
         description='Open the rqt calibration dashboard plugin')
+    tag_size_arg = DeclareLaunchArgument(
+        'tag_size', default_value='0.064',
+        description='AprilTag active (black square) edge length in metres. '
+                    'Real printed tag is 0.064; sim mesh is scaled to 0.200.')
+
+    # Coerce to float at launch time (parameters dict needs a real number).
+    tag_size = PythonExpression(['float("', LaunchConfiguration('tag_size'), '")'])
 
     apriltag_node = Node(
         package='apriltag_ros',
         executable='apriltag_node',
         name='apriltag',
-        parameters=[apriltag_config],
+        parameters=[apriltag_config, {'size': tag_size}],
         remappings=[
             ('image_rect', '/camera/color/image_raw'),
             ('camera_info', '/camera/color/camera_info'),
@@ -67,6 +74,7 @@ def generate_launch_description():
     return LaunchDescription([
         use_rviz_arg,
         use_rqt_arg,
+        tag_size_arg,
         apriltag_node,
         rviz,
         rqt,

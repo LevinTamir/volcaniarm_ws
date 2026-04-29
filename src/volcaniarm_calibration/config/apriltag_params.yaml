@@ -26,7 +26,9 @@
     # Tag configuration
     # ID 20: EE marker (apriltag_marker_ee)
     # ID 5:  base-link reference marker (apriltag_marker_base)
+    # Per-tag sizes: are intentionally omitted so the top-level `size`
+    # applies to every tag and can be overridden from the launch file
+    # (sim uses 0.2, real uses 0.064 from this yaml).
     tag:
       ids: [20, 5]
       frames: [apriltag_marker_ee, apriltag_marker_base]
-      sizes: [0.064, 0.064]
