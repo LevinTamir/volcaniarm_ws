@@ -1,6 +1,7 @@
 #include "volcaniarm_controller/rl_policy_controller.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <regex>
 #include <string>
 #include <vector>
@@ -25,6 +26,12 @@ RLPolicyController::on_init()
     auto_declare<std::string>("model_path", "");
     auto_declare<std::string>("target_topic", "/ee_target_pose");
     auto_declare<std::string>("target_frame", "volcaniarm_base_link");
+    // Safety polish (see header for semantics). Empty / unity defaults
+    // preserve original controller behaviour.
+    auto_declare<std::vector<double>>("joint_position_min", std::vector<double>{});
+    auto_declare<std::vector<double>>("joint_position_max", std::vector<double>{});
+    auto_declare<double>("action_smoothing_alpha", 1.0);
+    auto_declare<double>("target_max_age_s", 1.0);
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_node()->get_logger(), "on_init failed: %s", e.what());
     return controller_interface::CallbackReturn::ERROR;
@@ -52,6 +59,35 @@ RLPolicyController::on_configure(const rclcpp_lifecycle::State & /*previous_stat
       get_node()->get_logger(),
       "default_joint_positions size (%zu) must match joints size (%zu)",
       default_joint_positions_.size(), joint_names_.size());
+    return controller_interface::CallbackReturn::ERROR;
+  }
+
+  joint_position_min_ = get_node()->get_parameter("joint_position_min").as_double_array();
+  joint_position_max_ = get_node()->get_parameter("joint_position_max").as_double_array();
+  action_smoothing_alpha_ = get_node()->get_parameter("action_smoothing_alpha").as_double();
+  target_max_age_s_ = get_node()->get_parameter("target_max_age_s").as_double();
+
+  // Per-joint clamps must be either empty (clamping off) or sized to
+  // match the joint count. A mismatched length is a config error
+  // worth refusing rather than silently clamping the wrong axes.
+  if (!joint_position_min_.empty() && joint_position_min_.size() != joint_names_.size()) {
+    RCLCPP_ERROR(
+      get_node()->get_logger(),
+      "joint_position_min size (%zu) must be empty or match joints size (%zu)",
+      joint_position_min_.size(), joint_names_.size());
+    return controller_interface::CallbackReturn::ERROR;
+  }
+  if (!joint_position_max_.empty() && joint_position_max_.size() != joint_names_.size()) {
+    RCLCPP_ERROR(
+      get_node()->get_logger(),
+      "joint_position_max size (%zu) must be empty or match joints size (%zu)",
+      joint_position_max_.size(), joint_names_.size());
+    return controller_interface::CallbackReturn::ERROR;
+  }
+  if (action_smoothing_alpha_ < 0.0 || action_smoothing_alpha_ > 1.0) {
+    RCLCPP_ERROR(
+      get_node()->get_logger(),
+      "action_smoothing_alpha must be in [0, 1] (got %.3f)", action_smoothing_alpha_);
     return controller_interface::CallbackReturn::ERROR;
   }
 
@@ -148,11 +184,24 @@ RLPolicyController::update(const rclcpp::Time & /*time*/, const rclcpp::Duration
   const auto target_ptr = target_buffer_.readFromRT();
   const bool has_target = target_ptr != nullptr && *target_ptr != nullptr;
 
-  // No target message yet → hold the default (home) pose instead of
-  // feeding a zero target into the policy. The policy was trained on a
-  // specific target distribution; feeding out-of-distribution poses
-  // produces unpredictable joint commands at startup.
-  if (!has_target) {
+  // Watchdog: if the latest target is too old (e.g. publisher died,
+  // network glitch), fall back to default. Skipped when the message
+  // stamp is zero -- that means the publisher didn't stamp at all,
+  // and we don't want a degraded watchdog blocking everything.
+  bool target_stale = false;
+  if (has_target) {
+    const rclcpp::Time stamp = (*target_ptr)->header.stamp;
+    if (stamp.nanoseconds() > 0) {
+      const double age = (get_node()->get_clock()->now() - stamp).seconds();
+      target_stale = (age > target_max_age_s_);
+    }
+  }
+
+  // No target message yet (or stale) → hold the default (home) pose
+  // instead of feeding stale / zero targets into the policy. The
+  // policy was trained on a specific target distribution; feeding
+  // out-of-distribution poses produces unpredictable joint commands.
+  if (!has_target || target_stale) {
     for (size_t i = 0; i < n; ++i) {
       if (!command_interfaces_[i].set_value(default_joint_positions_[i])) {
         RCLCPP_WARN_THROTTLE(
@@ -161,6 +210,11 @@ RLPolicyController::update(const rclcpp::Time & /*time*/, const rclcpp::Duration
       }
     }
     std::fill(last_action_.begin(), last_action_.end(), 0.0);
+    if (target_stale) {
+      RCLCPP_WARN_THROTTLE(
+        get_node()->get_logger(), *get_node()->get_clock(), 1000,
+        "Target stale (> %.2f s); holding default pose", target_max_age_s_);
+    }
     return controller_interface::return_type::OK;
   }
 
@@ -197,7 +251,7 @@ RLPolicyController::update(const rclcpp::Time & /*time*/, const rclcpp::Duration
     observation.push_back(a);
   }
 
-  const auto raw_action = run_inference(observation);
+  auto raw_action = run_inference(observation);
   if (raw_action.size() != n) {
     RCLCPP_ERROR_THROTTLE(
       get_node()->get_logger(), *get_node()->get_clock(), 1000,
@@ -205,10 +259,39 @@ RLPolicyController::update(const rclcpp::Time & /*time*/, const rclcpp::Duration
     return controller_interface::return_type::ERROR;
   }
 
-  // target_q = default + scale * raw_action (matches training's
-  // JointPositionAction with use_default_offset=True, scale=0.5).
+  // NaN guard: a corrupt model or a numerical blow-up shouldn't get
+  // commanded to the joints. If any value is non-finite we treat the
+  // whole step as zero action (= command default) and warn.
   for (size_t i = 0; i < n; ++i) {
-    const double target_q = default_joint_positions_[i] + action_scale_ * raw_action[i];
+    if (!std::isfinite(raw_action[i])) {
+      RCLCPP_WARN_THROTTLE(
+        get_node()->get_logger(), *get_node()->get_clock(), 1000,
+        "Inference produced non-finite output; commanding default pose");
+      std::fill(raw_action.begin(), raw_action.end(), 0.0);
+      break;
+    }
+  }
+
+  // EMA action smoothing: a = alpha*new + (1-alpha)*last. alpha=1.0
+  // (default) is the original no-smoothing behaviour. Lower values
+  // damp oscillation but lag the policy. The smoothed action also
+  // feeds back into the obs vector next tick (last_action_), keeping
+  // the policy view consistent with what's actually commanded.
+  if (action_smoothing_alpha_ < 1.0) {
+    for (size_t i = 0; i < n; ++i) {
+      raw_action[i] = action_smoothing_alpha_ * raw_action[i]
+                    + (1.0 - action_smoothing_alpha_) * last_action_[i];
+    }
+  }
+
+  // target_q = default + scale * raw_action (matches training's
+  // JointPositionAction with use_default_offset=True, scale=0.5),
+  // then clamped to per-joint safety limits if configured.
+  for (size_t i = 0; i < n; ++i) {
+    double target_q = default_joint_positions_[i] + action_scale_ * raw_action[i];
+    if (!joint_position_min_.empty() && !joint_position_max_.empty()) {
+      target_q = std::clamp(target_q, joint_position_min_[i], joint_position_max_[i]);
+    }
     if (!command_interfaces_[i].set_value(target_q)) {
       RCLCPP_WARN_THROTTLE(
         get_node()->get_logger(), *get_node()->get_clock(), 1000,

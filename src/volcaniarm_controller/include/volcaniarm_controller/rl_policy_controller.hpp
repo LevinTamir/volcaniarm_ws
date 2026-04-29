@@ -53,6 +53,20 @@ private:
   std::string target_topic_;
   std::string target_frame_;
 
+  // Safety / polish parameters. Empty / unity defaults preserve the
+  // original behaviour; the operator opts in via YAML.
+  //   joint_position_{min,max}: hard per-joint clamps applied AFTER
+  //     the default-offset + scale step. Empty = no clamp.
+  //   action_smoothing_alpha: EMA over raw policy outputs.
+  //     1.0 = no smoothing (default), 0.0 = freeze action.
+  //   target_max_age_s: if the latest target message stamp is older
+  //     than this (and was non-zero), the controller falls back to
+  //     holding default_joint_positions until a fresh target arrives.
+  std::vector<double> joint_position_min_;
+  std::vector<double> joint_position_max_;
+  double action_smoothing_alpha_{1.0};
+  double target_max_age_s_{1.0};
+
   // Runtime state.
   std::vector<double> last_action_;
 
