@@ -40,8 +40,15 @@
     </inertial>
   </link>
 
+  <!-- Mount offset in right_arm_tip_link frame. The tip's +X axis at
+       home points back along the calibration-camera optical axis (i.e.
+       perpendicular to the arm's working Y-Z plane), so extending the
+       offset along +X brings the tag closer to the camera *without*
+       moving it in image Y/Z and without affecting the calibration's
+       Y-Z residuals. The mount roll keeps the printed bracket aimed
+       roughly upward at the camera at typical operating poses. -->
   <joint name="apriltag_ee_mount_joint" type="fixed">
-    <origin xyz="0.04 0 0" rpy="${-pi/3.4} 0 0" />
+    <origin xyz="0.1 0 0" rpy="${-pi/3.4} 0 0" />
     <parent link="right_arm_tip_link" />
     <child link="apriltag_ee_mount_link" />
   </joint>

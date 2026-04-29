@@ -9,14 +9,24 @@
     </plugin>
   </gazebo>
 
-  <!-- RGBD Camera sensor -->
+  <!-- RGBD Camera sensor.
+       HFOV 1.5 rad (~86 deg) and 1280x720 resolution intentionally
+       diverge from the real D435 color spec (~69 deg HFOV at 848x480)
+       to widen the calibration camera's coverage so the full EE
+       operating envelope (home tip near world Z=0.23 to high targets
+       near Z=1.58) fits in a single frame at 2.5 m standoff. The
+       higher resolution keeps the 0.2 m sim apriltags at ~55 px wide
+       at 2.5 m (down to ~6 px per bit, comfortably above the 36h11
+       decode floor). For a sim-vs-real apples-to-apples comparison
+       on a calibrated D435, drop these back to 1.25 / 848x480 and
+       reposition the camera. -->
   <gazebo reference="camera_link">
       <sensor name="rgbd_camera" type="rgbd_camera">
           <camera>
-              <horizontal_fov>1.25</horizontal_fov>
+              <horizontal_fov>1.5</horizontal_fov>
               <image>
-                  <width>848</width>
-                  <height>480</height>
+                  <width>1280</width>
+                  <height>720</height>
               </image>
               <clip>
                   <near>0.3</near>

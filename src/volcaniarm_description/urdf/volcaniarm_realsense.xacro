@@ -4,18 +4,22 @@
 
   <!-- Calibration mode: horizontal camera in front of the robot (sim only).
        base_link is at world (0,0,0.98) with yaw=pi, so base_link +X is
-       world -X. xyz=(2.0, 0, -0.48) -> world (-2.0, 0, 0.5); yaw=pi
-       points +X back toward world +X. Z is set near the midpoint of the
-       EE-tag and base-tag world heights so both fit in the vertical FOV.
+       world -X. xyz=(2.5, 0, -0.07) -> world (-2.5, 0, 0.91); yaw=pi
+       points +X back toward world +X.
 
-       NOTE: at home (theta=0,0) the EE tag normal points world +Z, so a
-       horizontal camera sees that tag edge-on and apriltag will not
-       decode it. Detection of the EE tag becomes reliable as soon as
-       the arm starts moving. If you need home-pose EE detection, tilt
-       the camera downward or rotate the EE tag mount. -->
+       Camera Z (0.91 m) is the midpoint of the workspace vertical
+       range (home tip near world Z=0.23, high targets near Z=1.58),
+       and the X distance (2.5 m) is set so the sim camera vertical
+       FOV of ~45 deg covers the full 1.55 m workspace span (with
+       0.2 m tag size accounted for) and keeps the entire EE tag
+       inside the image at every test pose. At 2 m distance the FOV
+       was ~0.24 m short and high-target captures lost the EE tag
+       to the top of the frame; pulling the camera back trades a
+       smaller tag in the image (~48 px wide vs ~62) for full
+       coverage of the operating envelope. -->
   <xacro:if value="$(arg calibration)">
     <joint name="calibration_camera_joint" type="fixed">
-      <origin xyz="2.0 0 -0.48" rpy="0 0 ${pi}" />
+      <origin xyz="1.8 0 -0.06" rpy="0 0 ${pi}" />
       <parent link="base_link" />
       <child link="camera_link" />
     </joint>

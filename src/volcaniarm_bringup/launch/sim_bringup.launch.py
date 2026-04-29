@@ -17,16 +17,26 @@ def generate_launch_description():
         description="Use simulation time",
     )
 
-    world_name_arg = DeclareLaunchArgument(
-        "world_name",
-        default_value="lab",
-        description="Gazebo world name (without .sdf extension)",
-    )
-
     calibration_arg = DeclareLaunchArgument(
         "calibration",
         default_value="false",
         description="Add AprilTag to EE for calibration testing",
+    )
+
+    # Default world depends on calibration mode: the lab world contains
+    # a potted-weed visual that occludes the apriltag scene, so
+    # calibration runs use a stripped-down world. User can still
+    # override with world_name:=<name>.
+    world_name_arg = DeclareLaunchArgument(
+        "world_name",
+        default_value=PythonExpression([
+            "'calibration' if '",
+            LaunchConfiguration("calibration"),
+            "' == 'true' else 'lab'",
+        ]),
+        description="Gazebo world name (without .sdf extension); "
+                    "defaults to 'calibration' when calibration:=true, "
+                    "else 'lab'",
     )
 
     camera_mount_x_arg = DeclareLaunchArgument(
