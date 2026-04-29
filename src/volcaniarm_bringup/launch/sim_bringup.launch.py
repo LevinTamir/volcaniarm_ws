@@ -213,8 +213,12 @@ def generate_launch_description():
     return LaunchDescription(
         [
             use_sim_time_arg,
-            world_name_arg,
+            # calibration_arg must come before world_name_arg --
+            # world_name's default is a PythonExpression that reads
+            # LaunchConfiguration("calibration"), so the calibration
+            # arg has to exist by the time launch evaluates it.
             calibration_arg,
+            world_name_arg,
             camera_mount_x_arg,
             camera_mount_pitch_arg,
             sim_arg,
