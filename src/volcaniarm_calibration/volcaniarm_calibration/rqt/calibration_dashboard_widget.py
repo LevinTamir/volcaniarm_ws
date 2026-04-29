@@ -19,6 +19,8 @@ UI is built programmatically (no .ui file) for simplicity.
 
 from __future__ import annotations
 
+import html
+import re
 from pathlib import Path
 import threading
 
@@ -26,8 +28,22 @@ from python_qt_binding.QtCore import Signal, Slot, QObject
 from python_qt_binding.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QComboBox, QDoubleSpinBox, QSpinBox, QPushButton, QLabel,
-    QPlainTextEdit, QProgressBar,
+    QPlainTextEdit, QProgressBar, QTextEdit,
 )
+
+
+# Status messages matching any of these patterns (case-insensitive)
+# get logged in red. Catches IK / motion / settle failures, aborts,
+# missing services, stale detections, etc.
+_ERROR_PATTERNS = re.compile(
+    r'(fail|abort|cannot|invalid|stale|out of reach|error|empty|no goals'
+    r'|not visible|not moving)', re.IGNORECASE)
+# Successes (completions, captures, arrivals) get logged in green so
+# the operator can scan progress quickly. The match is intentionally
+# narrow to avoid colouring routine progress lines.
+_SUCCESS_PATTERNS = re.compile(
+    r'(\bcompleted\b|\barrived\b|\bcaptured\b|run completed)',
+    re.IGNORECASE)
 
 from ..runner import (
     CalibrationRunner, RunRequest, TEST_REGISTRY,
@@ -179,9 +195,12 @@ class CalibrationDashboardWidget(QWidget):
         self._progress.setValue(0)
         layout.addWidget(self._progress)
 
-        self._log = QPlainTextEdit()
+        # QTextEdit (rich text) instead of QPlainTextEdit so each line
+        # can be coloured by severity. Maximum block count keeps the
+        # widget bounded; the ring buffer behaviour is identical.
+        self._log = QTextEdit()
         self._log.setReadOnly(True)
-        self._log.setMaximumBlockCount(1000)
+        self._log.document().setMaximumBlockCount(1000)
         layout.addWidget(self._log)
 
     def _make_pose_spinbox(self, default: float, lo: float, hi: float
@@ -247,6 +266,25 @@ class CalibrationDashboardWidget(QWidget):
         self._runner.cancel()
         self._reset_ui_state(status='idle')
 
+    def _log_msg(self, msg: str):
+        """Append a status line to the log box, coloured by severity.
+
+        Errors (IK / motion / abort / stale) render red, completions
+        / arrivals / captures render green, everything else uses the
+        Qt theme default. HTML special characters are escaped so log
+        text from arbitrary sources can't accidentally inject markup.
+        """
+        escaped = html.escape(msg)
+        if _ERROR_PATTERNS.search(msg):
+            html_line = (
+                f'<span style="color: #d04b4b;">{escaped}</span>')
+        elif _SUCCESS_PATTERNS.search(msg):
+            html_line = (
+                f'<span style="color: #2e9c4a;">{escaped}</span>')
+        else:
+            html_line = escaped
+        self._log.append(html_line)
+
     def _reset_ui_state(self, status: str = 'idle'):
         """Clear progress / detection / button state so the dashboard
         is ready for a fresh run. Called from finished, reset, cancel,
@@ -309,11 +347,11 @@ class CalibrationDashboardWidget(QWidget):
             try:
                 goals = self._parse_goals_text(self._goals_edit.toPlainText())
             except ValueError as exc:
-                self._log.appendPlainText(f'goals parse error: {exc}')
+                self._log_msg(f'goals parse error: {exc}')
                 self._status_label.setText(f'cannot start: {exc}')
                 return
             if not goals:
-                self._log.appendPlainText('goals list is empty; nothing to run')
+                self._log_msg('goals list is empty; nothing to run')
                 self._status_label.setText('cannot start: empty goals list')
                 return
         else:
@@ -342,7 +380,7 @@ class CalibrationDashboardWidget(QWidget):
             self._progress.setRange(0, test.num_cycles * len(goals))
             self._progress.setValue(0)
             self._detection_label.setText('detection: idle')
-            self._log.appendPlainText(
+            self._log_msg(
                 f'requested run: {test.name} '
                 f'({test.num_cycles} cycles x {len(goals)} goals)')
 
@@ -398,7 +436,7 @@ class CalibrationDashboardWidget(QWidget):
     @Slot(str)
     def _on_status(self, msg: str):
         self._status_label.setText(msg)
-        self._log.appendPlainText(msg)
+        self._log_msg(msg)
 
     @Slot(int, int)
     def _on_progress(self, current: int, total: int):
@@ -423,7 +461,7 @@ class CalibrationDashboardWidget(QWidget):
 
     @Slot(str, str)
     def _on_finished(self, run_dir: str, status: str):
-        self._log.appendPlainText(f'output: {run_dir}')
+        self._log_msg(f'output: {run_dir}')
         self._reset_ui_state(status=f'run {status}')
 
     def shutdown(self):
