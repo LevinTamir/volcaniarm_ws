@@ -194,6 +194,18 @@ class CalibrationRunner:
         total = request.test.total_visits()
         visits = list(request.test.iter_visits())
         per_cycle = len(request.test.targets)
+
+        # Always start at the home pose before any test movement.
+        self._emit_status(
+            f'homing to theta=({request.home_position[0]:.3f}, '
+            f'{request.home_position[1]:.3f})')
+        if not self._send_and_wait(
+            request,
+            request.home_position[0], request.home_position[1],
+            request.trajectory_duration):
+            self._emit_status('initial home move failed; aborting run')
+            return
+
         for visit_idx, target in enumerate(visits):
             if self._stop_event.is_set():
                 return
@@ -245,13 +257,16 @@ class CalibrationRunner:
                                     target, theta_r, theta_l, fk_xyz)
             self._emit_progress(visit_idx + 1, total)
 
-            if (request.test.return_home_between_targets
-                    and in_cycle_idx + 1 < per_cycle):
+            # Always return home between visits so each cycle is
+            # home -> target -> measure -> home.
+            if visit_idx + 1 < len(visits):
                 self._emit_status('returning home')
-                self._send_and_wait(
+                if not self._send_and_wait(
                     request,
                     request.home_position[0], request.home_position[1],
-                    request.trajectory_duration)
+                    request.trajectory_duration):
+                    self._emit_status('home move failed; aborting run')
+                    return
 
     # -- ROS plumbing ---------------------------------------------
 

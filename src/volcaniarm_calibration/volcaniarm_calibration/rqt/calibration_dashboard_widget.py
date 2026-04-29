@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import math
+
 from python_qt_binding.QtCore import Signal, Slot, Qt, QObject
 from python_qt_binding.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
@@ -84,6 +86,18 @@ class CalibrationDashboardWidget(QWidget):
         self._samples.setRange(1, 200)
         self._samples.setValue(20)
         form.addRow('samples per visit', self._samples)
+        self._home_theta_right = QDoubleSpinBox()
+        self._home_theta_right.setRange(-math.pi, math.pi)
+        self._home_theta_right.setSingleStep(0.05)
+        self._home_theta_right.setDecimals(3)
+        self._home_theta_right.setValue(0.0)
+        form.addRow('home theta_right [rad]', self._home_theta_right)
+        self._home_theta_left = QDoubleSpinBox()
+        self._home_theta_left.setRange(-math.pi, math.pi)
+        self._home_theta_left.setSingleStep(0.05)
+        self._home_theta_left.setDecimals(3)
+        self._home_theta_left.setValue(0.0)
+        form.addRow('home theta_left [rad]', self._home_theta_left)
         layout.addWidget(cfg_box)
 
         btn_row = QHBoxLayout()
@@ -137,6 +151,8 @@ class CalibrationDashboardWidget(QWidget):
             test=test,
             output_root=Path(DEFAULT_OUTPUT_DIR).expanduser(),
             auto_approve=False,
+            home_position=(self._home_theta_right.value(),
+                           self._home_theta_left.value()),
         )
         if self._runner.request_run(request):
             self._approve_btn.setEnabled(False)
@@ -199,6 +215,8 @@ class CalibrationDashboardWidget(QWidget):
         plugin_settings.set_value('target_z', self._target_z.value())
         plugin_settings.set_value('iterations', self._iterations.value())
         plugin_settings.set_value('samples', self._samples.value())
+        plugin_settings.set_value('home_theta_right', self._home_theta_right.value())
+        plugin_settings.set_value('home_theta_left', self._home_theta_left.value())
 
     def restore_settings(self, plugin_settings):
         v = plugin_settings.value('test_type')
@@ -211,6 +229,8 @@ class CalibrationDashboardWidget(QWidget):
             ('target_z', self._target_z),
             ('iterations', self._iterations),
             ('samples', self._samples),
+            ('home_theta_right', self._home_theta_right),
+            ('home_theta_left', self._home_theta_left),
         ):
             v = plugin_settings.value(key)
             if v is not None:

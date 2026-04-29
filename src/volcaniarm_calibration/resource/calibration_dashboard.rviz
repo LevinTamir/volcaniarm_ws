@@ -8,13 +8,7 @@ Panels:
         - /TF1/Frames1
         - /MarkerArray1
       Splitter Ratio: 0.5
-    Tree Height: 549
-  - Class: rviz_common/Selection
-    Name: Selection
-  - Class: rviz_common/Tool Properties
-    Name: Tool Properties
-  - Class: rviz_common/Views
-    Name: Views
+    Tree Height: 700
 Visualization Manager:
   Class: ""
   Displays:
@@ -108,7 +102,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: volcaniarm_base_link
+    Fixed Frame: world
     Frame Rate: 30
   Name: root
   Tools:
@@ -145,11 +139,5 @@ Window Geometry:
     collapsed: false
   Height: 900
   Hide Left Dock: false
-  Hide Right Dock: false
-  Selection:
-    collapsed: false
-  Tool Properties:
-    collapsed: false
-  Views:
-    collapsed: false
+  Hide Right Dock: true
   Width: 1400

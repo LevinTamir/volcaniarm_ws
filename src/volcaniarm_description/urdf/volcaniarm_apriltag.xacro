@@ -91,10 +91,13 @@
     </inertial>
   </link>
 
-  <!-- TODO(thesis): replace with the measured mount offset once the
-       printed bracket is fitted on volcaniarm_base_link. -->
+  <!-- Pushed out along volcaniarm_base_link +X so the tag clears the
+       table footprint and stays visible to the camera. Y/Z relative
+       to base_link are unchanged.
+       TODO(thesis): replace with the measured mount offset once the
+       printed bracket is fitted. -->
   <joint name="apriltag_base_mount_joint" type="fixed">
-    <origin xyz="0.10 0.0 0.05" rpy="0 0 0" />
+    <origin xyz="0.65 0.0 0.05" rpy="0 0 0" />
     <parent link="volcaniarm_base_link" />
     <child link="apriltag_base_mount_link" />
   </joint>
