@@ -4,12 +4,17 @@
 
   <!-- Calibration mode: camera at fixed position in front of robot (sim only).
        base_link is at world (0,0,0.98) with yaw=pi, so base_link +X = world -X.
-       Camera pulled out far enough in base_link +X to fit both the base
-       and EE AprilTags in the same frame; height tuned to roughly center
-       on the arm's reachable workspace. -->
+       Camera at world (-2.0, 0, 1.2) pitched ~28.6 deg downward so it can
+       see both AprilTag faces:
+         - EE tag normal points world +Z (up), only detectable when the
+           camera looks down at it.
+         - Base tag normal points world -X (toward the camera), still in
+           frame at this height/pitch combination.
+       In base_link frame: xyz=(2.0, 0, 0.22), rpy yaw=pi puts +X back
+       toward world +X, pitch=0.5 rad tilts the optical axis downward. -->
   <xacro:if value="$(arg calibration)">
     <joint name="calibration_camera_joint" type="fixed">
-      <origin xyz="2.0 0 -0.48" rpy="0 0 ${pi}" />
+      <origin xyz="2.0 0 0.22" rpy="0 0.5 ${pi}" />
       <parent link="base_link" />
       <child link="camera_link" />
     </joint>
