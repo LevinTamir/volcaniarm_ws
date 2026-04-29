@@ -257,16 +257,16 @@ class CalibrationRunner:
                                     target, theta_r, theta_l, fk_xyz)
             self._emit_progress(visit_idx + 1, total)
 
-            # Always return home between visits so each cycle is
-            # home -> target -> measure -> home.
-            if visit_idx + 1 < len(visits):
-                self._emit_status('returning home')
-                if not self._send_and_wait(
-                    request,
-                    request.home_position[0], request.home_position[1],
-                    request.trajectory_duration):
-                    self._emit_status('home move failed; aborting run')
-                    return
+            # Always return home after every visit (including the last)
+            # so each cycle is home -> target -> measure -> home and the
+            # run ends with the arm at the home pose.
+            self._emit_status('returning home')
+            if not self._send_and_wait(
+                request,
+                request.home_position[0], request.home_position[1],
+                request.trajectory_duration):
+                self._emit_status('home move failed; aborting run')
+                return
 
     # -- ROS plumbing ---------------------------------------------
 

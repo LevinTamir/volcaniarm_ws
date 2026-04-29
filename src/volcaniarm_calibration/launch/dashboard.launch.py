@@ -23,7 +23,7 @@ def generate_launch_description():
     apriltag_config = os.path.join(
         calibration_share, 'config', 'apriltag_params.yaml')
     rviz_config = os.path.join(
-        calibration_share, 'resource', 'calibration_dashboard.rviz')
+        calibration_share, 'rviz', 'calibration_dashboard.rviz')
 
     use_rviz_arg = DeclareLaunchArgument(
         'use_rviz', default_value='true',
@@ -38,8 +38,8 @@ def generate_launch_description():
         name='apriltag',
         parameters=[apriltag_config],
         remappings=[
-            ('image_rect', '/camera/camera/color/image_raw'),
-            ('camera_info', '/camera/camera/color/camera_info'),
+            ('image_rect', '/camera/color/image_raw'),
+            ('camera_info', '/camera/color/camera_info'),
         ],
         output='screen',
     )

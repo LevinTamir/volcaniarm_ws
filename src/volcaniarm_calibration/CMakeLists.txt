@@ -33,8 +33,8 @@ install(DIRECTORY scripts/
 install(FILES plugin.xml
   DESTINATION share/${PROJECT_NAME}
 )
-install(DIRECTORY resource/
-  DESTINATION share/${PROJECT_NAME}/resource
+install(DIRECTORY rviz/
+  DESTINATION share/${PROJECT_NAME}/rviz
 )
 install(DIRECTORY notebooks/
   DESTINATION share/${PROJECT_NAME}/notebooks
