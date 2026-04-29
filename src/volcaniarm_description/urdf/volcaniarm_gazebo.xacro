@@ -47,11 +47,17 @@
           <update_rate>30</update_rate>
           <visualize>true</visualize>
           <topic>rgbd_camera</topic>
-          <!-- Image frame_id must be the optical frame (+Z forward, +X right,
-               +Y down) so apriltag_ros and image_proc interpret poses with the
-               REP-103 camera convention. Reporting camera_link (+X forward)
-               here would make detected tag TFs appear rotated 90 deg. -->
-          <gz_frame_id>camera_color_optical_frame</gz_frame_id>
+          <!-- Diagnostic: optical_frame_id removed so every sensor
+               output (image, depth, pointcloud, camera_info) inherits
+               the gz_frame_id below. Set to camera_link to test
+               whether gz-sim emits pointcloud XYZ in camera_link
+               convention (X forward); if RViz renders the cloud
+               correctly here, the prior optical tagging was double
+               rotating the data. Note: the apriltag detector will
+               see images tagged with camera_link too, so detected
+               poses will be rotated 90 deg until we pick the final
+               combo. -->
+          <gz_frame_id>camera_link</gz_frame_id>
       </sensor>
   </gazebo>
 
