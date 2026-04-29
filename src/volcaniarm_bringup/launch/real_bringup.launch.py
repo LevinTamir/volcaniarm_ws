@@ -76,6 +76,17 @@ def generate_launch_description():
                     "dashboard (assumes physical AprilTags are mounted on the arm)",
     )
 
+    # Pointcloud is off by default since it adds USB bandwidth + CPU
+    # load and isn't needed for calibration (RGB only) or RL policy
+    # control. Enable when running 3D perception (e.g. weed detector)
+    # or when sim/real parity matters for the test you're running.
+    pointcloud_arg = DeclareLaunchArgument(
+        "pointcloud",
+        default_value="false",
+        choices=["true", "false"],
+        description="Publish /camera/depth/color/points from the RealSense driver",
+    )
+
     is_traj_active = IfCondition(
         PythonExpression(
             ["'", LaunchConfiguration("controller"), "' in ('traj', 'all')"]
@@ -197,7 +208,7 @@ def generate_launch_description():
             'depth_module.depth_profile': '848x480x30',
             'rgb_camera.color_profile': '848x480x30',
             'align_depth.enable': 'true',
-            'pointcloud.enable': 'false',
+            'pointcloud.enable': LaunchConfiguration("pointcloud"),
             'publish_tf': 'false',  # URDF handles all TF
         }.items(),
     )
@@ -209,6 +220,7 @@ def generate_launch_description():
             homing_arg,
             controller_arg,
             calibration_arg,
+            pointcloud_arg,
             robot_state_publisher,
             OpaqueFunction(
                 function=lambda ctx: _build_controller_manager(ctx, robot_description_content)
