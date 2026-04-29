@@ -234,6 +234,12 @@ class CalibrationDashboardWidget(QWidget):
         is_workspace = (name == 'workspace_coverage')
         self._goals_box.setVisible(is_workspace)
         self._goal_box.setVisible(not is_workspace)
+        # Workspace coverage visits each goal exactly once -- the
+        # iterations spinbox doesn't apply. Disable it and pin to 1
+        # so the operator isn't misled by a value the runner ignores.
+        self._iterations.setEnabled(not is_workspace)
+        if is_workspace:
+            self._iterations.setValue(1)
 
     # -- startup helpers ------------------------------------------
 

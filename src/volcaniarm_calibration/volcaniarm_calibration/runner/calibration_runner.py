@@ -355,20 +355,23 @@ class CalibrationRunner:
                 visit_count += 1
                 self._emit_progress(visit_count, total_visits)
 
-                # Always return to the initial pose between visits so
-                # each visit starts from a known state and the run
-                # ends with the arm parked at the operator-chosen
-                # initial.
-                self._emit_status(
-                    f'cycle {iteration}/{total_iterations} '
-                    f'goal {goal_idx}/{len(goals)}: returning to initial')
-                if not self._send_and_wait(
-                        request.joint_names,
-                        initial_theta_r, initial_theta_l,
-                        request.trajectory_duration):
+                # Single-pose tests return to the initial pose between
+                # visits so each visit starts from a known state and
+                # the run ends with the arm parked at the operator-
+                # chosen initial. The workspace_coverage sweep skips
+                # this so it can walk the envelope without doubling
+                # back on every goal.
+                if request.test.return_to_initial_between_visits:
                     self._emit_status(
-                        'return-to-initial move failed; aborting run')
-                    return
+                        f'cycle {iteration}/{total_iterations} '
+                        f'goal {goal_idx}/{len(goals)}: returning to initial')
+                    if not self._send_and_wait(
+                            request.joint_names,
+                            initial_theta_r, initial_theta_l,
+                            request.trajectory_duration):
+                        self._emit_status(
+                            'return-to-initial move failed; aborting run')
+                        return
 
     def _goto_worker(self, y: float, z: float,
                      joint_names: tuple, duration: float):

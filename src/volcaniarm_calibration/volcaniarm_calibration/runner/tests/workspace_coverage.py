@@ -1,13 +1,14 @@
-"""Workspace coverage test: visit a list of poses (typically the
-operating envelope) N times each.
+"""Workspace coverage test: walk a list of poses (typically the
+operating envelope) once each, without returning to the initial pose
+between visits.
 
-Used for ISO 9283-style multi-pose characterisation: each goal in the
-list is visited ``num_cycles`` times in a round-robin pattern (full
-sweep across goals counts as one cycle), with the runner gating at
-every visit so the operator can adjust the camera if needed. The
-data writer tags each row with the cycle index and the goal index so
-the analysis notebook can group per-goal accuracy and repeatability
-metrics from a single run.
+The arm parks at the user-chosen initial pose, captures a baseline,
+then sweeps each goal in order: move -> settle -> operator-gated
+Continue -> capture -> next goal. The run ends at the last goal.
+
+Use ``static_accuracy`` or ``repeatability`` when you want multiple
+samples at a single pose with returns to a known starting state. This
+test is for spatial coverage, not statistical repetition.
 """
 
 from .base import BaseTest, Target
@@ -15,6 +16,15 @@ from .base import BaseTest, Target
 
 class WorkspaceCoverageTest(BaseTest):
     name = 'workspace_coverage'
+
+    def __init__(self, *args, **kwargs):
+        # Force the two semantics that distinguish this test from
+        # accuracy / repeatability, regardless of what the dashboard
+        # or headless node passes. Putting them here keeps the runner
+        # generic and avoids per-test branching in _execute.
+        kwargs['num_cycles'] = 1
+        kwargs['return_to_initial_between_visits'] = False
+        super().__init__(*args, **kwargs)
 
     def iter_visits(self):
         for _ in range(self.num_cycles):
