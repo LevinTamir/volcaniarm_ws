@@ -29,12 +29,14 @@ class AccuracyTestNode(Node):
         super().__init__('accuracy_test_node')
         self.declare_parameter('test_type', 'static_accuracy')
         # Initial pose (workspace y, z metres) is where the arm parks
-        # at run start and between iterations. Goal pose is the single
-        # target visited each iteration.
+        # at run start and between visits.
         self.declare_parameter('initial_y', 0.0)
         self.declare_parameter('initial_z', 0.5)
-        self.declare_parameter('goal_y', 0.0)
-        self.declare_parameter('goal_z', 0.6)
+        # Goals: flat list of (y, z) pairs, e.g. [0.0, 0.5, 0.1, 0.5].
+        # Single-pose tests (static_accuracy / repeatability) supply
+        # one pair; the workspace_coverage test supplies the full
+        # envelope.
+        self.declare_parameter('goals', [0.0, 0.6])
         self.declare_parameter('num_cycles', 5)
         self.declare_parameter('settle_time', 2.0)
         self.declare_parameter('samples_per_visit', 20)
@@ -49,12 +51,16 @@ class AccuracyTestNode(Node):
         test_type = self.get_parameter('test_type').value
         cls = TEST_REGISTRY.get(test_type, StaticAccuracyTest)
 
-        # Tests still iterate over a `targets` list; pass a single
-        # element so iter_visits() yields num_cycles copies of the goal.
-        goal_y = float(self.get_parameter('goal_y').value)
-        goal_z = float(self.get_parameter('goal_z').value)
+        flat = list(self.get_parameter('goals').value)
+        if len(flat) % 2 != 0 or len(flat) == 0:
+            raise ValueError(
+                f'goals must be a flat list of even length [y0, z0, y1, z1, ...]; '
+                f'got {flat!r}')
+        goals = [(float(flat[i]), float(flat[i + 1]))
+                 for i in range(0, len(flat), 2)]
+
         test = cls(
-            targets=[(goal_y, goal_z)],
+            targets=goals,
             num_cycles=int(self.get_parameter('num_cycles').value),
             samples_per_visit=int(self.get_parameter('samples_per_visit').value),
             settle_time=float(self.get_parameter('settle_time').value),
@@ -74,7 +80,7 @@ class AccuracyTestNode(Node):
             output_root=Path(self.get_parameter('output_dir').value).expanduser(),
             initial_pose=(float(self.get_parameter('initial_y').value),
                           float(self.get_parameter('initial_z').value)),
-            goal_pose=(goal_y, goal_z),
+            goals=tuple(goals),
             joint_names=tuple(self.get_parameter('joint_names').value),
             trajectory_duration=float(self.get_parameter('trajectory_duration').value),
             base_tag_frame=self.get_parameter('base_tag_frame').value,

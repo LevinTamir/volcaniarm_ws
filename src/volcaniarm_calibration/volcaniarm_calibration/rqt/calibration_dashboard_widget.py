@@ -123,15 +123,32 @@ class CalibrationDashboardWidget(QWidget):
         initial_outer.addWidget(self._move_initial_btn)
         layout.addWidget(initial_box)
 
-        goal_box = QGroupBox('Goal pose (workspace, metres)')
-        goal_form = QFormLayout(goal_box)
+        # Goal input: single-pose for accuracy/repeatability, free-form
+        # multi-pose list for workspace coverage. Both kept in the
+        # layout simultaneously; the test combo toggles which is
+        # visible (cleaner than a QStackedWidget for two simple forms).
+        self._goal_box = QGroupBox('Goal pose (workspace, metres)')
+        goal_form = QFormLayout(self._goal_box)
         self._goal_y = self._make_pose_spinbox(_HOME_FALLBACK[0],
                                                lo=-0.4, hi=0.4)
         goal_form.addRow('y', self._goal_y)
         self._goal_z = self._make_pose_spinbox(_HOME_FALLBACK[1],
                                                lo=0.1, hi=0.9)
         goal_form.addRow('z', self._goal_z)
-        layout.addWidget(goal_box)
+        layout.addWidget(self._goal_box)
+
+        self._goals_box = QGroupBox(
+            'Goals list (workspace, metres) - one "y, z" per line')
+        goals_outer = QVBoxLayout(self._goals_box)
+        self._goals_edit = QPlainTextEdit()
+        self._goals_edit.setPlaceholderText(
+            '0.0, 0.5\n0.1, 0.5\n-0.1, 0.5\n0.0, 0.6')
+        self._goals_edit.setMaximumBlockCount(200)
+        goals_outer.addWidget(self._goals_edit)
+        layout.addWidget(self._goals_box)
+        # Default invisible; toggled by _on_test_changed once we know
+        # which test the user picked.
+        self._goals_box.setVisible(False)
 
         btn_row = QHBoxLayout()
         self._start_btn = QPushButton('Start Run')
@@ -200,12 +217,23 @@ class CalibrationDashboardWidget(QWidget):
             lambda: self._initial_y.setValue(self._home_fk_y))
         self._initial_z_home_btn.clicked.connect(
             lambda: self._initial_z.setValue(self._home_fk_z))
+        self._test_combo.currentTextChanged.connect(self._on_test_changed)
+        # Make sure the initial test selection has the right input
+        # group visible (defaults to whichever the combo lands on after
+        # restore_settings).
+        self._on_test_changed(self._test_combo.currentText())
         self._bridge.status.connect(self._on_status)
         self._bridge.progress.connect(self._on_progress)
         self._bridge.finished.connect(self._on_finished)
         self._bridge.awaiting_continue.connect(self._on_awaiting_continue)
         self._bridge.detection_state.connect(self._on_detection_state)
         self._bridge.home_fk_resolved.connect(self._on_home_fk_resolved)
+
+    @Slot(str)
+    def _on_test_changed(self, name: str):
+        is_workspace = (name == 'workspace_coverage')
+        self._goals_box.setVisible(is_workspace)
+        self._goal_box.setVisible(not is_workspace)
 
     # -- startup helpers ------------------------------------------
 
@@ -252,14 +280,27 @@ class CalibrationDashboardWidget(QWidget):
 
     @Slot()
     def _on_start_clicked(self):
-        cls = TEST_REGISTRY[self._test_combo.currentText()]
-        # Test classes still iterate over a `targets` list. We pass a
-        # single-element list so iter_visits() yields num_cycles copies
-        # of the goal -- exactly the new "single goal x N iterations"
-        # workflow.
-        targets = [(self._goal_y.value(), self._goal_z.value())]
+        test_name = self._test_combo.currentText()
+        cls = TEST_REGISTRY[test_name]
+        if test_name == 'workspace_coverage':
+            try:
+                goals = self._parse_goals_text(self._goals_edit.toPlainText())
+            except ValueError as exc:
+                self._log.appendPlainText(f'goals parse error: {exc}')
+                self._status_label.setText(f'cannot start: {exc}')
+                return
+            if not goals:
+                self._log.appendPlainText('goals list is empty; nothing to run')
+                self._status_label.setText('cannot start: empty goals list')
+                return
+        else:
+            goals = [(self._goal_y.value(), self._goal_z.value())]
+        # Test classes still take a `targets` list (kept for backward
+        # compat with iter_visits and any existing test subclasses);
+        # the new runner reads `request.goals` directly so the targets
+        # field is mostly bookkeeping now.
         test = cls(
-            targets=targets,
+            targets=goals,
             num_cycles=self._iterations.value(),
             samples_per_visit=self._samples.value(),
             settle_time=2.0,
@@ -270,15 +311,42 @@ class CalibrationDashboardWidget(QWidget):
             test=test,
             output_root=Path(DEFAULT_OUTPUT_DIR).expanduser(),
             initial_pose=(self._initial_y.value(), self._initial_z.value()),
-            goal_pose=(self._goal_y.value(), self._goal_z.value()),
+            goals=tuple(goals),
         )
         if self._runner.request_run(request):
             self._start_btn.setEnabled(False)
             self._continue_btn.setEnabled(False)
-            self._progress.setRange(0, test.num_cycles)
+            self._progress.setRange(0, test.num_cycles * len(goals))
             self._progress.setValue(0)
             self._detection_label.setText('detection: idle')
-            self._log.appendPlainText(f'requested run: {test.name}')
+            self._log.appendPlainText(
+                f'requested run: {test.name} '
+                f'({test.num_cycles} cycles x {len(goals)} goals)')
+
+    @staticmethod
+    def _parse_goals_text(text: str) -> list:
+        """Parse the multi-line goals editor into a list of (y, z) tuples.
+
+        Each non-blank line must look like ``y, z``. Whitespace is
+        ignored. Lines starting with '#' are treated as comments.
+        Raises ValueError on any malformed line.
+        """
+        goals: list = []
+        for lineno, raw in enumerate(text.splitlines(), start=1):
+            line = raw.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) != 2:
+                raise ValueError(
+                    f'line {lineno}: expected "y, z", got {raw!r}')
+            try:
+                y, z = float(parts[0]), float(parts[1])
+            except ValueError:
+                raise ValueError(
+                    f'line {lineno}: y or z is not a number ({raw!r})')
+            goals.append((y, z))
+        return goals
 
     @Slot()
     def _on_continue_clicked(self):
@@ -350,6 +418,7 @@ class CalibrationDashboardWidget(QWidget):
         plugin_settings.set_value('goal_z', self._goal_z.value())
         plugin_settings.set_value('iterations', self._iterations.value())
         plugin_settings.set_value('samples', self._samples.value())
+        plugin_settings.set_value('goals_text', self._goals_edit.toPlainText())
 
     def restore_settings(self, plugin_settings):
         v = plugin_settings.value('test_type')
@@ -371,3 +440,6 @@ class CalibrationDashboardWidget(QWidget):
                     widget.setValue(type(widget.value())(v))
                 except (TypeError, ValueError):
                     pass
+        gt = plugin_settings.value('goals_text')
+        if gt is not None:
+            self._goals_edit.setPlainText(str(gt))

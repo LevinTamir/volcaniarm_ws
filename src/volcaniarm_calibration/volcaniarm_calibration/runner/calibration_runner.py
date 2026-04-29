@@ -37,11 +37,15 @@ class RunRequest:
     """User-supplied parameters for a single calibration run."""
     test: BaseTest
     output_root: Path
-    # Initial and goal poses in workspace (y, z) metres. The runner
-    # resolves both to (theta_right, theta_left) via compute_ik once
-    # before any motion; if either IK fails the run aborts cleanly.
+    # Initial pose: where the arm parks before/between goal visits.
+    # Goals: ordered list of (y, z) metres in workspace that the arm
+    # visits. Single-pose tests pass [(y, z)]; the workspace-coverage
+    # test passes the full envelope. Each iteration of the run does a
+    # round-robin sweep across all goals, with the operator-gated
+    # capture at every visit. IK is resolved on every entry once up
+    # front; an unreachable goal aborts before any motion.
     initial_pose: tuple = (0.0, 0.5)
-    goal_pose: tuple = (0.0, 0.5)
+    goals: tuple = ((0.0, 0.5),)
     joint_names: tuple = (
         'volcaniarm_right_elbow_joint', 'volcaniarm_left_elbow_joint',
     )
@@ -231,7 +235,7 @@ class CalibrationRunner:
             'settle_time': request.test.settle_time,
             'sample_interval': request.test.sample_interval,
             'initial_pose': list(request.initial_pose),
-            'goal_pose': list(request.goal_pose),
+            'goals': [list(g) for g in request.goals],
             'joint_names': list(request.joint_names),
             'trajectory_duration': request.trajectory_duration,
             'base_tag_frame': request.base_tag_frame,
@@ -255,7 +259,7 @@ class CalibrationRunner:
         self._writer = None
 
     def _execute(self, request: RunRequest, writer: RunWriter):
-        # Resolve both poses up front so an unreachable goal aborts
+        # Resolve every pose up front so an unreachable goal aborts
         # before any motion. IK is cheap and the operator gets a clear
         # error rather than watching the arm move halfway then stop.
         initial_ik = self._call_ik(*request.initial_pose)
@@ -264,17 +268,24 @@ class CalibrationRunner:
                 f'IK failed for initial pose y={request.initial_pose[0]:.3f} '
                 f'z={request.initial_pose[1]:.3f}; aborting')
             return
-        goal_ik = self._call_ik(*request.goal_pose)
-        if goal_ik is None:
-            self._emit_status(
-                f'IK failed for goal pose y={request.goal_pose[0]:.3f} '
-                f'z={request.goal_pose[1]:.3f}; aborting')
-            return
         initial_theta_r, initial_theta_l = initial_ik
-        goal_theta_r, goal_theta_l = goal_ik
 
-        goal_fk_xyz = self._call_fk(goal_theta_r, goal_theta_l) or (
-            0.0, request.goal_pose[0], request.goal_pose[1])
+        goals = list(request.goals)
+        if not goals:
+            self._emit_status('no goals supplied; aborting')
+            return
+        goal_iks: list = []
+        goal_fks: list = []
+        for idx, (gy, gz) in enumerate(goals, start=1):
+            ik = self._call_ik(gy, gz)
+            if ik is None:
+                self._emit_status(
+                    f'IK failed for goal {idx} y={gy:.3f} z={gz:.3f}; aborting')
+                return
+            goal_iks.append(ik)
+            # FK is best-effort; if it fails we still record the
+            # commanded (y, z) so the analysis notebook has something.
+            goal_fks.append(self._call_fk(*ik) or (0.0, gy, gz))
 
         # Move to initial pose, settle, snapshot the home reference.
         self._emit_status(
@@ -292,53 +303,72 @@ class CalibrationRunner:
             phase='home', cycle=0, target_idx=None,
             theta_right=initial_theta_r, theta_left=initial_theta_l)
 
-        total = request.test.num_cycles
-        for iteration in range(1, total + 1):
+        # Round-robin: each iteration sweeps across every goal in
+        # order. Total visits = num_cycles * len(goals). Single-goal
+        # tests (accuracy / repeatability) use len(goals) == 1 so the
+        # loop is a straight N-iteration capture; the workspace test
+        # uses K > 1 to walk the envelope each cycle.
+        total_iterations = request.test.num_cycles
+        total_visits = total_iterations * len(goals)
+        visit_count = 0
+        for iteration in range(1, total_iterations + 1):
             if self._stop_event.is_set():
                 return
+            for goal_idx, (gy, gz) in enumerate(goals, start=1):
+                if self._stop_event.is_set():
+                    return
+                theta_r, theta_l = goal_iks[goal_idx - 1]
+                fk_xyz = goal_fks[goal_idx - 1]
 
-            self._emit_status(
-                f'iteration {iteration}/{total}: moving to goal '
-                f'y={request.goal_pose[0]:.3f} z={request.goal_pose[1]:.3f}')
-            if not self._send_and_wait(
-                    request.joint_names, goal_theta_r, goal_theta_l,
-                    request.trajectory_duration):
-                self._emit_status('goal trajectory failed; aborting run')
-                return
-            if not self._settle(request.test.settle_time, 'goal'):
-                return
+                self._emit_status(
+                    f'cycle {iteration}/{total_iterations} '
+                    f'goal {goal_idx}/{len(goals)}: moving to '
+                    f'y={gy:.3f} z={gz:.3f}')
+                if not self._send_and_wait(
+                        request.joint_names, theta_r, theta_l,
+                        request.trajectory_duration):
+                    self._emit_status('goal trajectory failed; aborting run')
+                    return
+                if not self._settle(request.test.settle_time, 'goal'):
+                    return
 
-            # Operator-gated wait: detection_state_cb keeps the dashboard
-            # in sync; proceed() / cancel() unblock.
-            self._emit_awaiting_continue(iteration, total)
-            if not self._wait_for_continue(request):
-                # Either cancelled or the runner was shut down.
-                return
+                # Operator-gated wait: detection_state_cb keeps the
+                # dashboard in sync; proceed() / cancel() unblock.
+                self._emit_awaiting_continue(iteration, total_iterations)
+                if not self._wait_for_continue(request):
+                    # Either cancelled or the runner was shut down.
+                    return
 
-            self._capture_observations(
-                request, writer,
-                phase='target', cycle=iteration, target_idx=1,
-                theta_right=goal_theta_r, theta_left=goal_theta_l)
-            writer.add_fk({
-                'cycle': iteration,
-                'target_idx': 1,
-                'theta_right': goal_theta_r,
-                'theta_left': goal_theta_l,
-                'fk_x': goal_fk_xyz[0],
-                'fk_y': goal_fk_xyz[1],
-                'fk_z': goal_fk_xyz[2],
-            })
-            self._emit_progress(iteration, total)
+                self._capture_observations(
+                    request, writer,
+                    phase='target', cycle=iteration, target_idx=goal_idx,
+                    theta_right=theta_r, theta_left=theta_l)
+                writer.add_fk({
+                    'cycle': iteration,
+                    'target_idx': goal_idx,
+                    'theta_right': theta_r,
+                    'theta_left': theta_l,
+                    'fk_x': fk_xyz[0],
+                    'fk_y': fk_xyz[1],
+                    'fk_z': fk_xyz[2],
+                })
+                visit_count += 1
+                self._emit_progress(visit_count, total_visits)
 
-            # Always return to the initial pose between iterations so
-            # each iteration starts from a known state and the run ends
-            # with the arm parked at the operator-chosen initial.
-            self._emit_status(f'iteration {iteration}/{total}: returning to initial')
-            if not self._send_and_wait(
-                    request.joint_names, initial_theta_r, initial_theta_l,
-                    request.trajectory_duration):
-                self._emit_status('return-to-initial move failed; aborting run')
-                return
+                # Always return to the initial pose between visits so
+                # each visit starts from a known state and the run
+                # ends with the arm parked at the operator-chosen
+                # initial.
+                self._emit_status(
+                    f'cycle {iteration}/{total_iterations} '
+                    f'goal {goal_idx}/{len(goals)}: returning to initial')
+                if not self._send_and_wait(
+                        request.joint_names,
+                        initial_theta_r, initial_theta_l,
+                        request.trajectory_duration):
+                    self._emit_status(
+                        'return-to-initial move failed; aborting run')
+                    return
 
     def _goto_worker(self, y: float, z: float,
                      joint_names: tuple, duration: float):

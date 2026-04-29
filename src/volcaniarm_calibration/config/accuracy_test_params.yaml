@@ -6,13 +6,15 @@ accuracy_test_node:
 
     # -- Pose configuration --
     # Initial pose: where the arm parks at run start and between
-    # iterations. Goal pose: the single target visited each iteration.
-    # Both are in workspace (y, z) metres in volcaniarm_base_link
+    # visits. In workspace (y, z) metres in volcaniarm_base_link
     # frame, resolved to joint angles via compute_ik before any motion.
     initial_y: 0.0
     initial_z: 0.5
-    goal_y: 0.0
-    goal_z: 0.6
+    # Goals: flat list of (y, z) pairs the arm visits each iteration.
+    # Single-pose tests (static_accuracy / repeatability) use one
+    # pair; the workspace_coverage test takes the full envelope.
+    # Format: [y0, z0, y1, z1, y2, z2, ...]
+    goals: [0.0, 0.6]
 
     # -- Test routine --
     # Number of iterations (one goal visit each).
