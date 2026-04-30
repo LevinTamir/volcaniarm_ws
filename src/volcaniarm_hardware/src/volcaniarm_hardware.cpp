@@ -234,6 +234,7 @@ VolcaniArmHardware::read(const rclcpp::Time &, const rclcpp::Duration & period)
 void VolcaniArmHardware::read_serial_()
 {
   if (fd_ < 0) return;
+  if (homing_active_.load(std::memory_order_acquire)) return;
 
   // Read available bytes into buffer
   char tmp[128];
@@ -269,6 +270,9 @@ void VolcaniArmHardware::read_serial_()
 hardware_interface::return_type
 VolcaniArmHardware::write(const rclcpp::Time &, const rclcpp::Duration &)
 {
+  if (homing_active_.load(std::memory_order_acquire)) {
+    return hardware_interface::return_type::OK;
+  }
   if (!send_position_command_rad_(hw_position_command_right_elbow_, hw_position_command_left_elbow_))
   {
     return hardware_interface::return_type::ERROR;
@@ -436,6 +440,15 @@ bool VolcaniArmHardware::reset_controller_()
 
 bool VolcaniArmHardware::home_()
 {
+  // Take exclusive ownership of the serial fd for the duration of homing so
+  // read_serial_() / write() in the control loop don't consume the ESP's
+  // "H 0 0" reply or interleave a P-command mid-home.
+  homing_active_.store(true, std::memory_order_release);
+  struct HomingFlagGuard {
+    std::atomic<bool> & flag;
+    ~HomingFlagGuard() { flag.store(false, std::memory_order_release); }
+  } guard{homing_active_};
+
   const char cmd[] = "H\n";
   ssize_t n = ::write(fd_, cmd, sizeof(cmd) - 1);
   if (n < 0) {

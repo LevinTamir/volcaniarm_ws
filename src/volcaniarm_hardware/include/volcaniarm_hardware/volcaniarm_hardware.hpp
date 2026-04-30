@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <thread>
@@ -78,6 +79,10 @@ private:
   // Previous position for velocity calculation
   double prev_position_right_elbow_{0.0};
   double prev_position_left_elbow_{0.0};
+
+  // Set while home_() owns the serial fd. read_serial_() bails out so the
+  // two threads don't race for bytes from the ESP.
+  std::atomic<bool> homing_active_{false};
 
   bool configure_port_();
   bool send_position_command_rad_(double position_rad_right, double position_rad_left);
