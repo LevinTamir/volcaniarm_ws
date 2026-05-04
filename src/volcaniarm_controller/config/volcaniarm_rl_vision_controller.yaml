@@ -42,8 +42,13 @@ volcaniarm_rl_vision_controller:
     image_height: 96
 
     # -- Safety / polish (carried over from RLPolicyController) --
-    joint_position_min: []
-    joint_position_max: []
+    # joint_position_min / joint_position_max omitted on purpose:
+    # rclcpp on Jazzy treats explicit empty arrays as "no value set",
+    # which the controller's get_parameter().as_double_array() call
+    # then throws on. The controller's auto_declare already provides
+    # an empty default that disables clamping; just leave both out
+    # of YAML to keep clamping off, or specify both as real arrays
+    # (one entry per joint) to enable it.
     action_smoothing_alpha: 1.0
 
     # Stale-image watchdog. If the latest image stamp is older than
