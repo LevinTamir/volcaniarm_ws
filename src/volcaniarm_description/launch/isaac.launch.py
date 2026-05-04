@@ -58,9 +58,18 @@ def generate_launch_description():
         description="Which controller(s) to load into controller_manager",
     )
 
+    # Forward `controller:=` to xacro so this RSP publishes a URDF
+    # whose <parameters> block matches the YAML that
+    # _build_controller_manager actually loads. Without this the URDF
+    # races display.launch.py's RSP on /robot_description with the
+    # wrong YAML reference (same bug we hit on the Gazebo path).
     robot_description = ParameterValue(
         Command(
-            ["xacro ", LaunchConfiguration("model"), " sim_engine:=isaac"]
+            [
+                "xacro ", LaunchConfiguration("model"),
+                " sim_engine:=isaac",
+                " controller:=", LaunchConfiguration("controller"),
+            ]
         ),
         value_type=str,
     )
