@@ -4,9 +4,10 @@
 
   <!-- ROS 2 Control (Jazzy - Gazebo) -->
   <!-- YAML(s) loaded depend on the `controller` xacro arg:
-         traj   → trajectory YAML only
-         policy → RL YAML only
-         all    → both (runtime switching enabled) -->
+         traj          → trajectory YAML only
+         policy        → state-based RL YAML only
+         vision_policy → vision RL YAML only
+         all           → trajectory + state-based RL (runtime switching) -->
   <xacro:property name="_ctrl" value="$(arg controller)" />
   <gazebo>
     <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
@@ -15,6 +16,9 @@
       </xacro:if>
       <xacro:if value="${_ctrl == 'policy' or _ctrl == 'all'}">
         <parameters>$(find volcaniarm_controller)/config/volcaniarm_rl_controller.yaml</parameters>
+      </xacro:if>
+      <xacro:if value="${_ctrl == 'vision_policy'}">
+        <parameters>$(find volcaniarm_controller)/config/volcaniarm_rl_vision_controller.yaml</parameters>
       </xacro:if>
     </plugin>
   </gazebo>
