@@ -39,12 +39,17 @@ volcaniarm_rl_controller:
     # -- Safety / polish (all opt-in; defaults preserve original behaviour) --
 
     # Per-joint position clamps applied AFTER default + scale*action.
-    # Empty arrays (default) disable clamping. Set both arrays with
-    # one entry per joint (same order as `joints` above) to enforce
-    # mechanical / safety limits independent of what the policy
-    # outputs. Recommended on real hardware.
-    joint_position_min: []
-    joint_position_max: []
+    # Omitted on purpose: rclcpp on Jazzy treats explicit empty
+    # arrays as "no value set", which the controller's
+    # get_parameter().as_double_array() call then throws on. The
+    # controller's auto_declare already provides an empty default
+    # that disables clamping; just leave both out of YAML to keep
+    # clamping off, or specify both as real arrays (one entry per
+    # joint, same order as `joints` above) to enforce mechanical /
+    # safety limits independent of what the policy outputs.
+    # Recommended on real hardware.
+    # joint_position_min: [...]
+    # joint_position_max: [...]
 
     # EMA smoothing on raw policy outputs. 1.0 = no smoothing
     # (policy output passed through unchanged). Lower values damp
