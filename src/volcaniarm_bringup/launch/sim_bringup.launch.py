@@ -170,7 +170,11 @@ def generate_launch_description():
         condition=is_all,
     )
 
-    # Display (RViz) launch
+    # Display (RViz) launch. We must pass `controller` here because
+    # display.launch.py also publishes /robot_description; if the URDFs
+    # disagree (different gz_ros2_control <parameters> block), the
+    # transient_local topic latches the wrong one and gz_ros2_control
+    # ends up loading a different YAML than the operator selected.
     display_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -181,6 +185,7 @@ def generate_launch_description():
         ),
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
+            ("controller", LaunchConfiguration("controller")),
         ],
     )
 
