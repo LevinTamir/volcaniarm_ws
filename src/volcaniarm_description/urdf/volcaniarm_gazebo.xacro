@@ -19,18 +19,24 @@
     </plugin>
   </gazebo>
 
-  <!-- RGBD Camera sensor -->
+  <!-- RGBD Camera sensor.
+       Intrinsics + resolution mirror the IsaacSim ROS2 USD camera in
+       volcaniarm_isaaclab/scripts/add_ros2_graph.py (CAM_WIDTH=640,
+       CAM_HEIGHT=480, focal_length=18.14721, h_aperture=20.955), so
+       the same trained policy can deploy against either simulator
+       without re-training. horizontal_fov derived from the IsaacSim
+       intrinsics: 2 * atan(20.955/2 / 18.14721) ≈ 1.047 rad ≈ 60°. -->
   <gazebo reference="camera_link">
       <sensor name="rgbd_camera" type="rgbd_camera">
           <camera>
-              <horizontal_fov>1.25</horizontal_fov>
+              <horizontal_fov>1.047</horizontal_fov>
               <image>
-                  <width>848</width>
+                  <width>640</width>
                   <height>480</height>
               </image>
               <clip>
-                  <near>0.3</near>
-                  <far>15</far>
+                  <near>0.05</near>
+                  <far>50.0</far>
               </clip>
           </camera>
           <always_on>1</always_on>
