@@ -1,0 +1,53 @@
+# Vision RL controller config — sibling of `volcaniarm_rl_controller.yaml`.
+# Loaded into controller_manager so the operator can switch between
+# the state-based and image-based policies at runtime.
+
+controller_manager:
+  ros__parameters:
+    volcaniarm_rl_vision_controller:
+      type: volcaniarm_controller/RLVisionPolicyController
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+
+volcaniarm_rl_vision_controller:
+  ros__parameters:
+    # Same training contract as the state-based controller — joint
+    # order matters for both obs and action vectors.
+    joints:
+      - volcaniarm_left_elbow_joint
+      - volcaniarm_right_elbow_joint
+
+    # Match Isaac Lab `init_state.joint_pos`.
+    default_joint_positions: [0.0, 0.0]
+
+    # Match training's JointPositionActionCfg(scale=0.5).
+    action_scale: 0.5
+
+    # Bundled ONNX (image + joint_pos_rel + last_action → action),
+    # exported by source/volcaniarm/scripts/rsl_rl/export_onnx_bundle.py.
+    model_path: "$(find-pkg-share volcaniarm_controller)/models/policy_vision.onnx"
+
+    # Camera image topic. Default matches both Gazebo's bridged
+    # `/camera/color/image_raw` and the IsaacSim ROS2 USD's
+    # `camera/color/image_raw` (CAM_RGB_TOPIC in scripts/add_ros2_graph.py).
+    image_topic: /camera/color/image_raw
+
+    # Resolution the bundled ONNX expects — must match
+    # IMG_W/IMG_H in reach_vision_env_cfg.py. The controller resizes
+    # the raw camera frame to (image_width × image_height) before
+    # inference, so this stays fixed even if the camera publishes a
+    # different native resolution.
+    image_width: 96
+    image_height: 96
+
+    # -- Safety / polish (carried over from RLPolicyController) --
+    joint_position_min: []
+    joint_position_max: []
+    action_smoothing_alpha: 1.0
+
+    # Stale-image watchdog. If the latest image stamp is older than
+    # this many seconds the controller falls back to the home pose.
+    # Skipped when stamp is zero (un-stamped publishers), same policy
+    # as the state-based controller's stale-target watchdog.
+    image_max_age_s: 1.0

@@ -12,7 +12,9 @@
 
   <depend>ament_index_cpp</depend>
   <depend>controller_interface</depend>
+  <depend>cv_bridge</depend>
   <depend>joint_trajectory_controller</depend>
+  <depend>libopencv-dev</depend>
   <depend>onnxruntime_vendor</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>

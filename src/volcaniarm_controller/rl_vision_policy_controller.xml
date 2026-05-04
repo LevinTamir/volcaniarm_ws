@@ -1,0 +1,12 @@
+<library path="rl_vision_policy_controller">
+  <class name="volcaniarm_controller/RLVisionPolicyController"
+         type="volcaniarm_controller::RLVisionPolicyController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Vision RL policy controller. Subscribes to a camera image topic,
+      runs the bundled (ResNet18 + actor) ONNX exported by IsaacLab's
+      Volcaniarm-Reach-Vision-v0 task, and writes position targets to
+      the two actuated elbow joints. Sibling of RLPolicyController.
+    </description>
+  </class>
+</library>
