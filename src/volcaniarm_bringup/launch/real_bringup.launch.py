@@ -48,8 +48,8 @@ def generate_launch_description():
                     "created by the udev rule in volcaniarm_hardware/udev/)",
     )
 
-    homing_arg = DeclareLaunchArgument(
-        "homing",
+    auto_home_arg = DeclareLaunchArgument(
+        "auto_home",
         default_value="false",
         choices=["true", "false"],
         description="If true, run limit-switch homing during hardware on_configure. "
@@ -111,7 +111,7 @@ def generate_launch_description():
             "xacro ",
             os.path.join(volcaniarm_description_share, "urdf", "volcaniarm.urdf.xacro"),
             " use_sim:=false",
-            " auto_home:=", LaunchConfiguration("homing"),
+            " auto_home:=", LaunchConfiguration("auto_home"),
             " calibration:=", LaunchConfiguration("calibration"),
         ]),
         value_type=str,
@@ -217,7 +217,7 @@ def generate_launch_description():
         [
             use_sim_time_arg,
             serial_port_arg,
-            homing_arg,
+            auto_home_arg,
             controller_arg,
             calibration_arg,
             pointcloud_arg,
