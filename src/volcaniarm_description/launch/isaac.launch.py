@@ -18,6 +18,9 @@ def _build_controller_manager(context, robot_description):
     if mode in ("policy", "all"):
         yamls.append(os.path.join(
             volcaniarm_controller, "config", "volcaniarm_rl_controller.yaml"))
+    if mode == "vision_policy":
+        yamls.append(os.path.join(
+            volcaniarm_controller, "config", "volcaniarm_rl_vision_controller.yaml"))
 
     return [Node(
         package="controller_manager",
@@ -51,7 +54,7 @@ def generate_launch_description():
     controller_arg = DeclareLaunchArgument(
         "controller",
         default_value="traj",
-        choices=["traj", "policy", "all"],
+        choices=["traj", "policy", "vision_policy", "all"],
         description="Which controller(s) to load into controller_manager",
     )
 
