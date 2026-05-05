@@ -87,6 +87,16 @@ def generate_launch_description():
         description="Publish /camera/depth/color/points from the RealSense driver",
     )
 
+    # Drives both the URDF mesh scale (via the apriltag xacro) and the
+    # apriltag detector size param (via the calibration dashboard
+    # include below). Default 0.064 matches the small printed tags on
+    # the real arm; pass tag_size:=0.200 when using the larger prints.
+    tag_size_arg = DeclareLaunchArgument(
+        "tag_size",
+        default_value="0.064",
+        description="AprilTag edge length [m]",
+    )
+
     is_traj_active = IfCondition(
         PythonExpression(
             ["'", LaunchConfiguration("controller"), "' in ('traj', 'all')"]
@@ -113,6 +123,7 @@ def generate_launch_description():
             " use_sim:=false",
             " auto_home:=", LaunchConfiguration("auto_home"),
             " calibration:=", LaunchConfiguration("calibration"),
+            " tag_size:=", LaunchConfiguration("tag_size"),
         ]),
         value_type=str,
     )
@@ -179,6 +190,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(volcaniarm_calibration_share, "launch", "dashboard.launch.py")
         ),
+        launch_arguments=[("tag_size", LaunchConfiguration("tag_size"))],
         condition=IfCondition(LaunchConfiguration("calibration")),
     )
 
@@ -221,6 +233,7 @@ def generate_launch_description():
             controller_arg,
             calibration_arg,
             pointcloud_arg,
+            tag_size_arg,
             robot_state_publisher,
             OpaqueFunction(
                 function=lambda ctx: _build_controller_manager(ctx, robot_description_content)

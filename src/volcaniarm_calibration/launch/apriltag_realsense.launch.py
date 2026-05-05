@@ -13,7 +13,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
@@ -28,6 +28,14 @@ def generate_launch_description():
     use_rviz_arg = DeclareLaunchArgument(
         'use_rviz', default_value='true',
         description='Open RViz on launch')
+
+    tag_size_arg = DeclareLaunchArgument(
+        'tag_size', default_value='0.064',
+        description='AprilTag edge length [m]; default matches the small '
+                    'printed tags. Override (e.g. tag_size:=0.200) for the '
+                    'larger prints.')
+
+    tag_size = PythonExpression(['float("', LaunchConfiguration('tag_size'), '")'])
 
     # RealSense D435i camera (color only)
     realsense = IncludeLaunchDescription(
@@ -52,7 +60,7 @@ def generate_launch_description():
         package='apriltag_ros',
         executable='apriltag_node',
         name='apriltag',
-        parameters=[apriltag_config],
+        parameters=[apriltag_config, {'size': tag_size}],
         remappings=[
             ('image_rect', '/camera/camera/color/image_raw'),
             ('camera_info', '/camera/camera/color/camera_info'),
@@ -70,6 +78,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         use_rviz_arg,
+        tag_size_arg,
         realsense,
         apriltag_node,
         rviz,

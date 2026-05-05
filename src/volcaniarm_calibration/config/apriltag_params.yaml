@@ -5,9 +5,11 @@
     # AprilTag family (36h11 is the most robust)
     family: 36h11
     # Default tag edge size in metres (active black-square length).
-    # Both the real printed tags and the sim DAE meshes use 0.200,
-    # so the launch wrappers do not need to override this.
-    size: 0.200
+    # Both the real printed tags and the sim DAE meshes default to
+    # 0.064. Override via the `tag_size:=` launch arg (forwarded by
+    # both bringup launches into the dashboard and the URDF xacro)
+    # when running with the larger 0.200 prints.
+    size: 0.064
     # Strict decoding. The 36h11 family has Hamming distance 11, so
     # 0-bit-error rejection still gives essentially zero false-positive
     # risk while keeping pose estimates clean. Bump to 1 only if real
@@ -16,10 +18,14 @@
     # QoS profile for image subscription
     qos_profile: sensor_data
 
-    # Detector tuning, optimised for accurate pose estimation of
-    # 200 mm tags at ~1.5 m standoff (tag image size ~90 px, ~11 px
-    # per bit). Accuracy at this scale is dominated by sub-pixel
-    # corner precision rather than decoding margin.
+    # Detector tuning. Originally calibrated for 0.200 m tags at
+    # ~1.5 m standoff (~90 px tag, ~11 px per bit). With 0.064 m
+    # tags at the same standoff that drops to ~28 px / ~3.5 px per
+    # bit, which is close to the 36h11 floor — bring the camera in
+    # to ~0.5–0.8 m for reliable detection, or override
+    # `tag_size:=0.200` and use the larger printed tags. The knobs
+    # below favour sub-pixel corner accuracy and marginal-decode
+    # robustness, both of which matter more at small pixel sizes.
     detector:
       threads: 4
       # 1.0 = no quad-decimation pre-pass. Larger values speed up
@@ -50,8 +56,8 @@
     # ID 20: EE marker (apriltag_marker_ee)
     # ID 5:  base-link reference marker (apriltag_marker_base)
     # Per-tag sizes: are intentionally omitted so the top-level `size`
-    # applies to every tag and can be overridden from the launch file
-    # (sim uses 0.2, real uses 0.064 from this yaml).
+    # applies to every tag. Both sim and real use 0.064 from this
+    # yaml unless `tag_size:=` overrides it from the launch file.
     tag:
       ids: [20, 5]
       frames: [apriltag_marker_ee, apriltag_marker_base]

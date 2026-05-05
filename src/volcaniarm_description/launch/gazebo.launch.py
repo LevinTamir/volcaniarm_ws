@@ -52,6 +52,12 @@ def generate_launch_description():
         description="Which controller(s) to load into gz_ros2_control",
     )
 
+    tag_size_arg = DeclareLaunchArgument(
+        name="tag_size", default_value="0.064",
+        description="AprilTag edge length [m]; scales the apriltag mesh "
+                    "in volcaniarm_apriltag.xacro proportionally",
+    )
+
     world_path = PathJoinSubstitution(
         [
             volcaniarm_description,
@@ -79,6 +85,7 @@ def generate_launch_description():
                 " camera_mount_x:=", LaunchConfiguration("camera_mount_x"),
                 " camera_mount_pitch:=", LaunchConfiguration("camera_mount_pitch"),
                 " controller:=", LaunchConfiguration("controller"),
+                " tag_size:=", LaunchConfiguration("tag_size"),
             ]
         ),
         value_type=str,
@@ -160,6 +167,7 @@ def generate_launch_description():
             camera_mount_x_arg,
             camera_mount_pitch_arg,
             controller_arg,
+            tag_size_arg,
             robot_state_publisher_node,
             gazebo_resource_path,
             gazebo,

@@ -11,6 +11,10 @@
        all  = both loaded (trajectory active, policy available to be claimed).
        Only affects the Gazebo plugin <parameters> blocks. -->
   <xacro:arg name="controller" default="traj" />
+  <!-- AprilTag edge length in metres. Drives both the URDF mesh scale
+       (via volcaniarm_apriltag.xacro) and the apriltag detector size
+       parameter when forwarded by the bringup launches. -->
+  <xacro:arg name="tag_size" default="0.064" />
 
   <!-- Camera mount position tuning
        camera_mount_x range: 0.155 to 0.655

@@ -4,10 +4,14 @@
 
   <!-- AprilTag 36h11 markers used for hand-eye calibration and accuracy
        tests. Both tags use a DAE mesh with baked texture so they render
-       in Gazebo and RViz. The DAE has 64mm geometry, scaled up to 200mm
-       for reliable detection in sim. -->
+       in Gazebo and RViz. The DAE geometry is 64 mm; the actual rendered
+       size follows the `tag_size` xacro arg (default 0.064 m, i.e. no
+       scaling), with the mesh scaled proportionally. Pass
+       tag_size:=0.200 in the launch file when using the larger printed
+       tags. -->
 
-  <xacro:property name="tag_scale" value="${0.2 / 0.064}" />
+  <xacro:property name="tag_size" value="$(arg tag_size)" />
+  <xacro:property name="tag_scale" value="${tag_size / 0.064}" />
 
   <!-- ============================================================= -->
   <!-- ID 20: end-effector marker (right_arm_tip_link)                -->

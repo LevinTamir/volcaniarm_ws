@@ -72,6 +72,17 @@ def generate_launch_description():
         description="Which controller(s) to load",
     )
 
+    # Drives both the URDF mesh scale (forwarded into the apriltag
+    # xacro via gazebo.launch.py) and the apriltag detector size param
+    # (forwarded into the calibration dashboard). Default 0.064
+    # matches the sim DAE meshes; pass tag_size:=0.200 to test the
+    # larger printed-tag setup in sim.
+    tag_size_arg = DeclareLaunchArgument(
+        "tag_size",
+        default_value="0.064",
+        description="AprilTag edge length [m]",
+    )
+
     is_gazebo = IfCondition(
         PythonExpression(["'", LaunchConfiguration("sim"), "' == 'gazebo'"])
     )
@@ -111,6 +122,7 @@ def generate_launch_description():
             ("camera_mount_x", LaunchConfiguration("camera_mount_x")),
             ("camera_mount_pitch", LaunchConfiguration("camera_mount_pitch")),
             ("controller", LaunchConfiguration("controller")),
+            ("tag_size", LaunchConfiguration("tag_size")),
         ],
         condition=is_gazebo,
     )
@@ -179,8 +191,8 @@ def generate_launch_description():
     )
 
     # Calibration dashboard (apriltag detector + RViz + rqt plugin).
-    # tag_size is left at the dashboard's default (0.200) since it
-    # matches both the sim mesh and the real printed tags.
+    # tag_size is forwarded so the detector and the URDF mesh stay in
+    # sync; defaults to 0.064.
     calibration_dashboard = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -191,6 +203,7 @@ def generate_launch_description():
         ),
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
+            ("tag_size", LaunchConfiguration("tag_size")),
         ],
         condition=IfCondition(LaunchConfiguration("calibration")),
     )
@@ -222,6 +235,7 @@ def generate_launch_description():
             camera_mount_pitch_arg,
             sim_arg,
             controller_arg,
+            tag_size_arg,
             gazebo_launch,
             isaac_launch,
             controller_launch,
