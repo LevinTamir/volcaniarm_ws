@@ -40,6 +40,8 @@ class JoystickTeleopNode(Node):
         # Latest joystick snapshot; updated in joy_cb, consumed on tick.
         self.deadman_held = False
         self.deadman_prev = False
+        self.home_btn_held = False
+        self.home_btn_prev = False
         self.axis_y_val = 0.0
         self.axis_z_val = 0.0
 
@@ -89,6 +91,12 @@ class JoystickTeleopNode(Node):
             'trajectory_topic': '/volcaniarm_controller/joint_trajectory',
             'joint_names': ['volcaniarm_right_elbow_joint',
                             'volcaniarm_left_elbow_joint'],
+            # Home: deadman + this button publishes a single trajectory
+            # point sending both elbows to home_positions over
+            # home_duration_sec. Default button 0 = X (Xbox) / square (PS).
+            'home_button': 0,
+            'home_positions': [0.0, 0.0],
+            'home_duration_sec': 3.0,
         }
         for name, default in defaults.items():
             self.declare_parameter(name, default)
@@ -99,6 +107,10 @@ class JoystickTeleopNode(Node):
         self.deadman_held = (
             btn_idx < len(msg.buttons) and msg.buttons[btn_idx] == 1
         )
+        h_idx = self.params['home_button']
+        self.home_btn_held = (
+            h_idx < len(msg.buttons) and msg.buttons[h_idx] == 1
+        )
         y_idx, z_idx = self.params['axis_y'], self.params['axis_z']
         self.axis_y_val = msg.axes[y_idx] if y_idx < len(msg.axes) else 0.0
         self.axis_z_val = msg.axes[z_idx] if z_idx < len(msg.axes) else 0.0
@@ -108,13 +120,20 @@ class JoystickTeleopNode(Node):
             self.joint_positions[name] = pos
 
     def _tick(self):
-        # Detect deadman rising edge → resync target to current EE.
+        # Detect deadman + home-button rising edges. Both _prev flags
+        # advance every tick so holding either button does not re-fire.
         rising_edge = self.deadman_held and not self.deadman_prev
+        home_rising = self.home_btn_held and not self.home_btn_prev
         self.deadman_prev = self.deadman_held
+        self.home_btn_prev = self.home_btn_held
 
         if rising_edge:
             self._resync_target_from_current_pose()
             return  # Skip this tick; next one commands from synced target.
+
+        if self.deadman_held and home_rising:
+            self._publish_home()
+            return
 
         if not self.deadman_held or self.ik_pending:
             return
@@ -158,6 +177,26 @@ class JoystickTeleopNode(Node):
         self.ik_pending = True
         future = self.ik_client.call_async(req)
         future.add_done_callback(self._on_ik_done)
+
+    def _publish_home(self):
+        """Send both elbows to the configured home positions."""
+        positions = list(self.params['home_positions'])
+        self.get_logger().info(
+            f"Going to home position {tuple(positions)}")
+        horizon = float(self.params['home_duration_sec'])
+        sec = int(horizon)
+        nsec = int((horizon - sec) * 1e9)
+        traj = JointTrajectory()
+        traj.joint_names = list(self.params['joint_names'])
+        pt = JointTrajectoryPoint()
+        pt.positions = positions
+        pt.time_from_start = Duration(sec=sec, nanosec=nsec)
+        traj.points.append(pt)
+        self.traj_pub.publish(traj)
+        # Force the next deadman press to re-FK from the post-home pose,
+        # so stick teleop doesn't drag the arm back to the stale target.
+        self.target_y = None
+        self.target_z = None
 
     def _resync_target_from_current_pose(self):
         """Snap internal target to current EE via FK on live joint states."""

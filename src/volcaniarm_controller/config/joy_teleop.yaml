@@ -36,3 +36,12 @@ volcaniarm_joystick_teleop:
     joint_names:
       - volcaniarm_right_elbow_joint
       - volcaniarm_left_elbow_joint
+
+    # Home: deadman + this button publishes one trajectory point sending
+    # both elbows to home_positions over home_duration_sec. Default 0
+    # is X (Xbox) / square (PS). After triggering, release+repress the
+    # deadman to resume stick teleop from the new pose.
+    home_button: 0
+    # Order MUST match joint_names above (right first, left second).
+    home_positions: [0.0, 0.0]
+    home_duration_sec: 3.0
