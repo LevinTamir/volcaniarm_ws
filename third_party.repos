@@ -1,0 +1,13 @@
+repositories:
+  src/apriltag_ros:
+    type: git
+    url: https://github.com/christianrauch/apriltag_ros.git
+    version: a469a9d
+  src/easy_handeye2:
+    type: git
+    url: https://github.com/marcoesposito1988/easy_handeye2.git
+    version: b42cae6
+  src/onnxruntime_vendor:
+    type: git
+    url: git@github.com:LevinTamir/onnxruntime_vendor.git
+    version: main
