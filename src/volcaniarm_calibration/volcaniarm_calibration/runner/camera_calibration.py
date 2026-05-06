@@ -52,6 +52,14 @@ CAMERA_LINK_FRAME = 'camera_link'
 DEFAULT_DATA_ROOT = (
     Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/data')
     .expanduser())
+# Single source of truth for the current camera pose, written on every
+# successful localization and read by real_bringup.launch.py at startup
+# to publish base_link -> camera_link. Workspace-local for
+# discoverability; gitignored so per-physical-setup state doesn't leak
+# into the repo.
+DEFAULT_CONFIG_PATH = (
+    Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'
+         'config/camera_pose.yaml').expanduser())
 
 # Knobs (fixed in code; no GUI exposure per plan).
 DEFAULT_NUM_SAMPLES = 10
@@ -224,6 +232,14 @@ class CameraCalibrationRunner:
                 self._log_override_command(override)
             result_path = self._save_yaml(result)
             self._emit_status(f'saved: {result_path}')
+            if override is not None:
+                config_path = self._save_camera_pose_config(override)
+                self._emit_status(
+                    f'updated default camera pose config: {config_path}')
+            else:
+                self._emit_status(
+                    'skipping camera_pose.yaml (URDF lookup chain '
+                    'incomplete; per-run result.yaml still saved)')
             self._emit_finished('completed', result_path, '')
         except Exception as exc:
             self._node.get_logger().error(
@@ -394,6 +410,26 @@ class CameraCalibrationRunner:
         with path.open('w') as f:
             yaml.safe_dump(result, f, sort_keys=False)
         return path
+
+    def _save_camera_pose_config(self, override: dict) -> Path:
+        """Write the override into the persistent config the bringup
+        reads on launch. Schema is intentionally minimal (just the
+        fields a static_transform_publisher needs) so the launch-side
+        parser is trivial.
+        """
+        DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            'parent_frame': override['parent'],
+            'child_frame': override['child'],
+            'xyz': override['xyz'],
+            'quat': override['quat'],
+            'rpy_deg': override['rpy_deg'],
+            'last_updated': datetime.now().isoformat(timespec='seconds'),
+            'source': 'camera_localization',
+        }
+        with DEFAULT_CONFIG_PATH.open('w') as f:
+            yaml.safe_dump(payload, f, sort_keys=False)
+        return DEFAULT_CONFIG_PATH
 
 
 # -- math helpers ----------------------------------------------------

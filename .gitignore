@@ -32,3 +32,8 @@ __pycache__/
 /src/apriltag_ros/
 /src/easy_handeye2/
 /src/onnxruntime_vendor/
+
+# Per-physical-setup state written by the calibration dashboard's
+# Calibrate camera button. Read by real_bringup at launch to override
+# base_link -> camera_link with the calibrated pose. Don't commit.
+/src/volcaniarm_calibration/config/camera_pose.yaml

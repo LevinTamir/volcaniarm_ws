@@ -562,7 +562,9 @@ class CalibrationDashboardWidget(QWidget):
     # -- camera localization -------------------------------------
 
     def _refresh_alignment_state(self):
-        """Show the path of the most recent localization result, if any.
+        """Show the path of the most recent localization result, if any,
+        plus whether the persistent camera_pose.yaml is in place (which
+        means real_bringup will apply it at launch).
 
         Pure file-system probe; cheap to run on a 2 s timer. The "in
         progress" label is driven by the runner's status_cb, not here.
@@ -573,10 +575,18 @@ class CalibrationDashboardWidget(QWidget):
             self._calibrate_btn.setEnabled(False)
             return
         latest = self._latest_result_yaml()
+        applied = self._camera_pose_config_path().exists()
+        applied_str = ' (applied at launch)' if applied else ''
         if latest is not None:
             self._align_status.setText(
                 f'localization: last result {latest.parent.name} '
-                f'({latest.parent.parent.name})')
+                f'({latest.parent.parent.name}){applied_str}')
+            self._align_status.setStyleSheet('color: #2e9c4a;')
+        elif applied:
+            # Edge case: config file exists but no per-run result.yaml
+            # (e.g. operator hand-edited the config, or wiped data/).
+            self._align_status.setText(
+                f'localization: no run yet, config applied at launch')
             self._align_status.setStyleSheet('color: #2e9c4a;')
         else:
             self._align_status.setText('localization: not run yet')
@@ -590,6 +600,11 @@ class CalibrationDashboardWidget(QWidget):
             return None
         candidates = sorted(root.glob('*/*/result.yaml'))
         return candidates[-1] if candidates else None
+
+    def _camera_pose_config_path(self) -> Path:
+        return Path(
+            '~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'
+            'config/camera_pose.yaml').expanduser()
 
     @Slot()
     def _on_calibrate_clicked(self):
