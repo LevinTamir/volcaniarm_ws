@@ -6,6 +6,21 @@
   <xacro:arg name="calibration" default="false" />
   <xacro:arg name="camera_mount_x" default="0.25" />
   <xacro:arg name="camera_mount_pitch" default="1.3" />
+
+  <!-- camera_joint origin: where camera_link sits relative to
+       camera_mount_rev_link. Defaults match the original URDF's
+       hardcoded values. real_bringup reads config/camera_pose.yaml
+       (written by the calibration dashboard) at launch time and
+       passes the calibrated values as xacro args so the URDF
+       directly reflects the measured camera pose. Active in every
+       mode except sim+calibration, where calibration_camera_joint
+       in volcaniarm_realsense.xacro takes over. -->
+  <xacro:arg name="camera_x" default="0.0160004150359285" />
+  <xacro:arg name="camera_y" default="0.0" />
+  <xacro:arg name="camera_z" default="0.0" />
+  <xacro:arg name="camera_roll" default="3.14159" />
+  <xacro:arg name="camera_pitch" default="0.0" />
+  <xacro:arg name="camera_yaw" default="0.0" />
   <!-- Which controller(s) to load into the Gazebo controller_manager:
        traj = trajectory controller only; policy = RL policy controller only;
        all  = both loaded (trajectory active, policy available to be claimed).
@@ -682,13 +697,28 @@
       </geometry>
     </collision>
   </link>
-  <xacro:unless value="$(arg calibration)">
+  <!-- camera_joint applies in every mode except sim+calibration, where
+       calibration_camera_joint in volcaniarm_realsense.xacro mounts
+       camera_link directly on base_link to give Gazebo a fixed
+       calibration camera. Origin is parameterised via xacro args so
+       real_bringup can plug in calibrated values from camera_pose.yaml
+       at launch time. -->
+  <xacro:macro name="volcaniarm_camera_joint">
     <joint name="camera_joint" type="fixed">
-      <origin xyz="0.0160004150359285 0 0" rpy="3.14159 0 0" />
+      <origin xyz="$(arg camera_x) $(arg camera_y) $(arg camera_z)"
+              rpy="$(arg camera_roll) $(arg camera_pitch) $(arg camera_yaw)" />
       <parent link="camera_mount_rev_link" />
       <child link="camera_link" />
     </joint>
+  </xacro:macro>
+  <xacro:unless value="$(arg use_sim)">
+    <xacro:volcaniarm_camera_joint />
   </xacro:unless>
+  <xacro:if value="$(arg use_sim)">
+    <xacro:unless value="$(arg calibration)">
+      <xacro:volcaniarm_camera_joint />
+    </xacro:unless>
+  </xacro:if>
 
   <!-- Camera optical frame -->
   <link name="camera_link_optical" />

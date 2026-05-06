@@ -5,7 +5,7 @@ import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
@@ -26,56 +26,35 @@ def _load_camera_pose_config():
     Missing file is the normal first-launch case (no calibration yet).
     Malformed file gets a single warning and we fall back to URDF
     defaults rather than crashing the launch.
+
+    Schema (parent_frame must be camera_mount_rev_link, child_frame
+    must be camera_link, since those are the URDF's parameterised
+    camera_joint endpoints):
+        parent_frame: camera_mount_rev_link
+        child_frame: camera_link
+        xyz: [x, y, z]
+        rpy: [roll, pitch, yaw]   # radians, used for the URDF override
+        quat: [qx, qy, qz, qw]    # informational
     """
     if not _CAMERA_POSE_CONFIG.exists():
         return None
     try:
         with _CAMERA_POSE_CONFIG.open() as f:
             cfg = yaml.safe_load(f) or {}
-        for key in ('parent_frame', 'child_frame', 'xyz', 'quat'):
+        for key in ('parent_frame', 'child_frame', 'xyz', 'rpy'):
             if key not in cfg:
                 raise ValueError(f'missing key {key!r}')
-        if len(cfg['xyz']) != 3 or len(cfg['quat']) != 4:
-            raise ValueError('xyz must have 3 values and quat must have 4')
+        if cfg['parent_frame'] != 'camera_mount_rev_link' \
+                or cfg['child_frame'] != 'camera_link':
+            raise ValueError(
+                f'parent/child must be camera_mount_rev_link/camera_link, '
+                f'got {cfg["parent_frame"]!r}/{cfg["child_frame"]!r}')
+        if len(cfg['xyz']) != 3 or len(cfg['rpy']) != 3:
+            raise ValueError('xyz must have 3 values and rpy must have 3')
         return cfg
     except Exception as exc:
         print(f'[real_bringup] WARNING: ignoring {_CAMERA_POSE_CONFIG} ({exc})')
         return None
-
-
-def _build_camera_pose_publisher(context):
-    """Construct a static_transform_publisher node for the saved
-    camera pose, or return [] if the override is unwanted / missing."""
-    use_override = LaunchConfiguration("use_camera_pose_config").perform(context)
-    if use_override.lower() not in ('true', '1', 'yes'):
-        return []
-    cfg = _load_camera_pose_config()
-    if cfg is None:
-        return []
-    x, y, z = (float(v) for v in cfg['xyz'])
-    qx, qy, qz, qw = (float(v) for v in cfg['quat'])
-    parent = str(cfg['parent_frame'])
-    child = str(cfg['child_frame'])
-    return [
-        LogInfo(msg=(
-            f'[real_bringup] applying camera_pose.yaml '
-            f'({parent} -> {child}, last_updated '
-            f'{cfg.get("last_updated", "?")})')),
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='camera_pose_override',
-            arguments=[
-                '--x', f'{x}', '--y', f'{y}', '--z', f'{z}',
-                '--qx', f'{qx}', '--qy', f'{qy}',
-                '--qz', f'{qz}', '--qw', f'{qw}',
-                '--frame-id', parent,
-                '--child-frame-id', child,
-            ],
-            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
-            output='screen',
-        ),
-    ]
 
 
 def _build_controller_manager(context, robot_description_content):
@@ -166,19 +145,50 @@ def generate_launch_description():
         description="AprilTag edge length [m]",
     )
 
-    # If true and a saved camera_pose.yaml exists, the launch publishes
-    # base_link -> camera_link with those values via a static publisher,
-    # overriding the URDF's hardcoded camera_joint origin. Set to false
-    # to compare URDF defaults to the calibrated pose.
-    use_camera_pose_config_arg = DeclareLaunchArgument(
-        "use_camera_pose_config",
-        default_value="true",
-        choices=["true", "false"],
-        description="Apply src/volcaniarm_calibration/config/camera_pose.yaml "
-                    "(written by the dashboard's Calibrate camera button) "
-                    "via a static_transform_publisher overriding the URDF's "
-                    "base_link -> camera_link joint",
-    )
+    # camera_pose.yaml (written by the dashboard's Calibrate camera
+    # button) is read at launch time and its xyz/rpy are passed to the
+    # URDF's parameterised camera_joint via xacro args. If the file is
+    # missing or malformed, the URDF defaults apply; rename / delete
+    # the YAML to revert to defaults.
+    _camera_cfg_at_launch = _load_camera_pose_config()
+    if _camera_cfg_at_launch is not None:
+        _cam_xyz = _camera_cfg_at_launch['xyz']
+        _cam_rpy = _camera_cfg_at_launch['rpy']
+        print(f'[real_bringup] applying camera_pose.yaml '
+              f'(xyz={_cam_xyz}, rpy={_cam_rpy}, last_updated '
+              f'{_camera_cfg_at_launch.get("last_updated", "?")})')
+        _cam_defaults = {
+            'camera_x': f'{_cam_xyz[0]:.9f}',
+            'camera_y': f'{_cam_xyz[1]:.9f}',
+            'camera_z': f'{_cam_xyz[2]:.9f}',
+            'camera_roll': f'{_cam_rpy[0]:.9f}',
+            'camera_pitch': f'{_cam_rpy[1]:.9f}',
+            'camera_yaw': f'{_cam_rpy[2]:.9f}',
+        }
+    else:
+        # URDF defaults from volcaniarm.urdf.xacro xacro:arg blocks
+        _cam_defaults = {
+            'camera_x': '0.0160004150359285',
+            'camera_y': '0.0',
+            'camera_z': '0.0',
+            'camera_roll': '3.14159',
+            'camera_pitch': '0.0',
+            'camera_yaw': '0.0',
+        }
+
+    camera_x_arg = DeclareLaunchArgument(
+        "camera_x", default_value=_cam_defaults['camera_x'],
+        description="camera_joint origin x (URDF override; from camera_pose.yaml if present)")
+    camera_y_arg = DeclareLaunchArgument(
+        "camera_y", default_value=_cam_defaults['camera_y'])
+    camera_z_arg = DeclareLaunchArgument(
+        "camera_z", default_value=_cam_defaults['camera_z'])
+    camera_roll_arg = DeclareLaunchArgument(
+        "camera_roll", default_value=_cam_defaults['camera_roll'])
+    camera_pitch_arg = DeclareLaunchArgument(
+        "camera_pitch", default_value=_cam_defaults['camera_pitch'])
+    camera_yaw_arg = DeclareLaunchArgument(
+        "camera_yaw", default_value=_cam_defaults['camera_yaw'])
 
     is_traj_active = IfCondition(
         PythonExpression(
@@ -207,6 +217,12 @@ def generate_launch_description():
             " auto_home:=", LaunchConfiguration("auto_home"),
             " calibration:=", LaunchConfiguration("calibration"),
             " tag_size:=", LaunchConfiguration("tag_size"),
+            " camera_x:=", LaunchConfiguration("camera_x"),
+            " camera_y:=", LaunchConfiguration("camera_y"),
+            " camera_z:=", LaunchConfiguration("camera_z"),
+            " camera_roll:=", LaunchConfiguration("camera_roll"),
+            " camera_pitch:=", LaunchConfiguration("camera_pitch"),
+            " camera_yaw:=", LaunchConfiguration("camera_yaw"),
         ]),
         value_type=str,
     )
@@ -317,12 +333,16 @@ def generate_launch_description():
             calibration_arg,
             pointcloud_arg,
             tag_size_arg,
-            use_camera_pose_config_arg,
+            camera_x_arg,
+            camera_y_arg,
+            camera_z_arg,
+            camera_roll_arg,
+            camera_pitch_arg,
+            camera_yaw_arg,
             robot_state_publisher,
             OpaqueFunction(
                 function=lambda ctx: _build_controller_manager(ctx, robot_description_content)
             ),
-            OpaqueFunction(function=_build_camera_pose_publisher),
             display_launch,
             controller_launch,
             rl_controller_launch,

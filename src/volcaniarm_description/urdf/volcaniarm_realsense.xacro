@@ -17,12 +17,20 @@
        to the top of the frame; pulling the camera back trades a
        smaller tag in the image (~48 px wide vs ~62) for full
        coverage of the operating envelope. -->
-  <xacro:if value="$(arg calibration)">
-    <joint name="calibration_camera_joint" type="fixed">
-      <origin xyz="1.5 0 -0.5" rpy="0 0 ${pi}" />
-      <parent link="base_link" />
-      <child link="camera_link" />
-    </joint>
+  <!-- Sim-only override for calibration mode: parks the camera 1.5 m
+       in front of the robot facing back so the Gazebo workspace test
+       has a fixed view. On real hardware the camera is mounted on
+       the cart and the URDF's camera_joint (volcaniarm.urdf.xacro)
+       handles the placement, with calibrated values passed via xacro
+       args. -->
+  <xacro:if value="$(arg use_sim)">
+    <xacro:if value="$(arg calibration)">
+      <joint name="calibration_camera_joint" type="fixed">
+        <origin xyz="1.5 0 -0.5" rpy="0 0 ${pi}" />
+        <parent link="base_link" />
+        <child link="camera_link" />
+      </joint>
+    </xacro:if>
   </xacro:if>
 
   <!-- RealSense D435i frame chain. Published by robot_state_publisher in all

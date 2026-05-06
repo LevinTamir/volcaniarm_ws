@@ -40,13 +40,14 @@ ROBOT_BASE_FRAME = 'volcaniarm_base_link'
 URDF_TAG_FRAME = 'apriltag_base_link'
 DETECTED_TAG_FRAME = 'apriltag_marker_base'
 CAMERA_FRAME = 'camera_color_optical_frame'
-# Frames used to derive the URDF override. The URDF puts camera_link
-# directly under the cart's base_link; everything from camera_link
-# down (camera_color_frame, camera_color_optical_frame, etc.) is the
-# RealSense's internal geometry and is independent of where the
-# camera is mounted. So the right edge to override is base_link ->
-# camera_link.
-CART_BASE_FRAME = 'base_link'
+# Frames used to derive the URDF override. The URDF mounts camera_link
+# on camera_mount_rev_link via the parameterised camera_joint; the
+# rest of the cart chain (base_link -> camera_mount_linear_link ->
+# camera_mount_rev_link) is mechanical and stays fixed. So the right
+# edge to override is camera_mount_rev_link -> camera_link, and
+# real_bringup plugs our values into the URDF's camera_joint xacro
+# args at launch time.
+CAMERA_MOUNT_FRAME = 'camera_mount_rev_link'
 CAMERA_LINK_FRAME = 'camera_link'
 
 DEFAULT_DATA_ROOT = (
@@ -326,54 +327,62 @@ class CameraCalibrationRunner:
         return _xyz_quat_from_transform(tf.transform)
 
     def _compute_urdf_override(self, measured_xyz, measured_quat):
-        """Compute T(cart_base -> camera_link) implied by the measurement.
+        """Compute T(camera_mount_rev_link -> camera_link) implied by
+        the measurement. That's the URDF's camera_joint edge, which
+        is parameterised via xacro args -- real_bringup plugs in
+        these values so the URDF directly publishes the calibrated
+        camera position with no static_transform_publisher race.
 
-        Assumes the URDF static chains (cart_base -> robot_base) and
-        (camera_link -> camera_optical_frame) are both up; if either
-        lookup fails, returns None and the dashboard can fall back to
-        recommending a manual URDF edit.
+        Math:
+        T(mount -> camera_link) =
+            inv(T(robot_base -> mount))           [URDF static chain]
+            · T(robot_base -> camera_optical, measured)
+            · inv(T(camera_link -> camera_optical))   [URDF static chain]
+
+        Returns None if either URDF lookup fails (e.g. mount frame not
+        in TF yet); the per-run result.yaml still gets saved.
         """
-        cart_to_robot = self._lookup_static(CART_BASE_FRAME, ROBOT_BASE_FRAME)
+        robot_to_mount = self._lookup_static(
+            ROBOT_BASE_FRAME, CAMERA_MOUNT_FRAME)
         link_to_optical = self._lookup_static(
             CAMERA_LINK_FRAME, CAMERA_FRAME)
-        if cart_to_robot is None or link_to_optical is None:
+        if robot_to_mount is None or link_to_optical is None:
             return None
-        cart_xyz, cart_quat = _xyz_quat_from_transform(cart_to_robot.transform)
+        rm_xyz, rm_quat = _xyz_quat_from_transform(robot_to_mount.transform)
         link_xyz, link_quat = _xyz_quat_from_transform(
             link_to_optical.transform)
-        M_cart_to_robot = _se3(cart_xyz, cart_quat)
+        M_robot_to_mount = _se3(rm_xyz, rm_quat)
         M_robot_to_optical = _se3(measured_xyz, measured_quat)
         M_link_to_optical = _se3(link_xyz, link_quat)
-        M = M_cart_to_robot @ M_robot_to_optical @ _se3_inv(M_link_to_optical)
+        M = (_se3_inv(M_robot_to_mount)
+             @ M_robot_to_optical
+             @ _se3_inv(M_link_to_optical))
         xyz, quat = _se3_to_xyz_quat(M)
         rpy = _quat_to_rpy(quat)
         return {
-            'parent': CART_BASE_FRAME,
+            'parent': CAMERA_MOUNT_FRAME,
             'child': CAMERA_LINK_FRAME,
             'xyz': [float(v) for v in xyz],
             'quat': [float(v) for v in quat],
+            'rpy': [float(v) for v in rpy],
             'rpy_deg': [float(math.degrees(v)) for v in rpy],
         }
 
     def _log_override_command(self, override: dict):
-        """Print a copy-pasteable static_transform_publisher CLI for
-        the operator to apply the calibration in their current ROS
-        session. Conflicts with the URDF's published static for the
-        same edge -- TF2 takes the most recent publish, so this works
-        but emits a warning. Kill the spawned process to revert.
+        """Print the camera_joint origin values the URDF will pick
+        up at next launch from camera_pose.yaml. Useful for the
+        operator to eyeball the override before relaunching.
         """
         x, y, z = override['xyz']
-        qx, qy, qz, qw = override['quat']
-        cmd = (
-            'ros2 run tf2_ros static_transform_publisher'
-            f' --x {x:.6f} --y {y:.6f} --z {z:.6f}'
-            f' --qx {qx:.6f} --qy {qy:.6f} --qz {qz:.6f} --qw {qw:.6f}'
-            f' --frame-id {override["parent"]}'
-            f' --child-frame-id {override["child"]}'
-        )
+        roll, pitch, yaw = override['rpy']
         self._emit_status(
-            'to apply this calibration to RViz, run in a new terminal:')
-        self._emit_status(cmd)
+            f'URDF camera_joint origin (saved to camera_pose.yaml):')
+        self._emit_status(
+            f'  xyz=({x:.6f}, {y:.6f}, {z:.6f})  '
+            f'rpy=({roll:.6f}, {pitch:.6f}, {yaw:.6f})  '
+            f'parent={override["parent"]} child={override["child"]}')
+        self._emit_status(
+            'relaunch real_bringup to apply (URDF reads the YAML on startup)')
 
     # -- output ------------------------------------------------------
 
