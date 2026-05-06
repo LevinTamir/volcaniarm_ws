@@ -1,0 +1,39 @@
+# Pose list for the automated EE-sweep hand-eye camera calibration
+# (cart-mounted camera scenario). Used by HandEyeCameraCalibrationRunner.
+#
+# Each pose is the workspace target (y, z) in metres that the arm will
+# visit. The runner pre-resolves IK for every pose before any motion;
+# unreachable or out-of-envelope entries are skipped with a warning.
+#
+# Conservative safe envelope (enforced by the runner):
+#   y in [-0.30, 0.30]
+#   z in [ 0.35, 0.65]
+#
+# Tighter than the kinematics service's hard limits to keep margin from
+# singularities and motor stalls. Edit the values below to retune; just
+# stay inside the envelope above. The hand-eye solver (cv2 Daniilidis)
+# benefits from spread across the workspace -- even with limited
+# rotation diversity on a 2-DOF planar arm, varied (y, z) gives the
+# math more pose diversity to fit through.
+
+poses:
+  - {y: -0.20, z: 0.40, comment: "front-left"}
+  - {y:  0.00, z: 0.38, comment: "front-center, near"}
+  - {y:  0.20, z: 0.40, comment: "front-right"}
+  - {y: -0.20, z: 0.55, comment: "back-left"}
+  - {y:  0.00, z: 0.50, comment: "back-center"}
+  - {y:  0.20, z: 0.55, comment: "back-right"}
+  - {y: -0.10, z: 0.45, comment: "mid-left"}
+  - {y:  0.10, z: 0.45, comment: "mid-right"}
+  - {y:  0.00, z: 0.62, comment: "back-center, far"}
+  - {y: -0.25, z: 0.50, comment: "left-far"}
+  - {y:  0.25, z: 0.50, comment: "right-far"}
+
+trajectory_duration: 2.5
+settle_time: 1.5
+detection_timeout_s: 2.0
+detection_max_age_s: 0.5
+
+# Minimum poses where the EE tag was detected. Below this the cv2
+# hand-eye solve is too underconstrained to trust.
+min_successful_samples: 7
