@@ -171,7 +171,7 @@ def generate_launch_description():
     else:
         # URDF defaults from volcaniarm_realsense.xacro xacro:arg blocks
         _cal_cam_defaults = {
-            'calibration_camera_x':     '-1.55',
+            'calibration_camera_x':     '-1.6',
             'calibration_camera_y':     '0.0',
             'calibration_camera_z':     '0.6',
             'calibration_camera_roll':  '0.0',
