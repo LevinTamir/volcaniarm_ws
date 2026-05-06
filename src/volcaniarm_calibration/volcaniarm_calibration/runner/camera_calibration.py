@@ -424,20 +424,29 @@ class CameraCalibrationRunner:
     def _start_server(self) -> bool:
         if self._server_proc is not None and self._server_proc.poll() is None:
             return True
+        # We go through ros2 launch (not ros2 run) because easy_handeye2
+        # declares its parameters with type-only descriptors (no
+        # default), which rclpy on Jazzy rejects unless the override
+        # arrives via a parameter dict / params YAML. ros2 launch
+        # converts our dict into the right form; ros2 run --ros-args
+        # -p ... fails with PARAMETER_NOT_SET.
         cmd = [
-            'ros2', 'run', 'easy_handeye2', 'handeye_server',
-            '--ros-args',
-            '-p', f'name:={HANDEYE_NAME}',
-            '-p', f'calibration_type:={HANDEYE_CALIBRATION_TYPE}',
-            '-p', f'tracking_base_frame:={HANDEYE_TRACKING_BASE_FRAME}',
-            '-p', f'tracking_marker_frame:={HANDEYE_TRACKING_MARKER_FRAME}',
-            '-p', f'robot_base_frame:={HANDEYE_ROBOT_BASE_FRAME}',
-            '-p', f'robot_effector_frame:={HANDEYE_ROBOT_EFFECTOR_FRAME}',
-            '-p', 'freehand_robot_movement:=true',
+            'ros2', 'launch', 'volcaniarm_calibration',
+            'handeye_server_only.launch.py',
+            f'name:={HANDEYE_NAME}',
+            f'calibration_type:={HANDEYE_CALIBRATION_TYPE}',
+            f'tracking_base_frame:={HANDEYE_TRACKING_BASE_FRAME}',
+            f'tracking_marker_frame:={HANDEYE_TRACKING_MARKER_FRAME}',
+            f'robot_base_frame:={HANDEYE_ROBOT_BASE_FRAME}',
+            f'robot_effector_frame:={HANDEYE_ROBOT_EFFECTOR_FRAME}',
         ]
         try:
             self._emit_status('spawning easy_handeye2 server')
-            self._server_proc = subprocess.Popen(cmd)
+            # Capture stderr so a startup failure surfaces in the
+            # dashboard log (otherwise we get the unhelpful 'exited
+            # during startup' with no detail).
+            self._server_proc = subprocess.Popen(
+                cmd, stderr=subprocess.PIPE)
         except OSError as exc:
             self._emit_status(f'spawn failed: {exc}')
             return False
@@ -445,7 +454,18 @@ class CameraCalibrationRunner:
         # doesn't busy-wait against a not-yet-listening socket.
         time.sleep(SERVER_STARTUP_GRACE_S)
         if self._server_proc.poll() is not None:
-            self._emit_status('handeye_server exited during startup')
+            err = ''
+            try:
+                _, err_bytes = self._server_proc.communicate(timeout=1.0)
+                err = err_bytes.decode('utf-8', errors='replace').strip()
+            except Exception:
+                pass
+            self._emit_status(
+                'handeye_server exited during startup'
+                + (f': {err.splitlines()[-1] if err else "(no stderr)"}'))
+            if err:
+                self._node.get_logger().error(
+                    f'handeye_server stderr:\n{err}')
             self._server_proc = None
             return False
         return True
