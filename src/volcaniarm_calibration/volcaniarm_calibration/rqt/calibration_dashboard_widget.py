@@ -21,13 +21,20 @@ from __future__ import annotations
 
 import html
 import re
+import shutil
+import subprocess
+import time
 from pathlib import Path
 import threading
+from typing import Optional
 
-from python_qt_binding.QtCore import Signal, Slot, QObject
+from ament_index_python.packages import get_package_share_directory
+
+from python_qt_binding.QtCore import Signal, Slot, QObject, QTimer
 from python_qt_binding.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QComboBox, QDoubleSpinBox, QSpinBox, QPushButton, QLabel,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QMessageBox,
+    QSpinBox, QPushButton, QLabel,
     QPlainTextEdit, QProgressBar, QTextEdit,
 )
 
@@ -46,11 +53,21 @@ _SUCCESS_PATTERNS = re.compile(
     re.IGNORECASE)
 
 from ..runner import (
-    CalibrationRunner, RunRequest, TEST_REGISTRY,
+    CalibrationRunner, CameraCalibrationRunner, RunRequest, TEST_REGISTRY,
 )
 
 
 DEFAULT_OUTPUT_DIR = '~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/data'
+
+# Name passed to easy_handeye2's publish launch. Must match the value
+# the camera-calibration runner uses when sampling, so the publisher
+# reads the .calib file the runner just saved.
+HANDEYE_NAME = 'volcaniarm_calibration'
+# easy_handeye2 stores calibrations at ~/.ros2/easy_handeye2/calibrations/<name>.calib.
+# Mirrored from easy_handeye2/__init__.py: CALIBRATIONS_DIRECTORY.
+HANDEYE_CALIB_PATH = (
+    Path('~/.ros2/easy_handeye2/calibrations').expanduser()
+    / f'{HANDEYE_NAME}.calib')
 
 # Sentinel used until the FK service responds with the actual (y, z)
 # corresponding to theta=(0, 0). Picked to be obviously a placeholder.
@@ -65,6 +82,8 @@ class _RunnerBridge(QObject):
     awaiting_continue = Signal(int, int)
     detection_state = Signal(bool, float)
     home_fk_resolved = Signal(float, float)
+    # Camera calibration completion. (status, calib_path_or_empty, reason)
+    camera_calib_finished = Signal(str, str, str)
 
 
 class CalibrationDashboardWidget(QWidget):
@@ -89,6 +108,34 @@ class CalibrationDashboardWidget(QWidget):
         self._home_fk_y: float = _HOME_FALLBACK[0]
         self._home_fk_z: float = _HOME_FALLBACK[1]
 
+        # Auto-continue state: True between an awaiting_continue signal
+        # and the operator (or auto-advance) clicking Continue / Cancel.
+        # _auto_continue_fresh_since is the monotonic time the current
+        # detection started being fresh, or None if not currently fresh.
+        # Reset on every new gate so each goal is timed independently.
+        self._awaiting_continue: bool = False
+        self._auto_continue_fresh_since: Optional[float] = None
+        # Path of the most recent run dir, populated on finished. Used
+        # by the post-run banner's Delete and Open notebook actions.
+        self._last_run_dir: Optional[Path] = None
+        self._last_test_name: Optional[str] = None
+
+        # _publish_proc runs easy_handeye2's handeye_publisher, which
+        # broadcasts the saved camera transform so RViz shows the
+        # camera in the right place. Started on demand and on dashboard
+        # startup if a saved calibration exists.
+        self._publish_proc: Optional[subprocess.Popen] = None
+
+        # Automated camera-calibration runner. Composes with the test
+        # runner -- shares its motion / IK / TF primitives and the
+        # _stop_event so a single Cancel halts whichever is active.
+        self._cam_runner = CameraCalibrationRunner(self._runner)
+        self._cam_runner.status_cb = self._bridge.status.emit
+        self._cam_runner.progress_cb = self._bridge.progress.emit
+        self._cam_runner.finished_cb = (
+            lambda status, path, reason: self._bridge.camera_calib_finished.emit(
+                status, str(path) if path else '', reason))
+
         self._build_ui()
         self._wire_signals()
         self._defaults_from_fk_in_background()
@@ -97,6 +144,35 @@ class CalibrationDashboardWidget(QWidget):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
+
+        # Camera alignment: optional pre-test step. The eye-on-base
+        # hand-eye calibration finds T(base -> camera_color_optical),
+        # so RViz can show the camera in the right place relative to
+        # the arm. The test runs themselves don't depend on this TF
+        # (they read base_tag -> ee_tag directly), but the operator
+        # uses RViz to visually confirm the camera setup before
+        # starting tests, so we keep it as an explicit pre-step.
+        align_box = QGroupBox('Camera alignment (easy_handeye2)')
+        align_outer = QVBoxLayout(align_box)
+        self._align_status = QLabel('camera TF: checking...')
+        align_outer.addWidget(self._align_status)
+        align_btns = QHBoxLayout()
+        self._calibrate_btn = QPushButton('Calibrate camera')
+        self._calibrate_btn.setToolTip(
+            'Open easy_handeye2 calibrator. Use only if the camera moved '
+            'since the last calibration; otherwise the saved transform '
+            'is reused.')
+        self._publish_btn = QPushButton('Publish saved TF')
+        self._publish_btn.setToolTip(
+            'Broadcast the saved hand-eye transform so RViz shows the '
+            'camera in the right place. Auto-runs on dashboard startup '
+            'when a saved calibration exists.')
+        self._stop_publish_btn = QPushButton('Stop publishing')
+        align_btns.addWidget(self._calibrate_btn)
+        align_btns.addWidget(self._publish_btn)
+        align_btns.addWidget(self._stop_publish_btn)
+        align_outer.addLayout(align_btns)
+        layout.addWidget(align_box)
 
         cfg_box = QGroupBox('Test configuration')
         cfg_form = QFormLayout(cfg_box)
@@ -112,6 +188,31 @@ class CalibrationDashboardWidget(QWidget):
         self._samples.setRange(1, 200)
         self._samples.setValue(20)
         cfg_form.addRow('samples per visit', self._samples)
+        self._settle_time = QDoubleSpinBox()
+        self._settle_time.setRange(0.0, 10.0)
+        self._settle_time.setSingleStep(0.5)
+        self._settle_time.setDecimals(1)
+        self._settle_time.setValue(2.0)
+        cfg_form.addRow('settle time (s)', self._settle_time)
+        self._fresh_window = QDoubleSpinBox()
+        self._fresh_window.setRange(0.1, 2.0)
+        self._fresh_window.setSingleStep(0.1)
+        self._fresh_window.setDecimals(2)
+        self._fresh_window.setValue(0.5)
+        cfg_form.addRow('detection fresh window (s)', self._fresh_window)
+        # Auto-continue: when checked, the runner auto-advances at each
+        # Continue gate once detection has been continuously fresh for
+        # `fresh-hold` seconds. Cancel still aborts immediately. Hold
+        # time provides hysteresis against single-frame fresh blips.
+        self._auto_continue = QCheckBox('auto-continue when detection fresh')
+        self._auto_continue.setChecked(True)
+        cfg_form.addRow(self._auto_continue)
+        self._auto_hold = QDoubleSpinBox()
+        self._auto_hold.setRange(0.2, 5.0)
+        self._auto_hold.setSingleStep(0.1)
+        self._auto_hold.setDecimals(2)
+        self._auto_hold.setValue(1.0)
+        cfg_form.addRow('auto-continue fresh-hold (s)', self._auto_hold)
         layout.addWidget(cfg_box)
 
         # Initial pose (defaults to the workspace (y, z) of theta=(0,0)
@@ -203,6 +304,40 @@ class CalibrationDashboardWidget(QWidget):
         self._log.document().setMaximumBlockCount(1000)
         layout.addWidget(self._log)
 
+        # Post-run banner: shown after every finalize so the operator
+        # can triage the result (Keep / Delete / Open notebook) without
+        # leaving the GUI. Hidden during a run.
+        self._banner = self._build_banner()
+        layout.addWidget(self._banner)
+        self._banner.setVisible(False)
+
+    def _build_banner(self) -> QFrame:
+        frame = QFrame()
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        outer = QVBoxLayout(frame)
+        # Status pill: a single label with bold text and a coloured
+        # background that swaps green/yellow/red on each finalize.
+        self._banner_status = QLabel()
+        self._banner_status.setStyleSheet(
+            'font-weight: bold; padding: 4px;')
+        outer.addWidget(self._banner_status)
+        self._banner_path = QLabel()
+        self._banner_path.setWordWrap(True)
+        self._banner_path.setStyleSheet('color: gray;')
+        outer.addWidget(self._banner_path)
+        btn_row = QHBoxLayout()
+        self._banner_keep = QPushButton('Keep')
+        self._banner_delete = QPushButton('Delete run')
+        self._banner_open = QPushButton('Open notebook')
+        self._banner_keep.clicked.connect(self._on_banner_keep)
+        self._banner_delete.clicked.connect(self._on_banner_delete)
+        self._banner_open.clicked.connect(self._on_banner_open_notebook)
+        btn_row.addWidget(self._banner_keep)
+        btn_row.addWidget(self._banner_delete)
+        btn_row.addWidget(self._banner_open)
+        outer.addLayout(btn_row)
+        return frame
+
     def _make_pose_spinbox(self, default: float, lo: float, hi: float
                             ) -> QDoubleSpinBox:
         sb = QDoubleSpinBox()
@@ -232,6 +367,21 @@ class CalibrationDashboardWidget(QWidget):
         self._reset_btn.clicked.connect(self._on_reset_clicked)
         self._cancel_btn.clicked.connect(self._on_cancel_clicked)
         self._move_initial_btn.clicked.connect(self._on_move_initial_clicked)
+        self._calibrate_btn.clicked.connect(self._on_calibrate_clicked)
+        self._publish_btn.clicked.connect(self._on_publish_clicked)
+        self._stop_publish_btn.clicked.connect(self._on_stop_publish_clicked)
+        # Poll subprocess liveness so the status label and button
+        # enable-state stay accurate after a process exits on its own
+        # (operator closed the calibrator window, etc.).
+        self._align_timer = QTimer(self)
+        self._align_timer.setInterval(2000)
+        self._align_timer.timeout.connect(self._refresh_alignment_state)
+        self._align_timer.start()
+        self._refresh_alignment_state()
+        # Auto-publish on first startup if a saved calibration exists.
+        # Wrapped so it's only attempted once; subsequent connects from
+        # restore_settings won't kick off a second publisher.
+        QTimer.singleShot(0, self._auto_publish_on_startup)
         self._initial_y_home_btn.clicked.connect(
             lambda: self._initial_y.setValue(self._home_fk_y))
         self._initial_z_home_btn.clicked.connect(
@@ -247,6 +397,8 @@ class CalibrationDashboardWidget(QWidget):
         self._bridge.awaiting_continue.connect(self._on_awaiting_continue)
         self._bridge.detection_state.connect(self._on_detection_state)
         self._bridge.home_fk_resolved.connect(self._on_home_fk_resolved)
+        self._bridge.camera_calib_finished.connect(
+            self._on_camera_calib_finished)
 
     @Slot(str)
     def _on_test_changed(self, name: str):
@@ -364,7 +516,7 @@ class CalibrationDashboardWidget(QWidget):
             targets=goals,
             num_cycles=self._iterations.value(),
             samples_per_visit=self._samples.value(),
-            settle_time=2.0,
+            settle_time=self._settle_time.value(),
             sample_interval=0.1,
             return_home_between_targets=True,
         )
@@ -373,6 +525,7 @@ class CalibrationDashboardWidget(QWidget):
             output_root=Path(DEFAULT_OUTPUT_DIR).expanduser(),
             initial_pose=(self._initial_y.value(), self._initial_z.value()),
             goals=tuple(goals),
+            detection_max_age_s=self._fresh_window.value(),
         )
         if self._runner.request_run(request):
             self._start_btn.setEnabled(False)
@@ -380,6 +533,7 @@ class CalibrationDashboardWidget(QWidget):
             self._progress.setRange(0, test.num_cycles * len(goals))
             self._progress.setValue(0)
             self._detection_label.setText('detection: idle')
+            self._banner.setVisible(False)
             self._log_msg(
                 f'requested run: {test.name} '
                 f'({test.num_cycles} cycles x {len(goals)} goals)')
@@ -411,6 +565,8 @@ class CalibrationDashboardWidget(QWidget):
 
     @Slot()
     def _on_continue_clicked(self):
+        self._awaiting_continue = False
+        self._auto_continue_fresh_since = None
         self._runner.proceed()
         self._continue_btn.setEnabled(False)
 
@@ -418,8 +574,14 @@ class CalibrationDashboardWidget(QWidget):
     def _on_cancel_clicked(self):
         # Stop in place; do not return the arm anywhere. Reset is the
         # button to use when you want the arm parked at the typed
-        # initial pose after halting.
+        # initial pose after halting. Cancel is wired to both runners
+        # so it works whether a test or a calibration sweep is active
+        # (only one of them runs at a time, but cancelling the idle
+        # one is a no-op).
+        self._awaiting_continue = False
+        self._auto_continue_fresh_since = None
         self._runner.cancel()
+        self._cam_runner.cancel()
         self._reset_ui_state(status='cancelled')
 
     @Slot()
@@ -430,6 +592,159 @@ class CalibrationDashboardWidget(QWidget):
     @Slot()
     def _on_move_initial_clicked(self):
         self._runner.goto(self._initial_y.value(), self._initial_z.value())
+
+    # -- camera alignment ----------------------------------------
+
+    def _proc_alive(self, proc: Optional[subprocess.Popen]) -> bool:
+        return proc is not None and proc.poll() is None
+
+    def _refresh_alignment_state(self):
+        """Update the alignment status label and button enables.
+
+        Reflects the *result* of any prior calibration (.calib file
+        present?) and the publisher subprocess state. The "in progress"
+        signal during a sweep is driven by the runner's status_cb, not
+        polled here, so this stays purely descriptive of disk state.
+        """
+        if self._publish_proc is not None and not self._proc_alive(self._publish_proc):
+            self._publish_proc = None
+
+        calib_exists = HANDEYE_CALIB_PATH.exists()
+        publishing = self._proc_alive(self._publish_proc)
+        calibrating = self._cam_runner.is_busy()
+
+        if calibrating:
+            text = 'camera TF: calibration in progress'
+            colour = '#c79a3a'
+        elif publishing and calib_exists:
+            text = f'camera TF: publishing ({HANDEYE_CALIB_PATH.name})'
+            colour = '#2e9c4a'
+        elif calib_exists:
+            text = f'camera TF: saved, not publishing ({HANDEYE_CALIB_PATH.name})'
+            colour = '#888888'
+        else:
+            text = 'camera TF: not calibrated yet'
+            colour = '#d04b4b'
+        self._align_status.setText(text)
+        self._align_status.setStyleSheet(f'color: {colour};')
+
+        self._calibrate_btn.setEnabled(not calibrating)
+        self._publish_btn.setEnabled(calib_exists and not publishing
+                                     and not calibrating)
+        self._stop_publish_btn.setEnabled(publishing)
+
+    def _auto_publish_on_startup(self):
+        if HANDEYE_CALIB_PATH.exists() and not self._proc_alive(self._publish_proc):
+            self._start_publisher()
+
+    @Slot()
+    def _on_calibrate_clicked(self):
+        if self._cam_runner.is_busy():
+            return
+        # The auto-calibration drives the arm itself. Stop the
+        # publisher first so its TF doesn't fight the handeye_server's
+        # transforms during sampling. We restart it on completion.
+        self._stop_publisher()
+        yaml_path = self._calibration_poses_path()
+        if not yaml_path.exists():
+            self._log_msg(
+                f'calibration poses YAML not found at {yaml_path}; '
+                f'cannot start auto-calibration')
+            return
+        if self._cam_runner.request(yaml_path):
+            self._log_msg(
+                f'auto-calibration starting (poses: {yaml_path.name})')
+        self._refresh_alignment_state()
+
+    def _calibration_poses_path(self) -> Path:
+        """Resolve the calibration_poses.yaml path.
+
+        Prefer the installed share dir (production install). Fall back
+        to the source tree, since symlink-install of share/ only
+        symlinks the directory; new files added after install need a
+        rebuild to appear there.
+        """
+        try:
+            share = Path(get_package_share_directory('volcaniarm_calibration'))
+            installed = share / 'config' / 'calibration_poses.yaml'
+            if installed.exists():
+                return installed
+        except Exception:
+            pass
+        return (Path(__file__).resolve().parents[2]
+                / 'config' / 'calibration_poses.yaml')
+
+    @Slot()
+    def _on_publish_clicked(self):
+        if not HANDEYE_CALIB_PATH.exists():
+            self._log_msg(
+                f'no saved calibration at {HANDEYE_CALIB_PATH}; '
+                f'run Calibrate camera first')
+            return
+        self._start_publisher()
+
+    def _start_publisher(self):
+        if self._proc_alive(self._publish_proc):
+            return
+        cmd = [
+            'ros2', 'launch', 'easy_handeye2', 'publish.launch.py',
+            f'name:={HANDEYE_NAME}',
+        ]
+        try:
+            self._publish_proc = subprocess.Popen(cmd)
+            self._log_msg('publishing saved camera TF')
+        except OSError as exc:
+            self._log_msg(f'publish launch failed: {exc}')
+        self._refresh_alignment_state()
+
+    @Slot()
+    def _on_stop_publish_clicked(self):
+        self._stop_publisher()
+        self._refresh_alignment_state()
+
+    def _stop_publisher(self):
+        if self._publish_proc is None:
+            return
+        try:
+            self._publish_proc.terminate()
+            try:
+                self._publish_proc.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                self._publish_proc.kill()
+                self._publish_proc.wait(timeout=2.0)
+            self._log_msg('stopped camera TF publisher')
+        except OSError as exc:
+            self._log_msg(f'stop publisher failed: {exc}')
+        finally:
+            self._publish_proc = None
+
+    @Slot(str, str, str)
+    def _on_camera_calib_finished(self, status: str, calib_path: str,
+                                  reason: str):
+        """Slot for CameraCalibrationRunner.finished_cb.
+
+        On success: log + auto-(re)start the publisher so RViz picks
+        up the new TF immediately. On failure / cancel: surface the
+        reason and leave the publisher down (the operator may want to
+        retry, and re-publishing a stale calibration after a failed
+        re-calibration would be misleading).
+        """
+        if status == 'completed':
+            self._log_msg(f'camera calibration completed: {calib_path}')
+            self._status_label.setText('camera calibration completed')
+            if calib_path and Path(calib_path).exists():
+                self._start_publisher()
+        elif status == 'canceled':
+            self._log_msg('camera calibration canceled')
+            self._status_label.setText('camera calibration canceled')
+        else:
+            text = f'camera calibration failed: {reason}' if reason else \
+                   'camera calibration failed'
+            self._log_msg(text)
+            self._status_label.setText(text)
+        # Refresh the alignment label / button enables now that the
+        # subprocess is down and the .calib file may exist.
+        self._refresh_alignment_state()
 
     # -- runner-side slots ---------------------------------------
 
@@ -445,8 +760,16 @@ class CalibrationDashboardWidget(QWidget):
 
     @Slot(int, int)
     def _on_awaiting_continue(self, iteration: int, total: int):
-        self._status_label.setText(
-            f'iteration {iteration}/{total}: position camera, then click Continue')
+        self._awaiting_continue = True
+        self._auto_continue_fresh_since = None
+        if self._auto_continue.isChecked():
+            self._status_label.setText(
+                f'iteration {iteration}/{total}: '
+                f'auto-continue (waiting for fresh detection)')
+        else:
+            self._status_label.setText(
+                f'iteration {iteration}/{total}: '
+                f'position camera, then click Continue')
 
     @Slot(bool, float)
     def _on_detection_state(self, is_fresh: bool, age_s: float):
@@ -458,13 +781,126 @@ class CalibrationDashboardWidget(QWidget):
         else:
             self._detection_label.setText('detection: not visible')
             self._detection_label.setStyleSheet('color: red;')
+        self._maybe_auto_continue(is_fresh)
+
+    def _maybe_auto_continue(self, is_fresh: bool):
+        """Advance the run automatically once detection has been fresh
+        for ``auto_hold`` seconds at the current Continue gate.
+
+        Hysteresis: a single fresh frame won't trip auto-advance; the
+        detection must stay fresh continuously for the hold time. Any
+        loss of freshness resets the timer. Cancel always wins because
+        it sets ``_stop_event`` in the runner, which causes
+        ``_wait_for_continue`` to exit before our proceed() lands.
+        """
+        if not (self._auto_continue.isChecked() and self._awaiting_continue):
+            return
+        if not is_fresh:
+            self._auto_continue_fresh_since = None
+            return
+        now = time.monotonic()
+        if self._auto_continue_fresh_since is None:
+            self._auto_continue_fresh_since = now
+            return
+        if now - self._auto_continue_fresh_since >= self._auto_hold.value():
+            self._auto_continue_fresh_since = None
+            self._on_continue_clicked()
 
     @Slot(str, str)
     def _on_finished(self, run_dir: str, status: str):
+        self._awaiting_continue = False
+        self._auto_continue_fresh_since = None
         self._log_msg(f'output: {run_dir}')
         self._reset_ui_state(status=f'run {status}')
+        self._show_banner(run_dir, status)
+
+    def _show_banner(self, run_dir: str, status: str):
+        self._last_run_dir = Path(run_dir) if run_dir else None
+        self._last_test_name = self._test_combo.currentText()
+        colour, label = {
+            'completed': ('#2e9c4a', 'COMPLETED'),
+            'canceled':  ('#c79a3a', 'CANCELED'),
+            'failed':    ('#d04b4b', 'FAILED'),
+        }.get(status, ('#888888', status.upper()))
+        self._banner_status.setText(f'Run {label}')
+        self._banner_status.setStyleSheet(
+            f'font-weight: bold; padding: 4px; '
+            f'color: white; background-color: {colour};')
+        if self._last_run_dir is not None:
+            self._banner_path.setText(str(self._last_run_dir))
+        else:
+            self._banner_path.setText('(no run directory)')
+        self._banner_delete.setEnabled(self._last_run_dir is not None
+                                       and self._last_run_dir.exists())
+        self._banner_open.setEnabled(self._notebook_path() is not None)
+        self._banner_open.setToolTip(
+            '' if self._notebook_path() is not None
+            else 'notebook for this test type does not exist yet')
+        self._banner.setVisible(True)
+
+    def _notebook_path(self) -> Optional[Path]:
+        """Resolve the analysis notebook path for the current test type.
+
+        Tries the installed share dir first (production install), then
+        falls back to the source tree (developer running symlink-install
+        without re-installing notebooks). Returns None if neither
+        exists, so the Open button can disable itself.
+        """
+        if not self._last_test_name:
+            return None
+        candidates: list = []
+        try:
+            share = Path(get_package_share_directory('volcaniarm_calibration'))
+            candidates.append(share / 'notebooks' / f'{self._last_test_name}.ipynb')
+        except Exception:
+            pass
+        # Source-tree fallback. The widget lives at
+        # <pkg>/volcaniarm_calibration/rqt/calibration_dashboard_widget.py;
+        # the notebooks dir is two levels up under the package root.
+        src_nb = (Path(__file__).resolve().parents[2]
+                  / 'notebooks' / f'{self._last_test_name}.ipynb')
+        candidates.append(src_nb)
+        for path in candidates:
+            if path.exists():
+                return path
+        return None
+
+    @Slot()
+    def _on_banner_keep(self):
+        self._banner.setVisible(False)
+
+    @Slot()
+    def _on_banner_delete(self):
+        if self._last_run_dir is None or not self._last_run_dir.exists():
+            return
+        reply = QMessageBox.question(
+            self, 'Delete run',
+            f'Permanently delete this run directory?\n\n{self._last_run_dir}',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            shutil.rmtree(self._last_run_dir)
+            self._log_msg(f'deleted: {self._last_run_dir}')
+            self._banner.setVisible(False)
+        except OSError as exc:
+            self._log_msg(f'delete failed: {exc}')
+
+    @Slot()
+    def _on_banner_open_notebook(self):
+        path = self._notebook_path()
+        if path is None:
+            return
+        try:
+            subprocess.Popen(['xdg-open', str(path)])
+        except OSError as exc:
+            self._log_msg(f'open notebook failed: {exc}')
 
     def shutdown(self):
+        self._align_timer.stop()
+        self._stop_publisher()
+        self._cam_runner.shutdown()
         self._runner.shutdown()
 
     def save_settings(self, plugin_settings):
@@ -475,6 +911,10 @@ class CalibrationDashboardWidget(QWidget):
         plugin_settings.set_value('goal_z', self._goal_z.value())
         plugin_settings.set_value('iterations', self._iterations.value())
         plugin_settings.set_value('samples', self._samples.value())
+        plugin_settings.set_value('settle_time', self._settle_time.value())
+        plugin_settings.set_value('fresh_window', self._fresh_window.value())
+        plugin_settings.set_value('auto_continue', self._auto_continue.isChecked())
+        plugin_settings.set_value('auto_hold', self._auto_hold.value())
         plugin_settings.set_value('goals_text', self._goals_edit.toPlainText())
 
     def restore_settings(self, plugin_settings):
@@ -490,6 +930,9 @@ class CalibrationDashboardWidget(QWidget):
             ('goal_z', self._goal_z),
             ('iterations', self._iterations),
             ('samples', self._samples),
+            ('settle_time', self._settle_time),
+            ('fresh_window', self._fresh_window),
+            ('auto_hold', self._auto_hold),
         ):
             v = plugin_settings.value(key)
             if v is not None:
@@ -497,6 +940,9 @@ class CalibrationDashboardWidget(QWidget):
                     widget.setValue(type(widget.value())(v))
                 except (TypeError, ValueError):
                     pass
+        v = plugin_settings.value('auto_continue')
+        if v is not None:
+            self._auto_continue.setChecked(str(v).lower() in ('1', 'true'))
         gt = plugin_settings.value('goals_text')
         if gt is not None:
             self._goals_edit.setPlainText(str(gt))

@@ -62,6 +62,7 @@ class RunWriter:
         self.run_dir = (Path(base_dir).expanduser()
                         / test_name / self.day / self.clock)
         self.status: str = 'in_progress'
+        self.failure_reason: Optional[str] = None
         self._tag_file = None
         self._fk_file = None
         self._tag_writer = None
@@ -99,6 +100,9 @@ class RunWriter:
     def finalize(self, status: str):
         self.status = status
 
+    def set_failure_reason(self, reason: str):
+        self.failure_reason = reason
+
     def _git_sha(self) -> Optional[str]:
         try:
             out = subprocess.check_output(
@@ -126,5 +130,7 @@ class RunWriter:
         with path.open() as f:
             cfg = yaml.safe_load(f) or {}
         cfg['status'] = self.status
+        if self.failure_reason is not None:
+            cfg['failure_reason'] = self.failure_reason
         with path.open('w') as f:
             yaml.safe_dump(cfg, f, sort_keys=False)

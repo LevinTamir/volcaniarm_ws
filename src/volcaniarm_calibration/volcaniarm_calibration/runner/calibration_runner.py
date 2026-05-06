@@ -103,6 +103,10 @@ class CalibrationRunner:
         self._goto_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._continue_event = threading.Event()
+        # Set by internal auto-abort paths (e.g. detection lost during
+        # sampling). Distinguishes 'failed' from operator-driven
+        # 'canceled' at finalize time. Cleared at the start of each run.
+        self._failure_reason: Optional[str] = None
         self._writer: Optional[RunWriter] = None
         # Default joint names used by goto / reset_to when no run is
         # active. Mirrors RunRequest's default.
@@ -133,6 +137,7 @@ class CalibrationRunner:
                 return False
         self._stop_event.clear()
         self._continue_event.clear()
+        self._failure_reason = None
         self._run_thread = threading.Thread(
             target=self._run, args=(request,), daemon=True)
         self._run_thread.start()
@@ -256,7 +261,14 @@ class CalibrationRunner:
             self._writer = writer
             try:
                 ok = self._execute(request, writer)
-                if self._stop_event.is_set():
+                if self._failure_reason is not None:
+                    # Auto-aborts (detection loss, etc.) set both
+                    # _stop_event and _failure_reason. Surface as
+                    # 'failed' with the reason, not as 'canceled' --
+                    # the operator didn't choose to stop.
+                    writer.set_failure_reason(self._failure_reason)
+                    writer.finalize('failed')
+                elif self._stop_event.is_set():
                     writer.finalize('canceled')
                 elif ok:
                     writer.finalize('completed')
@@ -270,6 +282,7 @@ class CalibrationRunner:
                     writer.finalize('failed')
             except Exception as exc:
                 self.node.get_logger().error(f'run failed: {exc}')
+                writer.set_failure_reason(f'exception: {exc}')
                 writer.finalize('failed')
             self._emit_finished(writer.run_dir, writer.status)
         self._writer = None
@@ -660,6 +673,19 @@ class CalibrationRunner:
             self._emit_status(
                 f'{phase} capture: 0 samples (cycle={cycle}, '
                 f'target_idx={target_idx}); {last_reason}')
+            # 'target' phase entered the gate with a fresh detection,
+            # so capturing zero samples means the tag was lost between
+            # gate-release and the first capture lookup. That's a real
+            # failure, not noise -- abort and finalise as 'failed'. The
+            # 'home' phase has no gate before it, so a missing tag
+            # there is just an unconfigured baseline; keep the warn
+            # behaviour and let the run continue.
+            if phase == 'target':
+                self._failure_reason = (
+                    f'detection lost during sampling at cycle={cycle}, '
+                    f'target_idx={target_idx}: {last_reason}')
+                self._emit_status(f'aborting: {self._failure_reason}')
+                self._stop_event.set()
         else:
             self._emit_status(
                 f'{phase} capture: {captured}/{n} samples '
