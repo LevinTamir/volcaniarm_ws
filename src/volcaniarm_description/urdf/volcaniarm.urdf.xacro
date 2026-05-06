@@ -610,7 +610,10 @@
   </joint>
 
   <!-- ======================== CAMERA MOUNT ======================== -->
-  <!-- Skipped in calibration mode (camera is placed directly by realsense xacro) -->
+  <!-- Skipped in calibration mode: the camera is physically removed from
+       the robot and placed on an external stand, so calibration_camera_joint
+       in volcaniarm_realsense.xacro parents camera_link directly to
+       base_link instead. -->
 
   <xacro:unless value="$(arg calibration)">
   <link name="camera_mount_linear_link">
@@ -697,28 +700,21 @@
       </geometry>
     </collision>
   </link>
-  <!-- camera_joint applies in every mode except sim+calibration, where
-       calibration_camera_joint in volcaniarm_realsense.xacro mounts
-       camera_link directly on base_link to give Gazebo a fixed
-       calibration camera. Origin is parameterised via xacro args so
-       real_bringup can plug in calibrated values from camera_pose.yaml
-       at launch time. -->
-  <xacro:macro name="volcaniarm_camera_joint">
+  <!-- camera_joint mounts the on-robot camera on camera_mount_rev_link
+       in normal mode (sim and real). In calibration mode the camera is
+       physically off the robot, so calibration_camera_joint in
+       volcaniarm_realsense.xacro parents camera_link directly to
+       base_link and this joint is skipped. The camera_x/y/z/roll/pitch/yaw
+       args parameterise the on-robot offset for a future eye-in-hand
+       calibration; defaults reflect the as-built mount. -->
+  <xacro:unless value="$(arg calibration)">
     <joint name="camera_joint" type="fixed">
       <origin xyz="$(arg camera_x) $(arg camera_y) $(arg camera_z)"
               rpy="$(arg camera_roll) $(arg camera_pitch) $(arg camera_yaw)" />
       <parent link="camera_mount_rev_link" />
       <child link="camera_link" />
     </joint>
-  </xacro:macro>
-  <xacro:unless value="$(arg use_sim)">
-    <xacro:volcaniarm_camera_joint />
   </xacro:unless>
-  <xacro:if value="$(arg use_sim)">
-    <xacro:unless value="$(arg calibration)">
-      <xacro:volcaniarm_camera_joint />
-    </xacro:unless>
-  </xacro:if>
 
   <!-- Camera optical frame -->
   <link name="camera_link_optical" />

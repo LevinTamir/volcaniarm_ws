@@ -27,10 +27,10 @@ def _load_camera_pose_config():
     Malformed file gets a single warning and we fall back to URDF
     defaults rather than crashing the launch.
 
-    Schema (parent_frame must be camera_mount_rev_link, child_frame
-    must be camera_link, since those are the URDF's parameterised
-    camera_joint endpoints):
-        parent_frame: camera_mount_rev_link
+    Schema (camera-off-robot calibration; parent_frame must be world,
+    child_frame must be camera_link, since those are the URDF's
+    parameterised calibration_camera_joint endpoints):
+        parent_frame: world
         child_frame: camera_link
         xyz: [x, y, z]
         rpy: [roll, pitch, yaw]   # radians, used for the URDF override
@@ -44,10 +44,10 @@ def _load_camera_pose_config():
         for key in ('parent_frame', 'child_frame', 'xyz', 'rpy'):
             if key not in cfg:
                 raise ValueError(f'missing key {key!r}')
-        if cfg['parent_frame'] != 'camera_mount_rev_link' \
+        if cfg['parent_frame'] != 'world' \
                 or cfg['child_frame'] != 'camera_link':
             raise ValueError(
-                f'parent/child must be camera_mount_rev_link/camera_link, '
+                f'parent/child must be world/camera_link, '
                 f'got {cfg["parent_frame"]!r}/{cfg["child_frame"]!r}')
         if len(cfg['xyz']) != 3 or len(cfg['rpy']) != 3:
             raise ValueError('xyz must have 3 values and rpy must have 3')
@@ -146,10 +146,13 @@ def generate_launch_description():
     )
 
     # camera_pose.yaml (written by the dashboard's Calibrate camera
-    # button) is read at launch time and its xyz/rpy are passed to the
-    # URDF's parameterised camera_joint via xacro args. If the file is
-    # missing or malformed, the URDF defaults apply; rename / delete
-    # the YAML to revert to defaults.
+    # button in calibration mode) holds the off-robot stand pose:
+    # world -> camera_link. Its xyz/rpy are forwarded to the URDF's
+    # parameterised calibration_camera_joint via xacro args. If the file
+    # is missing or malformed, the URDF defaults apply (stand 1.5 m in
+    # front of the arm, 0.6 m above floor); rename / delete the YAML to
+    # revert. Note: world_to_base has yaw=pi, so "in front of the arm"
+    # is world x=-1.5, not +1.5.
     _camera_cfg_at_launch = _load_camera_pose_config()
     if _camera_cfg_at_launch is not None:
         _cam_xyz = _camera_cfg_at_launch['xyz']
@@ -157,38 +160,45 @@ def generate_launch_description():
         print(f'[real_bringup] applying camera_pose.yaml '
               f'(xyz={_cam_xyz}, rpy={_cam_rpy}, last_updated '
               f'{_camera_cfg_at_launch.get("last_updated", "?")})')
-        _cam_defaults = {
-            'camera_x': f'{_cam_xyz[0]:.9f}',
-            'camera_y': f'{_cam_xyz[1]:.9f}',
-            'camera_z': f'{_cam_xyz[2]:.9f}',
-            'camera_roll': f'{_cam_rpy[0]:.9f}',
-            'camera_pitch': f'{_cam_rpy[1]:.9f}',
-            'camera_yaw': f'{_cam_rpy[2]:.9f}',
+        _cal_cam_defaults = {
+            'calibration_camera_x':     f'{_cam_xyz[0]:.9f}',
+            'calibration_camera_y':     f'{_cam_xyz[1]:.9f}',
+            'calibration_camera_z':     f'{_cam_xyz[2]:.9f}',
+            'calibration_camera_roll':  f'{_cam_rpy[0]:.9f}',
+            'calibration_camera_pitch': f'{_cam_rpy[1]:.9f}',
+            'calibration_camera_yaw':   f'{_cam_rpy[2]:.9f}',
         }
     else:
-        # URDF defaults from volcaniarm.urdf.xacro xacro:arg blocks
-        _cam_defaults = {
-            'camera_x': '0.0160004150359285',
-            'camera_y': '0.0',
-            'camera_z': '0.0',
-            'camera_roll': '3.14159',
-            'camera_pitch': '0.0',
-            'camera_yaw': '0.0',
+        # URDF defaults from volcaniarm_realsense.xacro xacro:arg blocks
+        _cal_cam_defaults = {
+            'calibration_camera_x':     '-1.55',
+            'calibration_camera_y':     '0.0',
+            'calibration_camera_z':     '0.6',
+            'calibration_camera_roll':  '0.0',
+            'calibration_camera_pitch': '0.0',
+            'calibration_camera_yaw':   '0.0',
         }
 
-    camera_x_arg = DeclareLaunchArgument(
-        "camera_x", default_value=_cam_defaults['camera_x'],
-        description="camera_joint origin x (URDF override; from camera_pose.yaml if present)")
-    camera_y_arg = DeclareLaunchArgument(
-        "camera_y", default_value=_cam_defaults['camera_y'])
-    camera_z_arg = DeclareLaunchArgument(
-        "camera_z", default_value=_cam_defaults['camera_z'])
-    camera_roll_arg = DeclareLaunchArgument(
-        "camera_roll", default_value=_cam_defaults['camera_roll'])
-    camera_pitch_arg = DeclareLaunchArgument(
-        "camera_pitch", default_value=_cam_defaults['camera_pitch'])
-    camera_yaw_arg = DeclareLaunchArgument(
-        "camera_yaw", default_value=_cam_defaults['camera_yaw'])
+    calibration_camera_x_arg = DeclareLaunchArgument(
+        "calibration_camera_x",
+        default_value=_cal_cam_defaults['calibration_camera_x'],
+        description="calibration_camera_joint origin x in world frame "
+                    "(off-robot stand pose; from camera_pose.yaml if present)")
+    calibration_camera_y_arg = DeclareLaunchArgument(
+        "calibration_camera_y",
+        default_value=_cal_cam_defaults['calibration_camera_y'])
+    calibration_camera_z_arg = DeclareLaunchArgument(
+        "calibration_camera_z",
+        default_value=_cal_cam_defaults['calibration_camera_z'])
+    calibration_camera_roll_arg = DeclareLaunchArgument(
+        "calibration_camera_roll",
+        default_value=_cal_cam_defaults['calibration_camera_roll'])
+    calibration_camera_pitch_arg = DeclareLaunchArgument(
+        "calibration_camera_pitch",
+        default_value=_cal_cam_defaults['calibration_camera_pitch'])
+    calibration_camera_yaw_arg = DeclareLaunchArgument(
+        "calibration_camera_yaw",
+        default_value=_cal_cam_defaults['calibration_camera_yaw'])
 
     is_traj_active = IfCondition(
         PythonExpression(
@@ -217,12 +227,12 @@ def generate_launch_description():
             " auto_home:=", LaunchConfiguration("auto_home"),
             " calibration:=", LaunchConfiguration("calibration"),
             " tag_size:=", LaunchConfiguration("tag_size"),
-            " camera_x:=", LaunchConfiguration("camera_x"),
-            " camera_y:=", LaunchConfiguration("camera_y"),
-            " camera_z:=", LaunchConfiguration("camera_z"),
-            " camera_roll:=", LaunchConfiguration("camera_roll"),
-            " camera_pitch:=", LaunchConfiguration("camera_pitch"),
-            " camera_yaw:=", LaunchConfiguration("camera_yaw"),
+            " calibration_camera_x:=", LaunchConfiguration("calibration_camera_x"),
+            " calibration_camera_y:=", LaunchConfiguration("calibration_camera_y"),
+            " calibration_camera_z:=", LaunchConfiguration("calibration_camera_z"),
+            " calibration_camera_roll:=", LaunchConfiguration("calibration_camera_roll"),
+            " calibration_camera_pitch:=", LaunchConfiguration("calibration_camera_pitch"),
+            " calibration_camera_yaw:=", LaunchConfiguration("calibration_camera_yaw"),
         ]),
         value_type=str,
     )
@@ -333,12 +343,12 @@ def generate_launch_description():
             calibration_arg,
             pointcloud_arg,
             tag_size_arg,
-            camera_x_arg,
-            camera_y_arg,
-            camera_z_arg,
-            camera_roll_arg,
-            camera_pitch_arg,
-            camera_yaw_arg,
+            calibration_camera_x_arg,
+            calibration_camera_y_arg,
+            calibration_camera_z_arg,
+            calibration_camera_roll_arg,
+            calibration_camera_pitch_arg,
+            calibration_camera_yaw_arg,
             robot_state_publisher,
             OpaqueFunction(
                 function=lambda ctx: _build_controller_manager(ctx, robot_description_content)

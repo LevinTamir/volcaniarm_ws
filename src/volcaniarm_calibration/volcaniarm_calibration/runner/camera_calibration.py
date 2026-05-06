@@ -40,14 +40,14 @@ ROBOT_BASE_FRAME = 'volcaniarm_base_link'
 URDF_TAG_FRAME = 'apriltag_base_link'
 DETECTED_TAG_FRAME = 'apriltag_marker_base'
 CAMERA_FRAME = 'camera_color_optical_frame'
-# Frames used to derive the URDF override. The URDF mounts camera_link
-# on camera_mount_rev_link via the parameterised camera_joint; the
-# rest of the cart chain (base_link -> camera_mount_linear_link ->
-# camera_mount_rev_link) is mechanical and stays fixed. So the right
-# edge to override is camera_mount_rev_link -> camera_link, and
-# real_bringup plugs our values into the URDF's camera_joint xacro
-# args at launch time.
-CAMERA_MOUNT_FRAME = 'camera_mount_rev_link'
+# Frames used to derive the URDF override. In calibration mode the
+# camera is off the robot on an external stand, so the URDF parents
+# camera_link directly to world via calibration_camera_joint
+# (volcaniarm_realsense.xacro). real_bringup plugs our values into
+# that joint's xacro args at launch time, so the override is always
+# expressed as world -> camera_link (matches how an operator measures
+# the stand position with a tape from the floor).
+WORLD_FRAME = 'world'
 CAMERA_LINK_FRAME = 'camera_link'
 
 DEFAULT_DATA_ROOT = (
@@ -222,7 +222,7 @@ class CameraCalibrationRunner:
                     'urdf_tag': URDF_TAG_FRAME,
                     'detected_tag': DETECTED_TAG_FRAME,
                     'camera': CAMERA_FRAME,
-                    'cart_base': CART_BASE_FRAME,
+                    'world': WORLD_FRAME,
                     'camera_link': CAMERA_LINK_FRAME,
                 },
                 'timestamp': datetime.now().isoformat(),
@@ -327,40 +327,40 @@ class CameraCalibrationRunner:
         return _xyz_quat_from_transform(tf.transform)
 
     def _compute_urdf_override(self, measured_xyz, measured_quat):
-        """Compute T(camera_mount_rev_link -> camera_link) implied by
-        the measurement. That's the URDF's camera_joint edge, which
-        is parameterised via xacro args -- real_bringup plugs in
-        these values so the URDF directly publishes the calibrated
-        camera position with no static_transform_publisher race.
+        """Compute T(world -> camera_link) implied by the measurement.
+        That's the URDF's calibration_camera_joint edge, which is
+        parameterised via xacro args -- real_bringup plugs in these
+        values so the URDF directly publishes the calibrated stand
+        pose with no static_transform_publisher race.
 
         Math:
-        T(mount -> camera_link) =
-            inv(T(robot_base -> mount))           [URDF static chain]
+        T(world -> camera_link) =
+            T(world -> robot_base)                          [URDF static chain]
             · T(robot_base -> camera_optical, measured)
-            · inv(T(camera_link -> camera_optical))   [URDF static chain]
+            · inv(T(camera_link -> camera_optical))         [URDF static chain]
 
-        Returns None if either URDF lookup fails (e.g. mount frame not
-        in TF yet); the per-run result.yaml still gets saved.
+        Returns None if either URDF lookup fails; the per-run
+        result.yaml still gets saved.
         """
-        robot_to_mount = self._lookup_static(
-            ROBOT_BASE_FRAME, CAMERA_MOUNT_FRAME)
+        world_to_base = self._lookup_static(
+            WORLD_FRAME, ROBOT_BASE_FRAME)
         link_to_optical = self._lookup_static(
             CAMERA_LINK_FRAME, CAMERA_FRAME)
-        if robot_to_mount is None or link_to_optical is None:
+        if world_to_base is None or link_to_optical is None:
             return None
-        rm_xyz, rm_quat = _xyz_quat_from_transform(robot_to_mount.transform)
+        wb_xyz, wb_quat = _xyz_quat_from_transform(world_to_base.transform)
         link_xyz, link_quat = _xyz_quat_from_transform(
             link_to_optical.transform)
-        M_robot_to_mount = _se3(rm_xyz, rm_quat)
+        M_world_to_base = _se3(wb_xyz, wb_quat)
         M_robot_to_optical = _se3(measured_xyz, measured_quat)
         M_link_to_optical = _se3(link_xyz, link_quat)
-        M = (_se3_inv(M_robot_to_mount)
+        M = (M_world_to_base
              @ M_robot_to_optical
              @ _se3_inv(M_link_to_optical))
         xyz, quat = _se3_to_xyz_quat(M)
         rpy = _quat_to_rpy(quat)
         return {
-            'parent': CAMERA_MOUNT_FRAME,
+            'parent': WORLD_FRAME,
             'child': CAMERA_LINK_FRAME,
             'xyz': [float(v) for v in xyz],
             'quat': [float(v) for v in quat],
@@ -369,14 +369,14 @@ class CameraCalibrationRunner:
         }
 
     def _log_override_command(self, override: dict):
-        """Print the camera_joint origin values the URDF will pick
-        up at next launch from camera_pose.yaml. Useful for the
-        operator to eyeball the override before relaunching.
+        """Print the calibration_camera_joint origin values the URDF
+        will pick up at next launch from camera_pose.yaml. Useful for
+        the operator to eyeball the override before relaunching.
         """
         x, y, z = override['xyz']
         roll, pitch, yaw = override['rpy']
         self._emit_status(
-            f'URDF camera_joint origin (saved to camera_pose.yaml):')
+            f'URDF calibration_camera_joint origin (saved to camera_pose.yaml):')
         self._emit_status(
             f'  xyz=({x:.6f}, {y:.6f}, {z:.6f})  '
             f'rpy=({roll:.6f}, {pitch:.6f}, {yaw:.6f})  '
@@ -431,6 +431,7 @@ class CameraCalibrationRunner:
             'parent_frame': override['parent'],
             'child_frame': override['child'],
             'xyz': override['xyz'],
+            'rpy': override['rpy'],
             'quat': override['quat'],
             'rpy_deg': override['rpy_deg'],
             'last_updated': datetime.now().isoformat(timespec='seconds'),

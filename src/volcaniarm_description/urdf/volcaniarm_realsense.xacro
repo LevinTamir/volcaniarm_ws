@@ -2,35 +2,31 @@
 
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm_realsense">
 
-  <!-- Calibration mode: horizontal camera in front of the robot (sim only).
-       base_link is at world (0,0,0.98) with yaw=pi, so base_link +X is
-       world -X. xyz=(2.5, 0, -0.07) -> world (-2.5, 0, 0.91); yaw=pi
-       points +X back toward world +X.
+  <!-- Calibration mode places the camera on an external stand, off the
+       robot, so it can see the full workspace plus the base tag in one
+       view. calibration_camera_joint parents camera_link directly to
+       world (skipping the on-robot mount) at a parameterised pose;
+       real_bringup forwards the calibrated values from camera_pose.yaml
+       so the URDF directly reflects the measured stand pose. Defaults
+       place the stand 1.5 m in front of the arm and 0.6 m above the
+       floor. Note: world_to_base has yaw=pi, so the arm reaches into
+       world -X. "In front of the arm" is world x=-1.5, with the
+       camera looking back toward world +X (rpy=0 since camera_link
+       inherits world's identity orientation). -->
+  <xacro:arg name="calibration_camera_x"     default="-1.5" />
+  <xacro:arg name="calibration_camera_y"     default="0.0" />
+  <xacro:arg name="calibration_camera_z"     default="0.6" />
+  <xacro:arg name="calibration_camera_roll"  default="0.0" />
+  <xacro:arg name="calibration_camera_pitch" default="0.0" />
+  <xacro:arg name="calibration_camera_yaw"   default="0.0" />
 
-       Camera Z (0.91 m) is the midpoint of the workspace vertical
-       range (home tip near world Z=0.23, high targets near Z=1.58),
-       and the X distance (2.5 m) is set so the sim camera vertical
-       FOV of ~45 deg covers the full 1.55 m workspace span (with
-       0.2 m tag size accounted for) and keeps the entire EE tag
-       inside the image at every test pose. At 2 m distance the FOV
-       was ~0.24 m short and high-target captures lost the EE tag
-       to the top of the frame; pulling the camera back trades a
-       smaller tag in the image (~48 px wide vs ~62) for full
-       coverage of the operating envelope. -->
-  <!-- Sim-only override for calibration mode: parks the camera 1.5 m
-       in front of the robot facing back so the Gazebo workspace test
-       has a fixed view. On real hardware the camera is mounted on
-       the cart and the URDF's camera_joint (volcaniarm.urdf.xacro)
-       handles the placement, with calibrated values passed via xacro
-       args. -->
-  <xacro:if value="$(arg use_sim)">
-    <xacro:if value="$(arg calibration)">
-      <joint name="calibration_camera_joint" type="fixed">
-        <origin xyz="1.5 0 -0.5" rpy="0 0 ${pi}" />
-        <parent link="base_link" />
-        <child link="camera_link" />
-      </joint>
-    </xacro:if>
+  <xacro:if value="$(arg calibration)">
+    <joint name="calibration_camera_joint" type="fixed">
+      <origin xyz="$(arg calibration_camera_x) $(arg calibration_camera_y) $(arg calibration_camera_z)"
+              rpy="$(arg calibration_camera_roll) $(arg calibration_camera_pitch) $(arg calibration_camera_yaw)" />
+      <parent link="world" />
+      <child link="camera_link" />
+    </joint>
   </xacro:if>
 
   <!-- RealSense D435i frame chain. Published by robot_state_publisher in all
