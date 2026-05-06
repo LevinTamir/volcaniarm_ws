@@ -40,6 +40,14 @@ ROBOT_BASE_FRAME = 'volcaniarm_base_link'
 URDF_TAG_FRAME = 'apriltag_base_link'
 DETECTED_TAG_FRAME = 'apriltag_marker_base'
 CAMERA_FRAME = 'camera_color_optical_frame'
+# Frames used to derive the URDF override. The URDF puts camera_link
+# directly under the cart's base_link; everything from camera_link
+# down (camera_color_frame, camera_color_optical_frame, etc.) is the
+# RealSense's internal geometry and is independent of where the
+# camera is mounted. So the right edge to override is base_link ->
+# camera_link.
+CART_BASE_FRAME = 'base_link'
+CAMERA_LINK_FRAME = 'camera_link'
 
 DEFAULT_DATA_ROOT = (
     Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/data')
@@ -173,6 +181,18 @@ class CameraCalibrationRunner:
             # in _collect_samples), so measured_* IS what we want.
             urdf_camera_xyz, urdf_camera_quat = self._urdf_camera_pose()
 
+            # Compute the base_link -> camera_link override the operator
+            # would need to publish (or paste into the URDF) so RViz
+            # shows the camera at the measured pose. Math:
+            # T(base_link -> camera_link) =
+            #     T(base_link -> volcaniarm_base_link)
+            #     · T(volcaniarm_base_link -> camera_optical, measured)
+            #     · inv(T(camera_link -> camera_color_optical_frame))
+            # The first and third lookups go through the URDF static
+            # chain, both should be available as long as the URDF is
+            # loaded. None values mean we can't suggest an override.
+            override = self._compute_urdf_override(measured_xyz, measured_quat)
+
             result = {
                 'measured': _pose_dict(measured_xyz, measured_quat),
                 'stddev': {
@@ -187,16 +207,21 @@ class CameraCalibrationRunner:
                     _delta_dict(measured_xyz, measured_quat,
                                 urdf_camera_xyz, urdf_camera_quat)
                     if urdf_camera_xyz is not None else None),
+                'urdf_camera_joint_override': override,
                 'frames': {
                     'robot_base': ROBOT_BASE_FRAME,
                     'urdf_tag': URDF_TAG_FRAME,
                     'detected_tag': DETECTED_TAG_FRAME,
                     'camera': CAMERA_FRAME,
+                    'cart_base': CART_BASE_FRAME,
+                    'camera_link': CAMERA_LINK_FRAME,
                 },
                 'timestamp': datetime.now().isoformat(),
             }
 
             self._log_result_block(result)
+            if override is not None:
+                self._log_override_command(override)
             result_path = self._save_yaml(result)
             self._emit_status(f'saved: {result_path}')
             self._emit_finished('completed', result_path, '')
@@ -283,6 +308,56 @@ class CameraCalibrationRunner:
         if tf is None:
             return None, None
         return _xyz_quat_from_transform(tf.transform)
+
+    def _compute_urdf_override(self, measured_xyz, measured_quat):
+        """Compute T(cart_base -> camera_link) implied by the measurement.
+
+        Assumes the URDF static chains (cart_base -> robot_base) and
+        (camera_link -> camera_optical_frame) are both up; if either
+        lookup fails, returns None and the dashboard can fall back to
+        recommending a manual URDF edit.
+        """
+        cart_to_robot = self._lookup_static(CART_BASE_FRAME, ROBOT_BASE_FRAME)
+        link_to_optical = self._lookup_static(
+            CAMERA_LINK_FRAME, CAMERA_FRAME)
+        if cart_to_robot is None or link_to_optical is None:
+            return None
+        cart_xyz, cart_quat = _xyz_quat_from_transform(cart_to_robot.transform)
+        link_xyz, link_quat = _xyz_quat_from_transform(
+            link_to_optical.transform)
+        M_cart_to_robot = _se3(cart_xyz, cart_quat)
+        M_robot_to_optical = _se3(measured_xyz, measured_quat)
+        M_link_to_optical = _se3(link_xyz, link_quat)
+        M = M_cart_to_robot @ M_robot_to_optical @ _se3_inv(M_link_to_optical)
+        xyz, quat = _se3_to_xyz_quat(M)
+        rpy = _quat_to_rpy(quat)
+        return {
+            'parent': CART_BASE_FRAME,
+            'child': CAMERA_LINK_FRAME,
+            'xyz': [float(v) for v in xyz],
+            'quat': [float(v) for v in quat],
+            'rpy_deg': [float(math.degrees(v)) for v in rpy],
+        }
+
+    def _log_override_command(self, override: dict):
+        """Print a copy-pasteable static_transform_publisher CLI for
+        the operator to apply the calibration in their current ROS
+        session. Conflicts with the URDF's published static for the
+        same edge -- TF2 takes the most recent publish, so this works
+        but emits a warning. Kill the spawned process to revert.
+        """
+        x, y, z = override['xyz']
+        qx, qy, qz, qw = override['quat']
+        cmd = (
+            'ros2 run tf2_ros static_transform_publisher'
+            f' --x {x:.6f} --y {y:.6f} --z {z:.6f}'
+            f' --qx {qx:.6f} --qy {qy:.6f} --qz {qz:.6f} --qw {qw:.6f}'
+            f' --frame-id {override["parent"]}'
+            f' --child-frame-id {override["child"]}'
+        )
+        self._emit_status(
+            'to apply this calibration to RViz, run in a new terminal:')
+        self._emit_status(cmd)
 
     # -- output ------------------------------------------------------
 
