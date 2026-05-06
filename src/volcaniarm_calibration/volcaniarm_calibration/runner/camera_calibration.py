@@ -1,85 +1,75 @@
-"""Automated camera-calibration sweep using easy_handeye2.
+"""Single-shot camera localization from the base AprilTag.
 
-Drives the arm through a curated list of safe workspace poses (loaded
-from a YAML config), programmatically samples easy_handeye2's server,
-computes + saves the eye-on-base calibration, and parks the arm at
-home. Operator stays in control via the dashboard's Cancel button,
-which sets the same `_stop_event` used by the test runner.
+Computes the actual pose of ``camera_color_optical_frame`` in
+``volcaniarm_base_link`` frame from one good apriltag_ros detection
+of the base tag (ID 5). Compared to easy_handeye2's hand-eye sweep
+this is non-invasive: no arm motion, no algorithm sensitive to
+rotation diversity, no TF publish that would conflict with the URDF
+chain. The result is logged and saved to a YAML record so the
+operator can compare measured vs URDF-expected and decide whether to
+update the URDF.
 
-Composition over inheritance: this class holds a ``CalibrationRunner``
-reference and reuses its IK / trajectory / TF primitives rather than
-duplicating motion code. The two cannot run concurrently -- the
-busy-check guards both threads.
+Public API matches the previous ``CameraCalibrationRunner`` so the
+dashboard wiring is unchanged: ``request``, ``cancel``, ``is_busy``,
+``status_cb``, ``progress_cb``, ``finished_cb``, ``shutdown``.
 """
 
 from __future__ import annotations
 
-import subprocess
+import math
 import threading
 import time
-from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
+import numpy as np
 import yaml
+
+from rclpy.duration import Duration as RclpyDuration
+from rclpy.time import Time as RclpyTime
 
 from .calibration_runner import CalibrationRunner
 
 
-# Conservative envelope. Tighter than the kinematics service's hard
-# limits (y in [-0.4, 0.4], z in [0.1, 0.9]) to keep margin from
-# singularities. Operator edits the YAML; the runner enforces this box
-# regardless, so a typo can't drive the arm into the workspace edge.
-SAFE_Y_MIN = -0.30
-SAFE_Y_MAX = 0.30
-SAFE_Z_MIN = 0.35
-SAFE_Z_MAX = 0.65
+# Frames we look up. The URDF chain links the arm root to the rigidly
+# mounted tag, and apriltag_ros publishes the camera-to-detected-tag
+# pose every frame. The two should reference the same physical point,
+# so composing them yields camera-in-arm-base.
+ROBOT_BASE_FRAME = 'volcaniarm_base_link'
+URDF_TAG_FRAME = 'apriltag_base_link'
+DETECTED_TAG_FRAME = 'apriltag_marker_base'
+CAMERA_FRAME = 'camera_color_optical_frame'
 
-# easy_handeye2 storage location. Mirrored from
-# easy_handeye2/__init__.py:CALIBRATIONS_DIRECTORY.
-HANDEYE_CALIBRATIONS_DIR = Path('~/.ros2/easy_handeye2/calibrations').expanduser()
-HANDEYE_NAME = 'volcaniarm_calibration'
+DEFAULT_DATA_ROOT = (
+    Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/data')
+    .expanduser())
 
-# Frame configuration matching volcaniarm_calibration/launch/calibration.launch.py.
-HANDEYE_CALIBRATION_TYPE = 'eye_on_base'
-HANDEYE_ROBOT_BASE_FRAME = 'volcaniarm_base_link'
-HANDEYE_ROBOT_EFFECTOR_FRAME = 'right_arm_tip_link'
-HANDEYE_TRACKING_BASE_FRAME = 'camera_color_optical_frame'
-HANDEYE_TRACKING_MARKER_FRAME = 'apriltag_marker_ee'
-
-# Time the operator (or auto-publish logic) needs the publisher down
-# before re-launching it. The handeye_server we spawn for sampling
-# would otherwise fight a stale publisher subprocess for the same TF.
-SERVER_STARTUP_GRACE_S = 3.0
+# Knobs (fixed in code; no GUI exposure per plan).
+DEFAULT_NUM_SAMPLES = 10
+DEFAULT_SAMPLE_INTERVAL_S = 0.1
+DEFAULT_DETECTION_TIMEOUT_S = 5.0
+DEFAULT_DETECTION_MAX_AGE_S = 0.5
+MIN_SUCCESSFUL_SAMPLES = 6
 
 
 StatusCb = Callable[[str], None]
 ProgressCb = Callable[[int, int], None]
-# Fired when the camera calibration finishes. status is one of
-# 'completed', 'canceled', 'failed'. calib_path is the saved .calib
-# file (None on failure / cancel). reason is the failure_reason if
-# any, otherwise empty string.
+# (status, result_path_or_empty, reason)
 FinishedCb = Callable[[str, Optional[Path], str], None]
 
 
-@dataclass
-class _PoseEntry:
-    y: float
-    z: float
-    theta_right: float
-    theta_left: float
-    comment: str
-
-
 class CameraCalibrationRunner:
-    """Automated eye-on-base hand-eye calibration sweep."""
+    """Measure camera-in-base from the base AprilTag.
+
+    Composes with ``CalibrationRunner`` to share the TF buffer and the
+    operator's ``_stop_event`` so Cancel works mid-measurement.
+    """
 
     def __init__(self, runner: CalibrationRunner):
         self._runner = runner
         self._node = runner.node
         self._thread: Optional[threading.Thread] = None
-        self._server_proc: Optional[subprocess.Popen] = None
-        self._client = None  # easy_handeye2 HandeyeClient, set in _run
 
         self.status_cb: Optional[StatusCb] = None
         self.progress_cb: Optional[ProgressCb] = None
@@ -90,39 +80,31 @@ class CameraCalibrationRunner:
     def is_busy(self) -> bool:
         if self._thread is not None and self._thread.is_alive():
             return True
-        # Tests and calibration share the runner's _stop_event and
-        # motion primitives; refuse to start while a test is running.
         rt = self._runner._run_thread  # noqa: SLF001
         if rt is not None and rt.is_alive():
             return True
         return False
 
-    def request(self, yaml_path: Path) -> bool:
-        """Kick off a calibration sweep. Returns False if busy."""
+    def request(self, _yaml_path: Optional[Path] = None) -> bool:
+        """Kick off a localization. The argument is ignored; kept for
+        backwards compatibility with the old YAML-driven API so the
+        dashboard's call site doesn't change."""
         if self.is_busy():
             self._emit_status('busy: another run is in progress')
             return False
         self._runner._stop_event.clear()  # noqa: SLF001
         self._runner._failure_reason = None  # noqa: SLF001
-        self._thread = threading.Thread(
-            target=self._run, args=(Path(yaml_path),), daemon=True)
+        self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         return True
 
     def cancel(self):
-        """Stop the active sweep at the next checkpoint.
-
-        Sets the runner's `_stop_event`, which is polled inside motion
-        primitives and at our own loop boundaries. Any in-flight
-        trajectory goal is also cancelled at the action server.
-        """
         self._runner._stop_event.set()  # noqa: SLF001
 
     def shutdown(self):
         self.cancel()
         if self._thread is not None:
-            self._thread.join(timeout=10.0)
-        self._stop_server()
+            self._thread.join(timeout=5.0)
 
     # -- emit helpers ------------------------------------------------
 
@@ -135,242 +117,111 @@ class CameraCalibrationRunner:
         if self.progress_cb:
             self.progress_cb(current, total)
 
-    def _emit_finished(self, status: str, calib_path: Optional[Path], reason: str):
+    def _emit_finished(self, status: str, path: Optional[Path], reason: str):
         if self.finished_cb:
-            self.finished_cb(status, calib_path, reason)
+            self.finished_cb(status, path, reason)
 
-    # -- main worker --------------------------------------------------
+    # -- main worker -------------------------------------------------
 
-    def _run(self, yaml_path: Path):
+    def _run(self):
         try:
-            cfg = self._load_yaml(yaml_path)
-        except Exception as exc:
-            self._emit_status(f'failed to load {yaml_path}: {exc}')
-            self._emit_finished('failed', None, f'yaml load: {exc}')
-            return
+            urdf_tag = self._lookup_static(ROBOT_BASE_FRAME, URDF_TAG_FRAME)
+            if urdf_tag is None:
+                reason = (f'URDF chain {ROBOT_BASE_FRAME} -> {URDF_TAG_FRAME} '
+                          f'is not in the TF tree')
+                self._emit_status(f'aborting: {reason}')
+                self._emit_finished('failed', None, reason)
+                return
 
-        poses_raw = cfg.get('poses') or []
-        trajectory_duration = float(cfg.get('trajectory_duration', 2.5))
-        settle_time = float(cfg.get('settle_time', 1.5))
-        detection_timeout_s = float(cfg.get('detection_timeout_s', 2.0))
-        detection_max_age_s = float(cfg.get('detection_max_age_s', 0.5))
-        min_successful_samples = int(cfg.get('min_successful_samples', 7))
+            self._emit_status(
+                f'waiting for fresh detection of base tag '
+                f'({DETECTED_TAG_FRAME})')
+            if not self._wait_fresh_detection(
+                    DEFAULT_DETECTION_TIMEOUT_S,
+                    DEFAULT_DETECTION_MAX_AGE_S):
+                if self._runner._stop_event.is_set():  # noqa: SLF001
+                    self._emit_finished('canceled', None, '')
+                    return
+                reason = (f'no fresh detection of {DETECTED_TAG_FRAME} '
+                          f'within {DEFAULT_DETECTION_TIMEOUT_S}s')
+                self._emit_status(f'aborting: {reason}')
+                self._emit_finished('failed', None, reason)
+                return
 
-        # Validate envelope + pre-resolve IK for every pose. Failures
-        # are dropped (with warn) rather than aborting; the run only
-        # aborts if too few survive.
-        poses = self._validate_and_resolve(poses_raw)
-        if len(poses) < min_successful_samples:
-            reason = (f'only {len(poses)} pose(s) reachable; need at '
-                      f'least {min_successful_samples}')
-            self._emit_status(f'aborting: {reason}')
-            self._emit_finished('failed', None, reason)
-            return
-
-        # Spawn the handeye_server. We don't include the rqt calibrator
-        # (the operator drives via our dashboard, not its UI).
-        if not self._start_server():
-            self._emit_finished('failed', None, 'handeye_server failed to spawn')
-            return
-
-        try:
-            # Build the client. Constructor blocks on wait_for_service
-            # for every server-side service, so this returns only once
-            # the server is fully up. The dashboard host's executor
-            # services the calls because `self._node` is the same node
-            # the rqt plugin spins.
-            from easy_handeye2.handeye_client import HandeyeClient
-            from easy_handeye2.handeye_calibration import HandeyeCalibrationParameters
-
-            self._emit_status('connecting to handeye_server...')
-            params = HandeyeCalibrationParameters(
-                name=HANDEYE_NAME,
-                calibration_type=HANDEYE_CALIBRATION_TYPE,
-                tracking_base_frame=HANDEYE_TRACKING_BASE_FRAME,
-                tracking_marker_frame=HANDEYE_TRACKING_MARKER_FRAME,
-                robot_base_frame=HANDEYE_ROBOT_BASE_FRAME,
-                robot_effector_frame=HANDEYE_ROBOT_EFFECTOR_FRAME,
-                freehand_robot_movement=True,
-            )
-            self._client = HandeyeClient(self._node, params)
-            self._emit_status('handeye_server ready')
-
-            successful = self._sweep_poses(
-                poses, trajectory_duration, settle_time,
-                detection_timeout_s, detection_max_age_s)
+            self._emit_status(f'sampling {DEFAULT_NUM_SAMPLES} detections')
+            samples = self._collect_samples(
+                DEFAULT_NUM_SAMPLES, DEFAULT_SAMPLE_INTERVAL_S)
 
             if self._runner._stop_event.is_set():  # noqa: SLF001
-                self._emit_status('calibration canceled by operator')
                 self._emit_finished('canceled', None, '')
                 return
 
-            if successful < min_successful_samples:
-                reason = (f'only {successful} pose(s) sampled; need at '
-                          f'least {min_successful_samples}. Tag visibility?')
+            if len(samples) < MIN_SUCCESSFUL_SAMPLES:
+                reason = (f'only {len(samples)}/{DEFAULT_NUM_SAMPLES} samples '
+                          f'succeeded; need at least {MIN_SUCCESSFUL_SAMPLES}')
                 self._emit_status(f'aborting: {reason}')
                 self._emit_finished('failed', None, reason)
                 return
 
-            self._emit_status(f'computing calibration from {successful} samples')
-            compute_resp = self._client.compute_calibration()
-            if not compute_resp.valid:
-                reason = 'compute_calibration returned invalid'
-                self._emit_status(f'aborting: {reason}')
-                self._emit_finished('failed', None, reason)
-                return
+            measured_xyz, measured_quat = _average_samples(samples)
+            stddev_xyz = _xyz_stddev(samples)
+            stddev_rpy = _rpy_stddev(samples)
 
-            self._emit_status('saving calibration')
-            save_resp = self._client.save()
-            if not save_resp.success:
-                reason = 'save_calibration returned failure'
-                self._emit_status(f'aborting: {reason}')
-                self._emit_finished('failed', None, reason)
-                return
+            urdf_xyz, urdf_quat = _xyz_quat_from_transform(urdf_tag.transform)
+            # T(robot_base -> camera) = T(robot_base -> tag) @ inv(T(camera -> tag))
+            # Each detection sample is already T(robot_base -> camera) (precomposed
+            # in _collect_samples), so measured_* IS what we want.
+            urdf_camera_xyz, urdf_camera_quat = self._urdf_camera_pose()
 
-            calib_path = HANDEYE_CALIBRATIONS_DIR / f'{HANDEYE_NAME}.calib'
-            if not calib_path.exists():
-                reason = f'expected .calib at {calib_path}, not found'
-                self._emit_status(f'aborting: {reason}')
-                self._emit_finished('failed', None, reason)
-                return
+            result = {
+                'measured': _pose_dict(measured_xyz, measured_quat),
+                'stddev': {
+                    'xyz': [float(v) for v in stddev_xyz],
+                    'rpy_deg': [float(v) for v in stddev_rpy],
+                    'samples': len(samples),
+                },
+                'urdf_expected': (
+                    _pose_dict(urdf_camera_xyz, urdf_camera_quat)
+                    if urdf_camera_xyz is not None else None),
+                'delta': (
+                    _delta_dict(measured_xyz, measured_quat,
+                                urdf_camera_xyz, urdf_camera_quat)
+                    if urdf_camera_xyz is not None else None),
+                'frames': {
+                    'robot_base': ROBOT_BASE_FRAME,
+                    'urdf_tag': URDF_TAG_FRAME,
+                    'detected_tag': DETECTED_TAG_FRAME,
+                    'camera': CAMERA_FRAME,
+                },
+                'timestamp': datetime.now().isoformat(),
+            }
 
-            self._emit_status(f'saved: {calib_path}')
-
-            # Park the arm at home (theta=0, 0). This uses the same
-            # _send_and_wait the test runner already uses; if it
-            # fails, we still report 'completed' since the calibration
-            # data is good -- parking is UX.
-            self._emit_status('parking arm at home (theta=0, 0)')
-            ok = self._runner._send_and_wait(  # noqa: SLF001
-                self._runner._default_joint_names,  # noqa: SLF001
-                0.0, 0.0,
-                self._runner._default_trajectory_duration)  # noqa: SLF001
-            if not ok:
-                self._emit_status('park-at-home move did not complete cleanly')
-
-            self._emit_finished('completed', calib_path, '')
-
+            self._log_result_block(result)
+            result_path = self._save_yaml(result)
+            self._emit_status(f'saved: {result_path}')
+            self._emit_finished('completed', result_path, '')
         except Exception as exc:
-            self._node.get_logger().error(f'camera calibration crashed: {exc}')
+            self._node.get_logger().error(
+                f'camera localization crashed: {exc}')
             self._emit_status(f'failed: {exc}')
             self._emit_finished('failed', None, f'exception: {exc}')
-        finally:
-            self._stop_server()
-            self._client = None
 
-    # -- pose validation + sweep -------------------------------------
+    # -- TF + sampling ----------------------------------------------
 
-    def _validate_and_resolve(self, poses_raw: list) -> list:
-        out: list = []
-        for i, p in enumerate(poses_raw, start=1):
-            try:
-                y = float(p['y'])
-                z = float(p['z'])
-            except (KeyError, TypeError, ValueError):
-                self._emit_status(
-                    f'pose {i}: malformed entry {p!r}; skipping')
-                continue
-            comment = str(p.get('comment', ''))
-            if not (SAFE_Y_MIN <= y <= SAFE_Y_MAX
-                    and SAFE_Z_MIN <= z <= SAFE_Z_MAX):
-                self._emit_status(
-                    f'pose {i} ({y:.3f}, {z:.3f}): out of safe envelope '
-                    f'[{SAFE_Y_MIN}, {SAFE_Y_MAX}] x '
-                    f'[{SAFE_Z_MIN}, {SAFE_Z_MAX}]; skipping')
-                continue
-            ik = self._runner._call_ik(y, z)  # noqa: SLF001
-            if ik is None:
-                self._emit_status(
-                    f'pose {i} ({y:.3f}, {z:.3f}): IK failed; skipping')
-                continue
-            out.append(_PoseEntry(y=y, z=z,
-                                  theta_right=ik[0], theta_left=ik[1],
-                                  comment=comment))
-        self._emit_status(
-            f'{len(out)}/{len(poses_raw)} poses validated and IK-resolved')
-        return out
-
-    def _sweep_poses(self, poses: list, trajectory_duration: float,
-                     settle_time: float, detection_timeout_s: float,
-                     detection_max_age_s: float) -> int:
-        """Drive the arm through each pose; sample at each. Returns
-        the count of successfully captured samples."""
-        successful = 0
-        total = len(poses)
-        for idx, p in enumerate(poses, start=1):
-            if self._runner._stop_event.is_set():  # noqa: SLF001
-                return successful
-            self._emit_status(
-                f'calibrating: pose {idx}/{total} '
-                f'({p.y:.3f}, {p.z:.3f}) {p.comment}')
-            ok = self._runner._send_and_wait(  # noqa: SLF001
-                self._runner._default_joint_names,  # noqa: SLF001
-                p.theta_right, p.theta_left, trajectory_duration)
-            if not ok:
-                if self._runner._stop_event.is_set():  # noqa: SLF001
-                    return successful
-                self._runner._failure_reason = (  # noqa: SLF001
-                    f'motion failed at pose {idx} '
-                    f'({p.y:.3f}, {p.z:.3f})')
-                self._emit_status(
-                    f'aborting: {self._runner._failure_reason}')  # noqa: SLF001
-                self._runner._stop_event.set()  # noqa: SLF001
-                return successful
-            # Settle in pieces so Cancel responds quickly.
-            settled = self._sleep_with_cancel(settle_time)
-            if not settled:
-                return successful
-            # Wait for a fresh tag detection before sampling. easy_handeye2
-            # itself reads the same TF buffer when we call take_sample(),
-            # but we explicitly gate on freshness here so we can warn-
-            # and-skip a pose where the tag isn't visible (rather than
-            # have easy_handeye2 silently sample a stale TF).
-            if not self._wait_fresh_detection(
-                    detection_timeout_s, detection_max_age_s):
-                self._emit_status(
-                    f'pose {idx}: tag not visible; skipping sample')
-                self._emit_progress(idx, total)
-                continue
-            sample_count_before = self._safe_sample_count()
-            try:
-                self._client.take_sample()
-            except Exception as exc:
-                self._emit_status(
-                    f'pose {idx}: take_sample raised {exc}; skipping')
-                self._emit_progress(idx, total)
-                continue
-            sample_count_after = self._safe_sample_count()
-            if sample_count_after <= sample_count_before:
-                self._emit_status(
-                    f'pose {idx}: sample not registered '
-                    f'(count {sample_count_before} -> {sample_count_after}); '
-                    f'skipping')
-                self._emit_progress(idx, total)
-                continue
-            successful += 1
-            self._emit_progress(idx, total)
-        return successful
-
-    def _safe_sample_count(self) -> int:
+    def _lookup_static(self, parent: str, child: str):
+        """One-shot TF lookup, no wait. Returns the TransformStamped or None."""
         try:
-            samples = self._client.get_sample_list()
-            return len(samples.samples)
+            return self._runner._tf_buffer.lookup_transform(  # noqa: SLF001
+                parent, child, RclpyTime(),
+                timeout=RclpyDuration(seconds=0.5))
         except Exception:
-            return -1
+            return None
 
     def _wait_fresh_detection(self, timeout_s: float,
                               max_age_s: float) -> bool:
-        """Block up to ``timeout_s`` for the apriltag base->ee TF to
-        become fresh. Mirrors the freshness-by-stamp-progression check
-        the runner uses in ``_wait_for_continue``: the detection is
-        fresh while the most recent stamp change happened within
-        ``max_age_s`` monotonic seconds, regardless of clock topology.
-
-        We use the apriltag tag-to-tag TF (apriltag_marker_base ->
-        apriltag_marker_ee) as the freshness probe because that's the
-        signal that says "we're seeing both tags right now". easy_handeye2
-        will subsequently sample its own TF chain when ``take_sample()``
-        is called.
+        """Block up to ``timeout_s`` for the camera->base-tag TF to
+        become fresh. Freshness is tracked by stamp progression so the
+        check is independent of the node's clock topology.
         """
         deadline = time.monotonic() + timeout_s
         last_stamp_ns: Optional[int] = None
@@ -378,7 +229,7 @@ class CameraCalibrationRunner:
         while time.monotonic() < deadline:
             if self._runner._stop_event.is_set():  # noqa: SLF001
                 return False
-            tf = self._lookup_apriltag_tf()
+            tf = self._lookup_static(CAMERA_FRAME, DETECTED_TAG_FRAME)
             now_mono = time.monotonic()
             if tf is None:
                 time.sleep(0.05)
@@ -394,93 +245,229 @@ class CameraCalibrationRunner:
             time.sleep(0.05)
         return False
 
-    def _lookup_apriltag_tf(self):
-        """Look up apriltag_marker_base -> apriltag_marker_ee, no wait.
+    def _collect_samples(self, n: int, interval_s: float) -> list:
+        """Take up to ``n`` samples of T(robot_base -> camera).
 
-        Uses the runner's TF buffer directly so we don't need to fake a
-        RunRequest. Returns the TransformStamped or None.
+        Each sample composes URDF (robot_base -> urdf_tag) with
+        inv(apriltag_ros (camera -> detected_tag)) so the produced
+        list is directly the per-sample camera-in-base pose. Skipped
+        samples (no fresh detection at that tick) are not added; the
+        caller checks the count against MIN_SUCCESSFUL_SAMPLES.
         """
-        from rclpy.time import Time as RclpyTime
-        from rclpy.duration import Duration as RclpyDuration
-        try:
-            return self._runner._tf_buffer.lookup_transform(  # noqa: SLF001
-                'apriltag_marker_base', 'apriltag_marker_ee',
-                RclpyTime(),
-                timeout=RclpyDuration(seconds=0.0))
-        except Exception:
-            return None
+        samples: list = []
+        for i in range(n):
+            if self._runner._stop_event.is_set():  # noqa: SLF001
+                break
+            tf_urdf = self._lookup_static(ROBOT_BASE_FRAME, URDF_TAG_FRAME)
+            tf_cam = self._lookup_static(CAMERA_FRAME, DETECTED_TAG_FRAME)
+            self._emit_progress(i + 1, n)
+            if tf_urdf is None or tf_cam is None:
+                self._emit_status(
+                    f'sample {i + 1}: missing TF, skipping')
+            else:
+                samples.append(_compose_sample(tf_urdf, tf_cam))
+            if i < n - 1:
+                if self._runner._stop_event.wait(interval_s):  # noqa: SLF001
+                    break
+        return samples
 
-    def _sleep_with_cancel(self, seconds: float) -> bool:
-        if seconds <= 0:
-            return True
-        return not self._runner._stop_event.wait(seconds)  # noqa: SLF001
+    def _urdf_camera_pose(self):
+        """T(robot_base -> camera_optical_frame) via the URDF chain.
 
-    # -- subprocess + YAML -------------------------------------------
+        Goes through whatever static joints connect the arm root to
+        the camera frame in the URDF (typically robot_base -> base_link
+        -> camera_link -> camera_color_frame -> camera_color_optical_frame).
+        Returns (xyz, quat) or (None, None) if the chain is broken.
+        """
+        tf = self._lookup_static(ROBOT_BASE_FRAME, CAMERA_FRAME)
+        if tf is None:
+            return None, None
+        return _xyz_quat_from_transform(tf.transform)
 
-    def _load_yaml(self, path: Path) -> dict:
-        with path.open() as f:
-            return yaml.safe_load(f) or {}
+    # -- output ------------------------------------------------------
 
-    def _start_server(self) -> bool:
-        if self._server_proc is not None and self._server_proc.poll() is None:
-            return True
-        # We go through ros2 launch (not ros2 run) because easy_handeye2
-        # declares its parameters with type-only descriptors (no
-        # default), which rclpy on Jazzy rejects unless the override
-        # arrives via a parameter dict / params YAML. ros2 launch
-        # converts our dict into the right form; ros2 run --ros-args
-        # -p ... fails with PARAMETER_NOT_SET.
-        cmd = [
-            'ros2', 'launch', 'volcaniarm_calibration',
-            'handeye_server_only.launch.py',
-            f'name:={HANDEYE_NAME}',
-            f'calibration_type:={HANDEYE_CALIBRATION_TYPE}',
-            f'tracking_base_frame:={HANDEYE_TRACKING_BASE_FRAME}',
-            f'tracking_marker_frame:={HANDEYE_TRACKING_MARKER_FRAME}',
-            f'robot_base_frame:={HANDEYE_ROBOT_BASE_FRAME}',
-            f'robot_effector_frame:={HANDEYE_ROBOT_EFFECTOR_FRAME}',
+    def _log_result_block(self, result: dict):
+        m = result['measured']
+        s = result['stddev']
+        lines = [
+            'measured: xyz=({:.4f}, {:.4f}, {:.4f}) rpy_deg=({:.2f}, {:.2f}, {:.2f}) quat=({:.4f}, {:.4f}, {:.4f}, {:.4f})'.format(
+                *m['xyz'], *m['rpy_deg'], *m['quat']),
+            'stddev:   xyz=({:.4f}, {:.4f}, {:.4f}) rpy_deg=({:.2f}, {:.2f}, {:.2f}) [over {} samples]'.format(
+                *s['xyz'], *s['rpy_deg'], s['samples']),
         ]
-        try:
-            self._emit_status('spawning easy_handeye2 server')
-            # Capture stderr so a startup failure surfaces in the
-            # dashboard log (otherwise we get the unhelpful 'exited
-            # during startup' with no detail).
-            self._server_proc = subprocess.Popen(
-                cmd, stderr=subprocess.PIPE)
-        except OSError as exc:
-            self._emit_status(f'spawn failed: {exc}')
-            return False
-        # Give the server a head start so HandeyeClient's wait_for_service
-        # doesn't busy-wait against a not-yet-listening socket.
-        time.sleep(SERVER_STARTUP_GRACE_S)
-        if self._server_proc.poll() is not None:
-            err = ''
-            try:
-                _, err_bytes = self._server_proc.communicate(timeout=1.0)
-                err = err_bytes.decode('utf-8', errors='replace').strip()
-            except Exception:
-                pass
-            self._emit_status(
-                'handeye_server exited during startup'
-                + (f': {err.splitlines()[-1] if err else "(no stderr)"}'))
-            if err:
-                self._node.get_logger().error(
-                    f'handeye_server stderr:\n{err}')
-            self._server_proc = None
-            return False
-        return True
+        if result['urdf_expected'] is not None:
+            u = result['urdf_expected']
+            d = result['delta']
+            lines.append(
+                'urdf:     xyz=({:.4f}, {:.4f}, {:.4f}) rpy_deg=({:.2f}, {:.2f}, {:.2f})'.format(
+                    *u['xyz'], *u['rpy_deg']))
+            lines.append(
+                'delta:    xyz=({:.4f}, {:.4f}, {:.4f}) rpy_deg=({:.2f}, {:.2f}, {:.2f})'.format(
+                    *d['xyz'], *d['rpy_deg']))
+        else:
+            lines.append('urdf:     not available (chain broken)')
+        for line in lines:
+            self._emit_status(line)
 
-    def _stop_server(self):
-        if self._server_proc is None:
-            return
-        try:
-            self._server_proc.terminate()
-            try:
-                self._server_proc.wait(timeout=3.0)
-            except subprocess.TimeoutExpired:
-                self._server_proc.kill()
-                self._server_proc.wait(timeout=2.0)
-        except OSError:
-            pass
-        finally:
-            self._server_proc = None
+    def _save_yaml(self, result: dict) -> Path:
+        now = datetime.now()
+        run_dir = (DEFAULT_DATA_ROOT / 'camera_localization'
+                   / now.strftime('%Y-%m-%d')
+                   / now.strftime('%H-%M-%S'))
+        run_dir.mkdir(parents=True, exist_ok=True)
+        path = run_dir / 'result.yaml'
+        with path.open('w') as f:
+            yaml.safe_dump(result, f, sort_keys=False)
+        return path
+
+
+# -- math helpers ----------------------------------------------------
+
+def _xyz_quat_from_transform(t):
+    return (
+        np.array([t.translation.x, t.translation.y, t.translation.z]),
+        np.array([t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w]),
+    )
+
+
+def _quat_to_matrix(q):
+    x, y, z, w = q
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w),     2 * (x * z + y * w)],
+        [2 * (x * y + z * w),     1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w),     2 * (y * z + x * w),     1 - 2 * (x * x + y * y)],
+    ])
+
+
+def _matrix_to_quat(R):
+    # Standard conversion. R is 3x3 rotation.
+    t = R.trace()
+    if t > 0:
+        s = 0.5 / math.sqrt(t + 1.0)
+        return np.array([
+            (R[2, 1] - R[1, 2]) * s,
+            (R[0, 2] - R[2, 0]) * s,
+            (R[1, 0] - R[0, 1]) * s,
+            0.25 / s,
+        ])
+    if R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+        s = 2.0 * math.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
+        return np.array([
+            0.25 * s,
+            (R[0, 1] + R[1, 0]) / s,
+            (R[0, 2] + R[2, 0]) / s,
+            (R[2, 1] - R[1, 2]) / s,
+        ])
+    if R[1, 1] > R[2, 2]:
+        s = 2.0 * math.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
+        return np.array([
+            (R[0, 1] + R[1, 0]) / s,
+            0.25 * s,
+            (R[1, 2] + R[2, 1]) / s,
+            (R[0, 2] - R[2, 0]) / s,
+        ])
+    s = 2.0 * math.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
+    return np.array([
+        (R[0, 2] + R[2, 0]) / s,
+        (R[1, 2] + R[2, 1]) / s,
+        0.25 * s,
+        (R[1, 0] - R[0, 1]) / s,
+    ])
+
+
+def _quat_to_rpy(q):
+    """ZYX intrinsic Euler (the ROS convention)."""
+    x, y, z, w = q
+    sinr_cosp = 2 * (w * x + y * z)
+    cosr_cosp = 1 - 2 * (x * x + y * y)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+    sinp = 2 * (w * y - z * x)
+    if abs(sinp) >= 1:
+        pitch = math.copysign(math.pi / 2, sinp)
+    else:
+        pitch = math.asin(sinp)
+    siny_cosp = 2 * (w * z + x * y)
+    cosy_cosp = 1 - 2 * (y * y + z * z)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+    return np.array([roll, pitch, yaw])
+
+
+def _se3(xyz, quat):
+    M = np.eye(4)
+    M[:3, :3] = _quat_to_matrix(quat)
+    M[:3, 3] = xyz
+    return M
+
+
+def _se3_inv(M):
+    R = M[:3, :3]
+    t = M[:3, 3]
+    out = np.eye(4)
+    out[:3, :3] = R.T
+    out[:3, 3] = -R.T @ t
+    return out
+
+
+def _se3_to_xyz_quat(M):
+    return M[:3, 3].copy(), _matrix_to_quat(M[:3, :3])
+
+
+def _compose_sample(tf_urdf, tf_cam):
+    """T(robot_base -> camera) = T(robot_base -> urdf_tag) @ inv(T(camera -> detected_tag)).
+
+    The urdf_tag and detected_tag frames are assumed to coincide
+    physically (both anchored at the printed tag's centre)."""
+    urdf_xyz, urdf_quat = _xyz_quat_from_transform(tf_urdf.transform)
+    cam_xyz, cam_quat = _xyz_quat_from_transform(tf_cam.transform)
+    M_urdf = _se3(urdf_xyz, urdf_quat)
+    M_cam_to_tag = _se3(cam_xyz, cam_quat)
+    M_base_to_cam = M_urdf @ _se3_inv(M_cam_to_tag)
+    xyz, quat = _se3_to_xyz_quat(M_base_to_cam)
+    return xyz, quat
+
+
+def _average_samples(samples: list):
+    xyzs = np.array([s[0] for s in samples])
+    quats = np.array([s[1] for s in samples])
+    # Sign-align quaternions onto the same hemisphere as the first one
+    # before averaging (q and -q represent the same rotation).
+    pivot = quats[0]
+    for i in range(1, len(quats)):
+        if np.dot(pivot, quats[i]) < 0:
+            quats[i] = -quats[i]
+    mean_xyz = xyzs.mean(axis=0)
+    mean_quat = quats.mean(axis=0)
+    mean_quat = mean_quat / np.linalg.norm(mean_quat)
+    return mean_xyz, mean_quat
+
+
+def _xyz_stddev(samples: list):
+    return np.array([s[0] for s in samples]).std(axis=0)
+
+
+def _rpy_stddev(samples: list):
+    rpys = np.array([_quat_to_rpy(s[1]) for s in samples])
+    return np.degrees(rpys.std(axis=0))
+
+
+def _pose_dict(xyz, quat):
+    rpy = _quat_to_rpy(quat)
+    return {
+        'xyz': [float(v) for v in xyz],
+        'quat': [float(v) for v in quat],
+        'rpy_deg': [float(v) for v in np.degrees(rpy)],
+    }
+
+
+def _delta_dict(measured_xyz, measured_quat, urdf_xyz, urdf_quat):
+    dxyz = measured_xyz - urdf_xyz
+    # Rotation difference: R_delta = R_measured @ R_urdf^T → as RPY.
+    M_meas = _quat_to_matrix(measured_quat)
+    M_urdf = _quat_to_matrix(urdf_quat)
+    R_delta = M_meas @ M_urdf.T
+    quat_delta = _matrix_to_quat(R_delta)
+    rpy_delta = _quat_to_rpy(quat_delta)
+    return {
+        'xyz': [float(v) for v in dxyz],
+        'rpy_deg': [float(v) for v in np.degrees(rpy_delta)],
+    }

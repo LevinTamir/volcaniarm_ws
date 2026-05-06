@@ -10,7 +10,6 @@ ament_python_install_package(${PROJECT_NAME})
 # Install Python executables
 install(PROGRAMS
   src/accuracy_test
-  src/export_calibration
   DESTINATION lib/${PROJECT_NAME}
 )
 

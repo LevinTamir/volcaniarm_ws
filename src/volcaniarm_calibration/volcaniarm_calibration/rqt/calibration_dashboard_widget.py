@@ -59,16 +59,6 @@ from ..runner import (
 
 DEFAULT_OUTPUT_DIR = '~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/data'
 
-# Name passed to easy_handeye2's publish launch. Must match the value
-# the camera-calibration runner uses when sampling, so the publisher
-# reads the .calib file the runner just saved.
-HANDEYE_NAME = 'volcaniarm_calibration'
-# easy_handeye2 stores calibrations at ~/.ros2/easy_handeye2/calibrations/<name>.calib.
-# Mirrored from easy_handeye2/__init__.py: CALIBRATIONS_DIRECTORY.
-HANDEYE_CALIB_PATH = (
-    Path('~/.ros2/easy_handeye2/calibrations').expanduser()
-    / f'{HANDEYE_NAME}.calib')
-
 # Sentinel used until the FK service responds with the actual (y, z)
 # corresponding to theta=(0, 0). Picked to be obviously a placeholder.
 _HOME_FALLBACK = (0.0, 0.5)
@@ -120,15 +110,10 @@ class CalibrationDashboardWidget(QWidget):
         self._last_run_dir: Optional[Path] = None
         self._last_test_name: Optional[str] = None
 
-        # _publish_proc runs easy_handeye2's handeye_publisher, which
-        # broadcasts the saved camera transform so RViz shows the
-        # camera in the right place. Started on demand and on dashboard
-        # startup if a saved calibration exists.
-        self._publish_proc: Optional[subprocess.Popen] = None
-
-        # Automated camera-calibration runner. Composes with the test
-        # runner -- shares its motion / IK / TF primitives and the
-        # _stop_event so a single Cancel halts whichever is active.
+        # Camera-localization runner: derives camera-in-base from one
+        # AprilTag detection and writes a YAML record. Composes with
+        # the test runner -- shares its TF buffer and _stop_event so a
+        # single Cancel halts whichever is active.
         self._cam_runner = CameraCalibrationRunner(self._runner)
         self._cam_runner.status_cb = self._bridge.status.emit
         self._cam_runner.progress_cb = self._bridge.progress.emit
@@ -145,33 +130,21 @@ class CalibrationDashboardWidget(QWidget):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        # Camera alignment: optional pre-test step. The eye-on-base
-        # hand-eye calibration finds T(base -> camera_color_optical),
-        # so RViz can show the camera in the right place relative to
-        # the arm. The test runs themselves don't depend on this TF
-        # (they read base_tag -> ee_tag directly), but the operator
-        # uses RViz to visually confirm the camera setup before
-        # starting tests, so we keep it as an explicit pre-step.
-        align_box = QGroupBox('Camera alignment (easy_handeye2)')
+        # Camera localization: measure where the camera is relative to
+        # the arm base, using one detection of the base AprilTag. No
+        # arm motion, no TF publish (the URDF chain remains the source
+        # of truth). Operator uses this to compare measured-vs-URDF
+        # before / after re-mounting the camera.
+        align_box = QGroupBox('Camera localization')
         align_outer = QVBoxLayout(align_box)
-        self._align_status = QLabel('camera TF: checking...')
+        self._align_status = QLabel('localization: not run yet')
+        self._align_status.setStyleSheet('color: gray;')
         align_outer.addWidget(self._align_status)
-        align_btns = QHBoxLayout()
         self._calibrate_btn = QPushButton('Calibrate camera')
         self._calibrate_btn.setToolTip(
-            'Open easy_handeye2 calibrator. Use only if the camera moved '
-            'since the last calibration; otherwise the saved transform '
-            'is reused.')
-        self._publish_btn = QPushButton('Publish saved TF')
-        self._publish_btn.setToolTip(
-            'Broadcast the saved hand-eye transform so RViz shows the '
-            'camera in the right place. Auto-runs on dashboard startup '
-            'when a saved calibration exists.')
-        self._stop_publish_btn = QPushButton('Stop publishing')
-        align_btns.addWidget(self._calibrate_btn)
-        align_btns.addWidget(self._publish_btn)
-        align_btns.addWidget(self._stop_publish_btn)
-        align_outer.addLayout(align_btns)
+            'Measure the camera pose in robot frame from the base '
+            'AprilTag and log the result. No arm motion.')
+        align_outer.addWidget(self._calibrate_btn)
         layout.addWidget(align_box)
 
         cfg_box = QGroupBox('Test configuration')
@@ -368,20 +341,13 @@ class CalibrationDashboardWidget(QWidget):
         self._cancel_btn.clicked.connect(self._on_cancel_clicked)
         self._move_initial_btn.clicked.connect(self._on_move_initial_clicked)
         self._calibrate_btn.clicked.connect(self._on_calibrate_clicked)
-        self._publish_btn.clicked.connect(self._on_publish_clicked)
-        self._stop_publish_btn.clicked.connect(self._on_stop_publish_clicked)
-        # Poll subprocess liveness so the status label and button
-        # enable-state stay accurate after a process exits on its own
-        # (operator closed the calibrator window, etc.).
+        # Refresh the alignment status label periodically so it picks
+        # up new result.yaml files written between dashboard sessions.
         self._align_timer = QTimer(self)
         self._align_timer.setInterval(2000)
         self._align_timer.timeout.connect(self._refresh_alignment_state)
         self._align_timer.start()
         self._refresh_alignment_state()
-        # Auto-publish on first startup if a saved calibration exists.
-        # Wrapped so it's only attempted once; subsequent connects from
-        # restore_settings won't kick off a second publisher.
-        QTimer.singleShot(0, self._auto_publish_on_startup)
         self._initial_y_home_btn.clicked.connect(
             lambda: self._initial_y.setValue(self._home_fk_y))
         self._initial_z_home_btn.clicked.connect(
@@ -593,157 +559,66 @@ class CalibrationDashboardWidget(QWidget):
     def _on_move_initial_clicked(self):
         self._runner.goto(self._initial_y.value(), self._initial_z.value())
 
-    # -- camera alignment ----------------------------------------
-
-    def _proc_alive(self, proc: Optional[subprocess.Popen]) -> bool:
-        return proc is not None and proc.poll() is None
+    # -- camera localization -------------------------------------
 
     def _refresh_alignment_state(self):
-        """Update the alignment status label and button enables.
+        """Show the path of the most recent localization result, if any.
 
-        Reflects the *result* of any prior calibration (.calib file
-        present?) and the publisher subprocess state. The "in progress"
-        signal during a sweep is driven by the runner's status_cb, not
-        polled here, so this stays purely descriptive of disk state.
+        Pure file-system probe; cheap to run on a 2 s timer. The "in
+        progress" label is driven by the runner's status_cb, not here.
         """
-        if self._publish_proc is not None and not self._proc_alive(self._publish_proc):
-            self._publish_proc = None
-
-        calib_exists = HANDEYE_CALIB_PATH.exists()
-        publishing = self._proc_alive(self._publish_proc)
-        calibrating = self._cam_runner.is_busy()
-
-        if calibrating:
-            text = 'camera TF: calibration in progress'
-            colour = '#c79a3a'
-        elif publishing and calib_exists:
-            text = f'camera TF: publishing ({HANDEYE_CALIB_PATH.name})'
-            colour = '#2e9c4a'
-        elif calib_exists:
-            text = f'camera TF: saved, not publishing ({HANDEYE_CALIB_PATH.name})'
-            colour = '#888888'
+        if self._cam_runner.is_busy():
+            self._align_status.setText('localization: in progress')
+            self._align_status.setStyleSheet('color: #c79a3a;')
+            self._calibrate_btn.setEnabled(False)
+            return
+        latest = self._latest_result_yaml()
+        if latest is not None:
+            self._align_status.setText(
+                f'localization: last result {latest.parent.name} '
+                f'({latest.parent.parent.name})')
+            self._align_status.setStyleSheet('color: #2e9c4a;')
         else:
-            text = 'camera TF: not calibrated yet'
-            colour = '#d04b4b'
-        self._align_status.setText(text)
-        self._align_status.setStyleSheet(f'color: {colour};')
+            self._align_status.setText('localization: not run yet')
+            self._align_status.setStyleSheet('color: gray;')
+        self._calibrate_btn.setEnabled(True)
 
-        self._calibrate_btn.setEnabled(not calibrating)
-        self._publish_btn.setEnabled(calib_exists and not publishing
-                                     and not calibrating)
-        self._stop_publish_btn.setEnabled(publishing)
-
-    def _auto_publish_on_startup(self):
-        if HANDEYE_CALIB_PATH.exists() and not self._proc_alive(self._publish_proc):
-            self._start_publisher()
+    def _latest_result_yaml(self) -> Optional[Path]:
+        root = (Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'
+                     'data/camera_localization').expanduser())
+        if not root.exists():
+            return None
+        candidates = sorted(root.glob('*/*/result.yaml'))
+        return candidates[-1] if candidates else None
 
     @Slot()
     def _on_calibrate_clicked(self):
         if self._cam_runner.is_busy():
             return
-        # The auto-calibration drives the arm itself. Stop the
-        # publisher first so its TF doesn't fight the handeye_server's
-        # transforms during sampling. We restart it on completion.
-        self._stop_publisher()
-        yaml_path = self._calibration_poses_path()
-        if not yaml_path.exists():
-            self._log_msg(
-                f'calibration poses YAML not found at {yaml_path}; '
-                f'cannot start auto-calibration')
-            return
-        if self._cam_runner.request(yaml_path):
-            self._log_msg(
-                f'auto-calibration starting (poses: {yaml_path.name})')
+        if self._cam_runner.request():
+            self._log_msg('camera localization: starting')
         self._refresh_alignment_state()
-
-    def _calibration_poses_path(self) -> Path:
-        """Resolve the calibration_poses.yaml path.
-
-        Prefer the installed share dir (production install). Fall back
-        to the source tree, since symlink-install of share/ only
-        symlinks the directory; new files added after install need a
-        rebuild to appear there.
-        """
-        try:
-            share = Path(get_package_share_directory('volcaniarm_calibration'))
-            installed = share / 'config' / 'calibration_poses.yaml'
-            if installed.exists():
-                return installed
-        except Exception:
-            pass
-        return (Path(__file__).resolve().parents[2]
-                / 'config' / 'calibration_poses.yaml')
-
-    @Slot()
-    def _on_publish_clicked(self):
-        if not HANDEYE_CALIB_PATH.exists():
-            self._log_msg(
-                f'no saved calibration at {HANDEYE_CALIB_PATH}; '
-                f'run Calibrate camera first')
-            return
-        self._start_publisher()
-
-    def _start_publisher(self):
-        if self._proc_alive(self._publish_proc):
-            return
-        cmd = [
-            'ros2', 'launch', 'easy_handeye2', 'publish.launch.py',
-            f'name:={HANDEYE_NAME}',
-        ]
-        try:
-            self._publish_proc = subprocess.Popen(cmd)
-            self._log_msg('publishing saved camera TF')
-        except OSError as exc:
-            self._log_msg(f'publish launch failed: {exc}')
-        self._refresh_alignment_state()
-
-    @Slot()
-    def _on_stop_publish_clicked(self):
-        self._stop_publisher()
-        self._refresh_alignment_state()
-
-    def _stop_publisher(self):
-        if self._publish_proc is None:
-            return
-        try:
-            self._publish_proc.terminate()
-            try:
-                self._publish_proc.wait(timeout=3.0)
-            except subprocess.TimeoutExpired:
-                self._publish_proc.kill()
-                self._publish_proc.wait(timeout=2.0)
-            self._log_msg('stopped camera TF publisher')
-        except OSError as exc:
-            self._log_msg(f'stop publisher failed: {exc}')
-        finally:
-            self._publish_proc = None
 
     @Slot(str, str, str)
-    def _on_camera_calib_finished(self, status: str, calib_path: str,
+    def _on_camera_calib_finished(self, status: str, result_path: str,
                                   reason: str):
         """Slot for CameraCalibrationRunner.finished_cb.
 
-        On success: log + auto-(re)start the publisher so RViz picks
-        up the new TF immediately. On failure / cancel: surface the
-        reason and leave the publisher down (the operator may want to
-        retry, and re-publishing a stale calibration after a failed
-        re-calibration would be misleading).
+        Just logs the outcome and refreshes the alignment status; no
+        TF publisher to start (the URDF chain stays the source of
+        truth).
         """
         if status == 'completed':
-            self._log_msg(f'camera calibration completed: {calib_path}')
-            self._status_label.setText('camera calibration completed')
-            if calib_path and Path(calib_path).exists():
-                self._start_publisher()
+            self._log_msg(f'camera localization saved: {result_path}')
+            self._status_label.setText('camera localization completed')
         elif status == 'canceled':
-            self._log_msg('camera calibration canceled')
-            self._status_label.setText('camera calibration canceled')
+            self._log_msg('camera localization canceled')
+            self._status_label.setText('camera localization canceled')
         else:
-            text = f'camera calibration failed: {reason}' if reason else \
-                   'camera calibration failed'
+            text = (f'camera localization failed: {reason}' if reason
+                    else 'camera localization failed')
             self._log_msg(text)
             self._status_label.setText(text)
-        # Refresh the alignment label / button enables now that the
-        # subprocess is down and the .calib file may exist.
         self._refresh_alignment_state()
 
     # -- runner-side slots ---------------------------------------
@@ -899,7 +774,6 @@ class CalibrationDashboardWidget(QWidget):
 
     def shutdown(self):
         self._align_timer.stop()
-        self._stop_publisher()
         self._cam_runner.shutdown()
         self._runner.shutdown()
 
