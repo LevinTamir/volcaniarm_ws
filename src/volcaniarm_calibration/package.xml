@@ -22,6 +22,9 @@
   <depend>rqt_gui_py</depend>
   <depend>python3-pyqt5</depend>
   <depend>python3-yaml</depend>
+  <depend>python3-pandas</depend>
+  <depend>python3-matplotlib</depend>
+  <depend>python3-numpy</depend>
 
   <exec_depend>apriltag_ros</exec_depend>
   <exec_depend>easy_handeye2</exec_depend>
