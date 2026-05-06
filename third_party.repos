@@ -5,8 +5,8 @@ repositories:
     version: a469a9d
   src/easy_handeye2:
     type: git
-    url: https://github.com/marcoesposito1988/easy_handeye2.git
-    version: b42cae6
+    url: git@github.com:LevinTamir/easy_handeye2.git
+    version: b5a8a7d
   src/onnxruntime_vendor:
     type: git
     url: git@github.com:LevinTamir/onnxruntime_vendor.git
