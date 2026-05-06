@@ -52,7 +52,7 @@
        Y-Z residuals. The mount roll keeps the printed bracket aimed
        roughly upward at the camera at typical operating poses. -->
   <joint name="apriltag_ee_mount_joint" type="fixed">
-    <origin xyz="0.1 0 0" rpy="${-pi/3.4} 0 0" />
+    <origin xyz="0.02 0 0" rpy="${-pi/3.4} 0 0" />
     <parent link="right_arm_tip_link" />
     <child link="apriltag_ee_mount_link" />
   </joint>
@@ -108,7 +108,7 @@
        TODO(thesis): replace with the measured mount offset once the
        printed bracket is fitted. -->
   <joint name="apriltag_base_mount_joint" type="fixed">
-    <origin xyz="0.65 0.0 0.05" rpy="0 0 0" />
+    <origin xyz="0.65 0.0 -0.03" rpy="0 0 0" />
     <parent link="volcaniarm_base_link" />
     <child link="apriltag_base_mount_link" />
   </joint>
