@@ -64,7 +64,7 @@
   <joint name="apriltag_ee_joint" type="fixed">
     <!-- Tag face pointing in +X. The DAE quad face is on the Z plane,
          so rotate 90 deg around Y to face +X. -->
-    <origin xyz="0 0 0" rpy="0 ${pi/2} 0" />
+    <origin xyz="0.02 0 0" rpy="0 ${pi/2} 0" />
     <parent link="apriltag_ee_mount_link" />
     <child link="apriltag_ee_link" />
   </joint>
