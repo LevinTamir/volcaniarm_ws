@@ -27,34 +27,103 @@ def _load_camera_pose_config():
     Malformed file gets a single warning and we fall back to URDF
     defaults rather than crashing the launch.
 
-    Schema (camera-off-robot calibration; parent_frame must be world,
-    child_frame must be camera_link, since those are the URDF's
-    parameterised calibration_camera_joint endpoints):
-        parent_frame: world
-        child_frame: camera_link
-        xyz: [x, y, z]
-        rpy: [roll, pitch, yaw]   # radians, used for the URDF override
-        quat: [qx, qy, qz, qw]    # informational
+    Schema:
+        mode:         calibration_stand | on_robot_mount
+        parent_frame: world (stand) | camera_mount_rev_link (on_robot)
+        child_frame:  camera_link
+        xyz:          [x, y, z]
+        rpy:          [roll, pitch, yaw]   # radians
+        quat:         [qx, qy, qz, qw]     # informational
     """
     if not _CAMERA_POSE_CONFIG.exists():
         return None
     try:
         with _CAMERA_POSE_CONFIG.open() as f:
             cfg = yaml.safe_load(f) or {}
-        for key in ('parent_frame', 'child_frame', 'xyz', 'rpy'):
+        for key in ('mode', 'parent_frame', 'child_frame', 'xyz', 'rpy'):
             if key not in cfg:
                 raise ValueError(f'missing key {key!r}')
-        if cfg['parent_frame'] != 'world' \
-                or cfg['child_frame'] != 'camera_link':
+        if cfg['mode'] not in ('calibration_stand', 'on_robot_mount'):
             raise ValueError(
-                f'parent/child must be world/camera_link, '
-                f'got {cfg["parent_frame"]!r}/{cfg["child_frame"]!r}')
+                f'mode must be calibration_stand or on_robot_mount, '
+                f'got {cfg["mode"]!r}')
+        if cfg['child_frame'] != 'camera_link':
+            raise ValueError(
+                f'child_frame must be camera_link, got {cfg["child_frame"]!r}')
+        expected_parent = ('world' if cfg['mode'] == 'calibration_stand'
+                           else 'camera_mount_rev_link')
+        if cfg['parent_frame'] != expected_parent:
+            raise ValueError(
+                f'parent_frame must be {expected_parent} for mode '
+                f'{cfg["mode"]}, got {cfg["parent_frame"]!r}')
         if len(cfg['xyz']) != 3 or len(cfg['rpy']) != 3:
             raise ValueError('xyz must have 3 values and rpy must have 3')
         return cfg
     except Exception as exc:
         print(f'[real_bringup] WARNING: ignoring {_CAMERA_POSE_CONFIG} ({exc})')
         return None
+
+
+def _camera_xacro_defaults() -> dict:
+    """Resolve xacro arg defaults for both `calibration_camera_*` (stand
+    mount) and `camera_*` (on-robot mount) arg sets.
+
+    The persisted camera_pose.yaml carries a `mode` field stamping which
+    arg set its xyz/rpy belong in. We always emit *both* sets: the slot
+    matching the YAML's mode receives the calibrated values; the other
+    slot keeps URDF defaults. The xacro's `mode` arg picks which set
+    actually drives the published TF, so a mismatch is structurally
+    impossible.
+    """
+    # Stand defaults: from volcaniarm_realsense.xacro xacro:arg blocks.
+    cal_cam = {
+        'calibration_camera_x':     '-1.5',
+        'calibration_camera_y':      '0.0',
+        'calibration_camera_z':      '0.6',
+        'calibration_camera_roll':   '0.0',
+        'calibration_camera_pitch':  '0.0',
+        'calibration_camera_yaw':    '0.0',
+    }
+    # On-robot defaults: from volcaniarm.urdf.xacro xacro:arg blocks.
+    on_robot_cam = {
+        'camera_x':     '0.0160004150359285',
+        'camera_y':     '0.0',
+        'camera_z':     '0.0',
+        'camera_roll':  '3.14159',
+        'camera_pitch': '0.0',
+        'camera_yaw':   '0.0',
+    }
+
+    cfg = _load_camera_pose_config()
+    if cfg is None:
+        return {**cal_cam, **on_robot_cam}
+
+    xyz = cfg['xyz']
+    rpy = cfg['rpy']
+    print(f'[real_bringup] applying camera_pose.yaml '
+          f'(mode={cfg["mode"]}, xyz={xyz}, rpy={rpy}, last_updated '
+          f'{cfg.get("last_updated", "?")})')
+
+    if cfg['mode'] == 'calibration_stand':
+        cal_cam = {
+            'calibration_camera_x':     f'{xyz[0]:.9f}',
+            'calibration_camera_y':     f'{xyz[1]:.9f}',
+            'calibration_camera_z':     f'{xyz[2]:.9f}',
+            'calibration_camera_roll':  f'{rpy[0]:.9f}',
+            'calibration_camera_pitch': f'{rpy[1]:.9f}',
+            'calibration_camera_yaw':   f'{rpy[2]:.9f}',
+        }
+    else:  # on_robot_mount
+        on_robot_cam = {
+            'camera_x':     f'{xyz[0]:.9f}',
+            'camera_y':     f'{xyz[1]:.9f}',
+            'camera_z':     f'{xyz[2]:.9f}',
+            'camera_roll':  f'{rpy[0]:.9f}',
+            'camera_pitch': f'{rpy[1]:.9f}',
+            'camera_yaw':   f'{rpy[2]:.9f}',
+        }
+
+    return {**cal_cam, **on_robot_cam}
 
 
 def _build_controller_manager(context, robot_description_content):
@@ -117,20 +186,40 @@ def generate_launch_description():
         description="Which controller(s) to load",
     )
 
+    # Physical configuration of the camera. Decoupled from `calibration`:
+    #   work  -> camera mounted on the robot (URDF parent: camera_mount_rev_link)
+    #   tests -> camera on a stand in front of the robot (URDF parent: world)
+    mode_arg = DeclareLaunchArgument(
+        "mode",
+        default_value="work",
+        choices=["work", "tests"],
+        description="Physical camera configuration. 'work' mounts the "
+                    "camera on the robot (default); 'tests' puts the "
+                    "camera on a stand in front of the robot for "
+                    "accuracy/repeatability tests.",
+    )
+
+    # The (mode, calibration) tuple covers four launch configurations:
+    #   mode=work, calibration=false   regular ops, no markers, no dashboard
+    #   mode=work, calibration=true    on-robot camera, EE marker, calibrate camera_joint
+    #   mode=tests, calibration=false  stand camera, both markers, full test runner
+    #   mode=tests, calibration=true   stand camera, EE marker, calibrate calibration_camera_joint
     calibration_arg = DeclareLaunchArgument(
         "calibration",
         default_value="false",
-        description="Add AprilTag links to the URDF and launch the calibration "
-                    "dashboard (assumes physical AprilTags are mounted on the arm)",
+        choices=["true", "false"],
+        description="Open the calibration dashboard with only the camera-"
+                    "pose calibration UI exposed. With mode=tests this "
+                    "skips the test runner widgets; with mode=work it "
+                    "enables the on-robot eye-in-hand calibration.",
     )
 
-    # Pointcloud is off by default since it adds USB bandwidth + CPU
-    # load and isn't needed for calibration (RGB only) or RL policy
-    # control. Enable when running 3D perception (e.g. weed detector)
-    # or when sim/real parity matters for the test you're running.
+    # Pointcloud is on by default for parity with sim and so RViz / the
+    # weed detector see depth without needing an extra arg. Disable on
+    # bandwidth-constrained setups with pointcloud:=false.
     pointcloud_arg = DeclareLaunchArgument(
         "pointcloud",
-        default_value="false",
+        default_value="true",
         choices=["true", "false"],
         description="Publish /camera/depth/color/points from the RealSense driver",
     )
@@ -146,59 +235,49 @@ def generate_launch_description():
     )
 
     # camera_pose.yaml (written by the dashboard's Calibrate camera
-    # button in calibration mode) holds the off-robot stand pose:
-    # world -> camera_link. Its xyz/rpy are forwarded to the URDF's
-    # parameterised calibration_camera_joint via xacro args. If the file
-    # is missing or malformed, the URDF defaults apply (stand 1.5 m in
-    # front of the arm, 0.6 m above floor); rename / delete the YAML to
-    # revert. Note: world_to_base has yaw=pi, so "in front of the arm"
-    # is world x=-1.5, not +1.5.
-    _camera_cfg_at_launch = _load_camera_pose_config()
-    if _camera_cfg_at_launch is not None:
-        _cam_xyz = _camera_cfg_at_launch['xyz']
-        _cam_rpy = _camera_cfg_at_launch['rpy']
-        print(f'[real_bringup] applying camera_pose.yaml '
-              f'(xyz={_cam_xyz}, rpy={_cam_rpy}, last_updated '
-              f'{_camera_cfg_at_launch.get("last_updated", "?")})')
-        _cal_cam_defaults = {
-            'calibration_camera_x':     f'{_cam_xyz[0]:.9f}',
-            'calibration_camera_y':     f'{_cam_xyz[1]:.9f}',
-            'calibration_camera_z':     f'{_cam_xyz[2]:.9f}',
-            'calibration_camera_roll':  f'{_cam_rpy[0]:.9f}',
-            'calibration_camera_pitch': f'{_cam_rpy[1]:.9f}',
-            'calibration_camera_yaw':   f'{_cam_rpy[2]:.9f}',
-        }
-    else:
-        # URDF defaults from volcaniarm_realsense.xacro xacro:arg blocks
-        _cal_cam_defaults = {
-            'calibration_camera_x':     '-1.6',
-            'calibration_camera_y':     '0.0',
-            'calibration_camera_z':     '0.6',
-            'calibration_camera_roll':  '0.0',
-            'calibration_camera_pitch': '0.0',
-            'calibration_camera_yaw':   '0.0',
-        }
+    # button) holds either the off-robot stand pose (parent: world) or
+    # the on-robot mount pose (parent: camera_mount_rev_link), keyed by
+    # `mode`. Both arg sets are emitted; the YAML's mode-stamp decides
+    # which set receives the calibrated values, and the URDF's `mode`
+    # arg decides which set drives the published TF.
+    _cam_defaults = _camera_xacro_defaults()
 
     calibration_camera_x_arg = DeclareLaunchArgument(
         "calibration_camera_x",
-        default_value=_cal_cam_defaults['calibration_camera_x'],
+        default_value=_cam_defaults['calibration_camera_x'],
         description="calibration_camera_joint origin x in world frame "
-                    "(off-robot stand pose; from camera_pose.yaml if present)")
+                    "(off-robot stand pose; from camera_pose.yaml if mode matches)")
     calibration_camera_y_arg = DeclareLaunchArgument(
         "calibration_camera_y",
-        default_value=_cal_cam_defaults['calibration_camera_y'])
+        default_value=_cam_defaults['calibration_camera_y'])
     calibration_camera_z_arg = DeclareLaunchArgument(
         "calibration_camera_z",
-        default_value=_cal_cam_defaults['calibration_camera_z'])
+        default_value=_cam_defaults['calibration_camera_z'])
     calibration_camera_roll_arg = DeclareLaunchArgument(
         "calibration_camera_roll",
-        default_value=_cal_cam_defaults['calibration_camera_roll'])
+        default_value=_cam_defaults['calibration_camera_roll'])
     calibration_camera_pitch_arg = DeclareLaunchArgument(
         "calibration_camera_pitch",
-        default_value=_cal_cam_defaults['calibration_camera_pitch'])
+        default_value=_cam_defaults['calibration_camera_pitch'])
     calibration_camera_yaw_arg = DeclareLaunchArgument(
         "calibration_camera_yaw",
-        default_value=_cal_cam_defaults['calibration_camera_yaw'])
+        default_value=_cam_defaults['calibration_camera_yaw'])
+
+    camera_x_arg = DeclareLaunchArgument(
+        "camera_x",
+        default_value=_cam_defaults['camera_x'],
+        description="On-robot camera_joint origin x in camera_mount_rev_link "
+                    "(from camera_pose.yaml if mode=on_robot_mount)")
+    camera_y_arg = DeclareLaunchArgument(
+        "camera_y", default_value=_cam_defaults['camera_y'])
+    camera_z_arg = DeclareLaunchArgument(
+        "camera_z", default_value=_cam_defaults['camera_z'])
+    camera_roll_arg = DeclareLaunchArgument(
+        "camera_roll", default_value=_cam_defaults['camera_roll'])
+    camera_pitch_arg = DeclareLaunchArgument(
+        "camera_pitch", default_value=_cam_defaults['camera_pitch'])
+    camera_yaw_arg = DeclareLaunchArgument(
+        "camera_yaw", default_value=_cam_defaults['camera_yaw'])
 
     is_traj_active = IfCondition(
         PythonExpression(
@@ -217,14 +296,17 @@ def generate_launch_description():
     volcaniarm_calibration_share = get_package_share_directory("volcaniarm_calibration")
 
     # Robot description with real hardware (use_sim=false). The
-    # `calibration` arg toggles the AprilTag link block in the URDF;
-    # `auto_home` toggles limit-switch homing in the hardware interface.
+    # `mode` arg picks where the camera is parented (world for tests,
+    # camera_mount_rev_link for work). `calibration` controls the marker
+    # mounting + calibration dashboard scope. `auto_home` toggles
+    # limit-switch homing in the hardware interface.
     robot_description_content = ParameterValue(
         Command([
             "xacro ",
             os.path.join(volcaniarm_description_share, "urdf", "volcaniarm.urdf.xacro"),
             " use_sim:=false",
             " auto_home:=", LaunchConfiguration("auto_home"),
+            " mode:=", LaunchConfiguration("mode"),
             " calibration:=", LaunchConfiguration("calibration"),
             " tag_size:=", LaunchConfiguration("tag_size"),
             " calibration_camera_x:=", LaunchConfiguration("calibration_camera_x"),
@@ -233,6 +315,12 @@ def generate_launch_description():
             " calibration_camera_roll:=", LaunchConfiguration("calibration_camera_roll"),
             " calibration_camera_pitch:=", LaunchConfiguration("calibration_camera_pitch"),
             " calibration_camera_yaw:=", LaunchConfiguration("calibration_camera_yaw"),
+            " camera_x:=", LaunchConfiguration("camera_x"),
+            " camera_y:=", LaunchConfiguration("camera_y"),
+            " camera_z:=", LaunchConfiguration("camera_z"),
+            " camera_roll:=", LaunchConfiguration("camera_roll"),
+            " camera_pitch:=", LaunchConfiguration("camera_pitch"),
+            " camera_yaw:=", LaunchConfiguration("camera_yaw"),
         ]),
         value_type=str,
     )
@@ -283,24 +371,40 @@ def generate_launch_description():
         condition=is_all,
     )
 
-    # Display (RViz) launch. Skipped in calibration mode so the
-    # calibration dashboard's RViz takes over instead.
+    # Display (RViz) launch. Skipped when the calibration dashboard is
+    # up (the dashboard's RViz takes over instead) or when running the
+    # full test workflow (mode=tests, calibration=false; the test
+    # runner's RViz takes over).
+    show_display = IfCondition(PythonExpression([
+        "'", LaunchConfiguration("calibration"), "' == 'false' and ",
+        "'", LaunchConfiguration("mode"), "' != 'tests'",
+    ]))
     display_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(volcaniarm_description_share, "launch", "display.launch.py")
         ),
         launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=UnlessCondition(LaunchConfiguration("calibration")),
+        condition=show_display,
     )
 
-    # Calibration dashboard (apriltag detector + RViz + rqt plugin).
-    # Assumes physical AprilTags are already mounted on the arm.
+    # Calibration dashboard.
+    # Activated when calibration:=true (any mode) OR when mode=tests
+    # with calibration:=false (the standard test workflow). The
+    # `camera_calibration_only` arg restricts the dashboard UI to just
+    # the camera-localization group when calibration:=true.
+    show_dashboard = IfCondition(PythonExpression([
+        "'", LaunchConfiguration("calibration"), "' == 'true' or ",
+        "'", LaunchConfiguration("mode"), "' == 'tests'",
+    ]))
     calibration_dashboard = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(volcaniarm_calibration_share, "launch", "dashboard.launch.py")
         ),
-        launch_arguments=[("tag_size", LaunchConfiguration("tag_size"))],
-        condition=IfCondition(LaunchConfiguration("calibration")),
+        launch_arguments=[
+            ("tag_size", LaunchConfiguration("tag_size")),
+            ("camera_calibration_only", LaunchConfiguration("calibration")),
+        ],
+        condition=show_dashboard,
     )
 
     motion_launch = IncludeLaunchDescription(
@@ -340,6 +444,7 @@ def generate_launch_description():
             serial_port_arg,
             auto_home_arg,
             controller_arg,
+            mode_arg,
             calibration_arg,
             pointcloud_arg,
             tag_size_arg,
@@ -349,6 +454,12 @@ def generate_launch_description():
             calibration_camera_roll_arg,
             calibration_camera_pitch_arg,
             calibration_camera_yaw_arg,
+            camera_x_arg,
+            camera_y_arg,
+            camera_z_arg,
+            camera_roll_arg,
+            camera_pitch_arg,
+            camera_yaw_arg,
             robot_state_publisher,
             OpaqueFunction(
                 function=lambda ctx: _build_controller_manager(ctx, robot_description_content)

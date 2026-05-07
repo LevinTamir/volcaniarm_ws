@@ -739,6 +739,43 @@ class CalibrationRunner:
             self._stop_event.wait(0.05)
         return None
 
+    def _wait_for_fresh_frame(
+            self, frame: str, timeout_s: float,
+            parent: str = 'world') -> Optional['object']:
+        """Stamp-gated single-frame variant of _wait_for_fresh_detection.
+
+        Looks up T(parent, frame); returns the TF once its header.stamp
+        has progressed since this call started. Used by the camera-
+        position calibration runner to wait for a fresh apriltag_marker_ee
+        detection between EE-sweep poses, without needing the test
+        runner's base/ee tag pair semantics.
+        """
+        try:
+            tf0 = self._tf_buffer.lookup_transform(
+                parent, frame, RclpyTime(),
+                timeout=RclpyDuration(seconds=timeout_s))
+        except Exception:
+            return None
+        baseline_stamp_ns = (tf0.header.stamp.sec * 1_000_000_000
+                             + tf0.header.stamp.nanosec)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if self._stop_event.is_set():
+                return None
+            try:
+                tf = self._tf_buffer.lookup_transform(
+                    parent, frame, RclpyTime(),
+                    timeout=RclpyDuration(seconds=0.0))
+            except Exception:
+                tf = None
+            if tf is not None:
+                stamp_ns = (tf.header.stamp.sec * 1_000_000_000
+                            + tf.header.stamp.nanosec)
+                if stamp_ns != baseline_stamp_ns:
+                    return tf
+            self._stop_event.wait(0.05)
+        return None
+
     def _wait_for_home_confirmed(self, request: RunRequest,
                                  label: str) -> bool:
         """Wait for the EE marker to settle near the URDF home pose.

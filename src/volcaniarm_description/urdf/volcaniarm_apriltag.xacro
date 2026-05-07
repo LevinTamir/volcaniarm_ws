@@ -2,13 +2,18 @@
 
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm_apriltag">
 
-  <!-- AprilTag 36h11 markers used for hand-eye calibration and accuracy
-       tests. Both tags use a DAE mesh with baked texture so they render
-       in Gazebo and RViz. The DAE geometry is 64 mm; the actual rendered
-       size follows the `tag_size` xacro arg (default 0.064 m, i.e. no
-       scaling), with the mesh scaled proportionally. Pass
-       tag_size:=0.200 in the launch file when using the larger printed
-       tags. -->
+  <!-- AprilTag 36h11 markers used for camera-pose calibration and the
+       test workflow (accuracy / repeatability). Both tags use a DAE
+       mesh with baked texture so they render in Gazebo and RViz. The
+       DAE geometry is 64 mm; the actual rendered size follows the
+       `tag_size` xacro arg (default 0.064 m, i.e. no scaling), with the
+       mesh scaled proportionally. Pass tag_size:=0.200 in the launch
+       file when using the larger printed tags.
+
+       Each marker is gated independently:
+         mount_ee_marker   - EE marker (ID 20) on right_arm_tip_link
+         mount_base_marker - base marker (ID 5) on volcaniarm_base_link
+       The parent xacro derives both flags from (mode, calibration). -->
 
   <xacro:property name="tag_size" value="$(arg tag_size)" />
   <xacro:property name="tag_scale" value="${tag_size / 0.064}" />
@@ -16,6 +21,8 @@
   <!-- ============================================================= -->
   <!-- ID 20: end-effector marker (right_arm_tip_link)                -->
   <!-- ============================================================= -->
+
+  <xacro:if value="${mount_ee_marker}">
 
   <xacro:property name="ee_tag_mesh"
     value="package://volcaniarm_description/models/Apriltag36_11_00020/apriltag_36h11_id20.dae" />
@@ -73,9 +80,13 @@
     <preserveFixedJoint>true</preserveFixedJoint>
   </gazebo>
 
+  </xacro:if>  <!-- mount_ee_marker -->
+
   <!-- ============================================================= -->
   <!-- ID 5: base-link reference marker (volcaniarm_base_link)        -->
   <!-- ============================================================= -->
+
+  <xacro:if value="${mount_base_marker}">
 
   <xacro:property name="base_tag_mesh"
     value="package://volcaniarm_description/models/Apriltag36_11_00005/apriltag_36h11_id05.dae" />
@@ -126,5 +137,7 @@
   <gazebo reference="apriltag_base_joint">
     <preserveFixedJoint>true</preserveFixedJoint>
   </gazebo>
+
+  </xacro:if>  <!-- mount_base_marker -->
 
 </robot>

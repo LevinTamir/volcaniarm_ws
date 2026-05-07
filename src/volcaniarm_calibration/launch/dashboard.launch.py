@@ -37,6 +37,14 @@ def generate_launch_description():
                     'Default 0.064 matches the small printed tags and the '
                     'sim DAE meshes; override (e.g. tag_size:=0.200) when '
                     'using the larger prints.')
+    # Forwarded to the rqt node as a parameter; the widget reads it and
+    # hides the test-runner panels when true so the calibration-only
+    # workflow only exposes the "Calibrate camera" UI.
+    camera_calibration_only_arg = DeclareLaunchArgument(
+        'camera_calibration_only', default_value='false',
+        choices=['true', 'false'],
+        description='Restrict the rqt dashboard to the Camera localization '
+                    'group only (set when calibration:=true).')
     # Must be propagated to apriltag, rviz, and rqt so the dashboard's
     # node clock matches the TF stamps (which inherit sim time from the
     # Gazebo camera). Otherwise the runner sees apparent ages of ~1.78e9
@@ -50,6 +58,9 @@ def generate_launch_description():
     # Coerce to float at launch time (parameters dict needs a real number).
     tag_size = PythonExpression(['float("', LaunchConfiguration('tag_size'), '")'])
     use_sim_time = LaunchConfiguration('use_sim_time')
+    # Coerce 'true'/'false' string into Python bool for the rqt node param.
+    camera_calibration_only = PythonExpression([
+        "'", LaunchConfiguration('camera_calibration_only'), "' == 'true'"])
 
     apriltag_node = Node(
         package='apriltag_ros',
@@ -82,7 +93,10 @@ def generate_launch_description():
             '--standalone',
             'volcaniarm_calibration.rqt.calibration_dashboard_plugin.CalibrationDashboardPlugin',
         ],
-        parameters=[{'use_sim_time': use_sim_time}],
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'camera_calibration_only': camera_calibration_only,
+        }],
         condition=IfCondition(LaunchConfiguration('use_rqt')),
     )
 
@@ -91,6 +105,7 @@ def generate_launch_description():
         use_rqt_arg,
         tag_size_arg,
         use_sim_time_arg,
+        camera_calibration_only_arg,
         apriltag_node,
         rviz,
         rqt,

@@ -2,10 +2,10 @@
 
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm_realsense">
 
-  <!-- Calibration mode places the camera on an external stand, off the
-       robot, so it can see the full workspace plus the base tag in one
-       view. calibration_camera_joint parents camera_link directly to
-       world (skipping the on-robot mount) at a parameterised pose;
+  <!-- Tests mode places the camera on an external stand, off the robot,
+       so it can see the full workspace plus the base tag in one view.
+       calibration_camera_joint parents camera_link directly to world
+       (skipping the on-robot mount) at a parameterised pose;
        real_bringup forwards the calibrated values from camera_pose.yaml
        so the URDF directly reflects the measured stand pose. Defaults
        place the stand 1.5 m in front of the arm and 0.6 m above the
@@ -20,7 +20,7 @@
   <xacro:arg name="calibration_camera_pitch" default="0.0" />
   <xacro:arg name="calibration_camera_yaw"   default="0.0" />
 
-  <xacro:if value="$(arg calibration)">
+  <xacro:if value="${'$(arg mode)' == 'tests'}">
     <joint name="calibration_camera_joint" type="fixed">
       <origin xyz="$(arg calibration_camera_x) $(arg calibration_camera_y) $(arg calibration_camera_z)"
               rpy="$(arg calibration_camera_roll) $(arg calibration_camera_pitch) $(arg calibration_camera_yaw)" />

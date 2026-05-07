@@ -1,5 +1,7 @@
-# Pose list for the automated EE-sweep hand-eye camera calibration
-# (cart-mounted camera scenario). Used by HandEyeCameraCalibrationRunner.
+# Pose list for the EE-sweep camera-pose calibration. Used by
+# EESweepCameraCalibrationRunner in both modes:
+#   - calibration_stand (camera on stand, mode=tests + calibration=true)
+#   - on_robot_mount    (camera on robot, mode=work  + calibration=true)
 #
 # Each pose is the workspace target (y, z) in metres that the arm will
 # visit. The runner pre-resolves IK for every pose before any motion;
@@ -11,10 +13,10 @@
 #
 # Tighter than the kinematics service's hard limits to keep margin from
 # singularities and motor stalls. Edit the values below to retune; just
-# stay inside the envelope above. The hand-eye solver (cv2 Daniilidis)
-# benefits from spread across the workspace -- even with limited
-# rotation diversity on a 2-DOF planar arm, varied (y, z) gives the
-# math more pose diversity to fit through.
+# stay inside the envelope above. Both solvers benefit from spread
+# across the workspace -- the position-only stand solve uses the
+# spread to median-out detection noise; the on-robot full-6-DoF solve
+# needs varied EE positions for cv2.calibrateHandEye to converge.
 
 poses:
   - {y: -0.20, z: 0.40, comment: "front-left"}

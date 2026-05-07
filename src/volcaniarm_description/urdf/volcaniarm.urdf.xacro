@@ -3,6 +3,16 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm">
 
   <xacro:arg name="use_sim" default="true" />
+  <!-- Physical configuration of the camera. Decoupled from `calibration`
+       so the four (mode, calibration) configurations are addressable:
+         mode=work,  calibration=false  -> normal working real hardware, no markers
+         mode=work,  calibration=true   -> on-robot camera + EE marker (calibrate camera_joint)
+         mode=tests, calibration=false  -> stand camera + both markers (accuracy / repeatability tests)
+         mode=tests, calibration=true   -> stand camera + EE marker (calibrate calibration_camera_joint) -->
+  <xacro:arg name="mode" default="work" />
+  <!-- Calibration overlay: when true, the calibration dashboard is up and
+       the EE marker is mounted. When false the markers + dashboard are
+       skipped (except in tests-mode where the test workflow needs both). -->
   <xacro:arg name="calibration" default="false" />
   <xacro:arg name="camera_mount_x" default="0.25" />
   <xacro:arg name="camera_mount_pitch" default="1.3" />
@@ -46,8 +56,24 @@
   <!-- Include RealSense camera frames for real hardware -->
   <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_realsense.xacro" />
 
-  <!-- Include AprilTag on EE for calibration in simulation -->
-  <xacro:if value="$(arg calibration)">
+  <!-- Marker configuration:
+         Base marker mounted whenever mode=tests (stand camera frames the
+           full workspace, so the base tag is in view and useful as a
+           fixed-frame reference for both the test workflow and the
+           camera-pose calibration sanity check).
+         EE marker mounted whenever mode=tests OR calibration=true
+           (so it's there for the on-robot calibration too, which has
+           no base marker).
+       The combined predicate `any_marker` decides whether the
+       apriltag.xacro file is even included; the per-marker xacro args
+       gate which links inside the file get instantiated. -->
+  <xacro:property name="mount_ee_marker"
+    value="${'$(arg calibration)' == 'true' or '$(arg mode)' == 'tests'}" />
+  <xacro:property name="mount_base_marker"
+    value="${'$(arg mode)' == 'tests'}" />
+  <xacro:property name="any_marker"
+    value="${mount_ee_marker or mount_base_marker}" />
+  <xacro:if value="${any_marker}">
     <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_apriltag.xacro" />
   </xacro:if>
 
@@ -610,12 +636,15 @@
   </joint>
 
   <!-- ======================== CAMERA MOUNT ======================== -->
-  <!-- Skipped in calibration mode: the camera is physically removed from
-       the robot and placed on an external stand, so calibration_camera_joint
-       in volcaniarm_realsense.xacro parents camera_link directly to
-       base_link instead. -->
+  <!-- Active in work mode (camera physically on the robot). Skipped in
+       tests mode: the camera is on an external stand and
+       calibration_camera_joint in volcaniarm_realsense.xacro parents
+       camera_link directly to world instead. -->
 
-  <xacro:unless value="$(arg calibration)">
+  <xacro:property name="camera_on_robot"
+    value="${'$(arg mode)' == 'work'}" />
+
+  <xacro:if value="${camera_on_robot}">
   <link name="camera_mount_linear_link">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -673,7 +702,7 @@
     <parent link="camera_mount_linear_link" />
     <child link="camera_mount_rev_link" />
   </joint>
-  </xacro:unless>
+  </xacro:if>
 
   <!-- ======================== CAMERA ======================== -->
 
@@ -701,20 +730,20 @@
     </collision>
   </link>
   <!-- camera_joint mounts the on-robot camera on camera_mount_rev_link
-       in normal mode (sim and real). In calibration mode the camera is
+       in work mode (sim and real). In tests mode the camera is
        physically off the robot, so calibration_camera_joint in
        volcaniarm_realsense.xacro parents camera_link directly to
-       base_link and this joint is skipped. The camera_x/y/z/roll/pitch/yaw
-       args parameterise the on-robot offset for a future eye-in-hand
-       calibration; defaults reflect the as-built mount. -->
-  <xacro:unless value="$(arg calibration)">
+       world and this joint is skipped. The camera_x/y/z/roll/pitch/yaw
+       args parameterise the on-robot offset and are written by the
+       camera-pose calibration's mode B (on_robot_mount). -->
+  <xacro:if value="${camera_on_robot}">
     <joint name="camera_joint" type="fixed">
       <origin xyz="$(arg camera_x) $(arg camera_y) $(arg camera_z)"
               rpy="$(arg camera_roll) $(arg camera_pitch) $(arg camera_yaw)" />
       <parent link="camera_mount_rev_link" />
       <child link="camera_link" />
     </joint>
-  </xacro:unless>
+  </xacro:if>
 
   <!-- Camera optical frame -->
   <link name="camera_link_optical" />

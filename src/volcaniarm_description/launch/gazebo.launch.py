@@ -30,10 +30,34 @@ def generate_launch_description():
 
     world_name_arg = DeclareLaunchArgument(name="world_name", default_value="empty")
 
+    mode_arg = DeclareLaunchArgument(
+        name="mode", default_value="work",
+        choices=["work", "tests"],
+        description="Physical camera configuration: 'work' mounts the "
+                    "camera on the robot, 'tests' on a stand in front."
+    )
+
     calibration_arg = DeclareLaunchArgument(
         name="calibration", default_value="false",
-        description="Add AprilTag to EE for calibration in simulation"
+        description="Open the calibration dashboard with only the camera-"
+                    "pose calibration UI; gates marker mounting in URDF."
     )
+
+    # Both arg sets are emitted; the URDF's `mode` arg picks which is
+    # actually used. Defaults match the URDF xacro:arg declarations and
+    # are overridden by sim_bringup when it forwards camera_pose.yaml.
+    cal_cam_x_arg = DeclareLaunchArgument("calibration_camera_x", default_value="-1.5")
+    cal_cam_y_arg = DeclareLaunchArgument("calibration_camera_y", default_value="0.0")
+    cal_cam_z_arg = DeclareLaunchArgument("calibration_camera_z", default_value="0.6")
+    cal_cam_roll_arg = DeclareLaunchArgument("calibration_camera_roll", default_value="0.0")
+    cal_cam_pitch_arg = DeclareLaunchArgument("calibration_camera_pitch", default_value="0.0")
+    cal_cam_yaw_arg = DeclareLaunchArgument("calibration_camera_yaw", default_value="0.0")
+    cam_x_arg = DeclareLaunchArgument("camera_x", default_value="0.0160004150359285")
+    cam_y_arg = DeclareLaunchArgument("camera_y", default_value="0.0")
+    cam_z_arg = DeclareLaunchArgument("camera_z", default_value="0.0")
+    cam_roll_arg = DeclareLaunchArgument("camera_roll", default_value="3.14159")
+    cam_pitch_arg = DeclareLaunchArgument("camera_pitch", default_value="0.0")
+    cam_yaw_arg = DeclareLaunchArgument("camera_yaw", default_value="0.0")
 
     camera_mount_x_arg = DeclareLaunchArgument(
         name="camera_mount_x", default_value="0.25",
@@ -81,11 +105,24 @@ def generate_launch_description():
         Command(
             [
                 "xacro ", LaunchConfiguration("model"),
+                " mode:=", LaunchConfiguration("mode"),
                 " calibration:=", LaunchConfiguration("calibration"),
                 " camera_mount_x:=", LaunchConfiguration("camera_mount_x"),
                 " camera_mount_pitch:=", LaunchConfiguration("camera_mount_pitch"),
                 " controller:=", LaunchConfiguration("controller"),
                 " tag_size:=", LaunchConfiguration("tag_size"),
+                " calibration_camera_x:=", LaunchConfiguration("calibration_camera_x"),
+                " calibration_camera_y:=", LaunchConfiguration("calibration_camera_y"),
+                " calibration_camera_z:=", LaunchConfiguration("calibration_camera_z"),
+                " calibration_camera_roll:=", LaunchConfiguration("calibration_camera_roll"),
+                " calibration_camera_pitch:=", LaunchConfiguration("calibration_camera_pitch"),
+                " calibration_camera_yaw:=", LaunchConfiguration("calibration_camera_yaw"),
+                " camera_x:=", LaunchConfiguration("camera_x"),
+                " camera_y:=", LaunchConfiguration("camera_y"),
+                " camera_z:=", LaunchConfiguration("camera_z"),
+                " camera_roll:=", LaunchConfiguration("camera_roll"),
+                " camera_pitch:=", LaunchConfiguration("camera_pitch"),
+                " camera_yaw:=", LaunchConfiguration("camera_yaw"),
             ]
         ),
         value_type=str,
@@ -163,11 +200,16 @@ def generate_launch_description():
         [
             model_arg,
             world_name_arg,
+            mode_arg,
             calibration_arg,
             camera_mount_x_arg,
             camera_mount_pitch_arg,
             controller_arg,
             tag_size_arg,
+            cal_cam_x_arg, cal_cam_y_arg, cal_cam_z_arg,
+            cal_cam_roll_arg, cal_cam_pitch_arg, cal_cam_yaw_arg,
+            cam_x_arg, cam_y_arg, cam_z_arg,
+            cam_roll_arg, cam_pitch_arg, cam_yaw_arg,
             robot_state_publisher_node,
             gazebo_resource_path,
             gazebo,

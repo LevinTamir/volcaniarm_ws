@@ -58,6 +58,7 @@ _SUCCESS_PATTERNS = re.compile(
 
 from ..runner import (
     CalibrationRunner, CameraCalibrationRunner, RunRequest, TEST_REGISTRY,
+    MODE_STAND, MODE_ON_ROBOT,
 )
 
 
@@ -88,6 +89,21 @@ class CalibrationDashboardWidget(QWidget):
         self.setWindowTitle('Volcaniarm Calibration Dashboard')
 
         self._node = node
+        # Dashboard-scope flag set by the launch when calibration:=true.
+        # When True, the widget hides the test-runner controls and only
+        # exposes the "Camera localization" group. The launch passes the
+        # value as a PythonExpression-evaluated string ('True'/'False'),
+        # so handle either str or bool here.
+        try:
+            if not node.has_parameter('camera_calibration_only'):
+                node.declare_parameter('camera_calibration_only', False)
+            raw = node.get_parameter('camera_calibration_only').value
+            if isinstance(raw, str):
+                self._camera_calibration_only = raw.strip().lower() == 'true'
+            else:
+                self._camera_calibration_only = bool(raw)
+        except Exception:
+            self._camera_calibration_only = False
         self._bridge = _RunnerBridge()
         self._runner = CalibrationRunner(node)
         self._runner.status_cb = self._bridge.status.emit
@@ -141,13 +157,21 @@ class CalibrationDashboardWidget(QWidget):
         # before / after re-mounting the camera.
         align_box = QGroupBox('Camera localization')
         align_outer = QVBoxLayout(align_box)
+        # URDF-detected mode (camera on stand vs camera on robot).
+        # Refreshed on a timer along with the alignment status so it
+        # reflects the current TF tree, never a stale cache.
+        self._mode_label = QLabel('mode: detecting...')
+        self._mode_label.setStyleSheet('color: gray;')
+        align_outer.addWidget(self._mode_label)
         self._align_status = QLabel('localization: not run yet')
         self._align_status.setStyleSheet('color: gray;')
         align_outer.addWidget(self._align_status)
         self._calibrate_btn = QPushButton('Calibrate camera')
         self._calibrate_btn.setToolTip(
-            'Measure the camera pose in robot frame from the base '
-            'AprilTag and log the result. No arm motion.')
+            'Sweeps the arm through the EE poses in calibration_poses.yaml '
+            'and solves for the camera pose. Mode is auto-detected from '
+            'the URDF: parent of camera_link is world (stand) or '
+            'camera_mount_rev_link (on-robot).')
         align_outer.addWidget(self._calibrate_btn)
         layout.addWidget(align_box)
 
@@ -311,6 +335,27 @@ class CalibrationDashboardWidget(QWidget):
         self._banner = self._build_banner()
         layout.addWidget(self._banner)
         self._banner.setVisible(False)
+
+        # Calibration-only mode: hide the test-runner widgets so the
+        # operator only sees the "Camera localization" group. The
+        # dashboard launch sets the `camera_calibration_only` parameter
+        # to true when the bringup was started with calibration:=true.
+        if self._camera_calibration_only:
+            self.setWindowTitle(
+                'Volcaniarm Camera Calibration')
+            for widget in (
+                cfg_box, self._home_box, initial_box,
+                self._goal_box, self._goals_box,
+            ):
+                widget.setVisible(False)
+            # The Run / Continue / Reset / Cancel button row applies to
+            # the test runner; in calibration-only mode only Cancel is
+            # meaningful (it also cancels the camera calibration).
+            self._start_btn.setVisible(False)
+            self._continue_btn.setVisible(False)
+            self._reset_btn.setVisible(False)
+            self._detection_label.setVisible(False)
+            self._progress.setVisible(False)
 
     def _build_banner(self) -> QFrame:
         frame = QFrame()
@@ -601,13 +646,30 @@ class CalibrationDashboardWidget(QWidget):
     # -- camera localization -------------------------------------
 
     def _refresh_alignment_state(self):
-        """Show the path of the most recent localization result, if any,
-        plus whether the persistent camera_pose.yaml is in place (which
-        means real_bringup will apply it at launch).
+        """Refresh the URDF-detected mode + the alignment status label,
+        and gate the Calibrate-camera button on a recognised mode.
 
-        Pure file-system probe; cheap to run on a 2 s timer. The "in
-        progress" label is driven by the runner's status_cb, not here.
+        Pure TF + file-system probe; cheap to run on a 2 s timer. The
+        "in progress" label is driven by the runner's status_cb.
         """
+        # Mode comes from the URDF (parent of camera_link). When the
+        # URDF isn't loaded yet (just after launch), this returns None
+        # transiently -- the timer retries and we settle within ~2 s.
+        mode = self._cam_runner.detect_mode()
+        if mode == MODE_STAND:
+            self._mode_label.setText('mode: camera on stand (calibration_stand)')
+            self._mode_label.setStyleSheet('color: #2e9c4a;')
+            mode_ok = True
+        elif mode == MODE_ON_ROBOT:
+            self._mode_label.setText('mode: camera on robot (on_robot_mount)')
+            self._mode_label.setStyleSheet('color: #2e9c4a;')
+            mode_ok = True
+        else:
+            self._mode_label.setText(
+                'mode: URDF not in calibration-capable configuration')
+            self._mode_label.setStyleSheet('color: #d04b4b;')
+            mode_ok = False
+
         if self._cam_runner.is_busy():
             self._align_status.setText('localization: in progress')
             self._align_status.setStyleSheet('color: #c79a3a;')
@@ -630,7 +692,7 @@ class CalibrationDashboardWidget(QWidget):
         else:
             self._align_status.setText('localization: not run yet')
             self._align_status.setStyleSheet('color: gray;')
-        self._calibrate_btn.setEnabled(True)
+        self._calibrate_btn.setEnabled(mode_ok)
 
     def _latest_result_yaml(self) -> Optional[Path]:
         root = (Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'
