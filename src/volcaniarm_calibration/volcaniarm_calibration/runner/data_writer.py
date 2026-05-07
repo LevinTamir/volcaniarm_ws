@@ -28,7 +28,20 @@ import yaml
 TAG_OBS_FIELDS = [
     'run_id', 'phase', 'cycle', 'target_idx', 'sample_idx', 't_ros_ns',
     'theta_right', 'theta_left',
+    # Raw apriltag-frame transform (apriltag_marker_base -> apriltag_marker_ee).
+    # Kept for tag-frame diagnostics; not used by the headline metrics.
     'x', 'y', 'z', 'qx', 'qy', 'qz', 'qw',
+    # World-frame Y-Z origins at capture instant. Both detection and
+    # URDF expressed in the same world-aligned frame so the Y and Z
+    # axes refer to the same physical directions.
+    'det_base_y', 'det_base_z', 'det_ee_y', 'det_ee_z',
+    'urdf_base_y', 'urdf_base_z', 'urdf_ee_y', 'urdf_ee_z',
+    # Headline scalars (metres):
+    # d_detected = ||(det_ee - det_base)_yz||  (world-frame Y-Z)
+    # d_urdf     = ||(urdf_ee - urdf_base)_yz|| (world-frame Y-Z)
+    # d_error    = d_detected - d_urdf  (signed accuracy residual)
+    # NaN when the URDF chain wasn't reachable at capture time.
+    'd_detected', 'd_urdf', 'd_error',
 ]
 
 FK_FIELDS = [

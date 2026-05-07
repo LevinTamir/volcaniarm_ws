@@ -9,11 +9,12 @@ the module has no Qt import; the rqt widget bridges callbacks to
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -41,7 +42,7 @@ class RunRequest:
     # Goals: ordered list of (y, z) metres in workspace that the arm
     # visits. Single-pose tests pass [(y, z)]; the workspace-coverage
     # test passes the full envelope. Each iteration of the run does a
-    # round-robin sweep across all goals, with the operator-gated
+    # round-robin sweep across all goals, with a fresh-stamp gated
     # capture at every visit. IK is resolved on every entry once up
     # front; an unreachable goal aborts before any motion.
     initial_pose: tuple = (0.0, 0.5)
@@ -52,10 +53,23 @@ class RunRequest:
     trajectory_duration: float = 2.0
     # Tag frames published by the apriltag detector. Ground truth is
     # T_base_to_ee = lookup_transform(base_tag_frame, ee_tag_frame),
-    # which TF resolves through the camera. Compared in post-processing
-    # against FK after applying the known link->tag offsets.
+    # which TF resolves through the camera.
     base_tag_frame: str = 'apriltag_marker_base'
     ee_tag_frame: str = 'apriltag_marker_ee'
+    # URDF-side counterparts of the apriltag frames. Published by
+    # robot_state_publisher from the static URDF mounts; serve as the
+    # ground-truth segment-length expectation against which detection
+    # is compared (Y-Z origin distance in the world frame).
+    base_urdf_frame: str = 'apriltag_base_link'
+    ee_urdf_frame: str = 'apriltag_ee_link'
+    # Common world-aligned frame that both detected and URDF marker
+    # origins are looked up in before the Y-Z difference is computed.
+    # Comparing Y-Z components of T(parent, child) directly is wrong
+    # because apriltag_marker_* and apriltag_*_link have different
+    # parent orientations. Both must be expressed in a single
+    # consistently-oriented frame for the Y-Z projection to be the
+    # same axes for detection and URDF.
+    world_frame: str = 'world'
     # Wait budget for a single TF lookup. 1 s comfortably covers normal
     # apriltag latency at 30 Hz; a tag that is undetectable (e.g.
     # edge-on at the current pose) fails fast instead of stalling.
@@ -64,6 +78,14 @@ class RunRequest:
     # against the TF buffer returning a stale transform from when the
     # tag was last seen seconds ago.
     detection_max_age_s: float = 0.5
+    # Home-confirm gate (used by tests with verify_home_with_tag=True,
+    # currently the repeatability test). After every return-to-home
+    # trajectory the runner waits for the detected vs URDF Y-Z segment
+    # length to agree within home_tol_m, held over home_hold_frames
+    # consecutive *fresh* detections, bounded by home_timeout_s.
+    home_tol_m: float = 0.02
+    home_hold_frames: int = 5
+    home_timeout_s: float = 10.0
 
 
 # Callback signatures used by the runner. The widget wires Qt signals.
@@ -244,17 +266,22 @@ class CalibrationRunner:
         config = {
             'test_name': request.test.name,
             'num_cycles': request.test.num_cycles,
-            'samples_per_visit': request.test.samples_per_visit,
             'settle_time': request.test.settle_time,
-            'sample_interval': request.test.sample_interval,
+            'verify_home_with_tag': request.test.verify_home_with_tag,
             'initial_pose': list(request.initial_pose),
             'goals': [list(g) for g in request.goals],
             'joint_names': list(request.joint_names),
             'trajectory_duration': request.trajectory_duration,
             'base_tag_frame': request.base_tag_frame,
             'ee_tag_frame': request.ee_tag_frame,
+            'base_urdf_frame': request.base_urdf_frame,
+            'ee_urdf_frame': request.ee_urdf_frame,
+            'world_frame': request.world_frame,
             'detection_timeout_s': request.detection_timeout_s,
             'detection_max_age_s': request.detection_max_age_s,
+            'home_tol_m': request.home_tol_m,
+            'home_hold_frames': request.home_hold_frames,
+            'home_timeout_s': request.home_timeout_s,
         }
 
         with RunWriter(request.output_root, request.test.name, config) as writer:
@@ -333,6 +360,11 @@ class CalibrationRunner:
             return False
         if not self._settle(request.test.settle_time, 'initial'):
             return False
+        # When the test gates on tag-confirmed home, run the gate now
+        # too so the very first iteration starts from a verified state.
+        if request.test.verify_home_with_tag:
+            if not self._wait_for_home_confirmed(request, label='initial'):
+                return False
         self._capture_observations(
             request, writer,
             phase='home', cycle=0, target_idx=None,
@@ -367,8 +399,13 @@ class CalibrationRunner:
                 if not self._settle(request.test.settle_time, 'goal'):
                     return False
 
-                # Operator-gated wait: detection_state_cb keeps the
-                # dashboard in sync; proceed() / cancel() unblock.
+                # Repeatability / accuracy tests are hands-off (the gate
+                # is just to wait for a fresh detection); workspace-
+                # coverage runs without an operator gate too. The
+                # awaiting-continue + auto-continue plumbing in the
+                # dashboard remains for backwards compatibility but no
+                # longer blocks: capture is gated only on a freshly
+                # progressed TF stamp post-settle.
                 self._emit_awaiting_continue(iteration, total_iterations)
                 if not self._wait_for_continue(request):
                     # Either cancelled or the runner was shut down.
@@ -407,6 +444,10 @@ class CalibrationRunner:
                         self._emit_status(
                             'return-to-initial move failed; aborting run')
                         return False
+                    if request.test.verify_home_with_tag:
+                        if not self._wait_for_home_confirmed(
+                                request, label=f'cycle {iteration}'):
+                            return False
         # End-of-run park. Single-pose tests already returned to
         # initial after their last visit, so this is a no-op for them
         # and we skip it. The workspace sweep ends at the last goal,
@@ -543,20 +584,20 @@ class CalibrationRunner:
     def _wait_for_continue(self, request: RunRequest) -> bool:
         """Block until the operator clicks Continue or Cancel.
 
-        While blocked, the runner polls the apriltag TF at ~10 Hz and
-        emits ``detection_state_cb(is_fresh, age_s)`` so the dashboard
-        can gate the Continue button. There's no hard timeout: the
-        operator may need an arbitrary amount of time to physically
-        reposition the camera until both markers appear.
+        The capture step is now gated on a freshly progressed TF stamp
+        after settle, so for hands-off tests this gate is effectively
+        a pass-through (the dashboard's auto-continue trips immediately
+        on the next fresh detection). It remains for the operator's
+        Cancel handle and for any future test that needs human framing.
 
-        Freshness is tracked by stamp *progression*, not by comparing
-        the stamp against any node clock. Each poll, if the TF stamp
-        differs from the previous poll's stamp, a new detection has
-        arrived and we record the monotonic time of change. The
-        detection is reported fresh while the most recent change was
-        within ``detection_max_age_s`` monotonic seconds. Works
-        identically in sim (where stamps are sim-time and the rqt
-        clock may be wall-time) and on real hardware.
+        Freshness is tracked by stamp progression, not by comparing the
+        stamp against any node clock. Each poll, if the TF stamp differs
+        from the previous poll's stamp, a new detection has arrived; we
+        record the monotonic time of change. The detection is reported
+        fresh while the most recent change was within
+        ``detection_max_age_s`` monotonic seconds. Works identically in
+        sim (where stamps are sim-time and the rqt clock may be wall-
+        time) and on real hardware.
         """
         self._continue_event.clear()
         # Reset the detection indicator so the dashboard starts in the
@@ -621,72 +662,263 @@ class CalibrationRunner:
             return None, f'lookup failed: {exc}'
         return tf, ''
 
+    def _lookup_origin_in_world(self, request: RunRequest,
+                                child_frame: str, wait_s: float):
+        """Return (tf, reason) where tf is T(world_frame -> child_frame).
+
+        Used to express each marker's origin in a single world-aligned
+        frame. Comparing Y-Z components of `T(apriltag_marker_base,
+        apriltag_marker_ee).translation` against `T(apriltag_base_link,
+        apriltag_ee_link).translation` is wrong: those parent frames
+        have different orientations, so 'Y' and 'Z' don't refer to the
+        same axes. Looking each origin up in `world` before taking the
+        Y-Z difference fixes the comparison.
+        """
+        try:
+            tf = self._tf_buffer.lookup_transform(
+                request.world_frame, child_frame,
+                RclpyTime(),
+                timeout=RclpyDuration(seconds=wait_s))
+        except Exception as exc:
+            return None, f'lookup failed: {exc}'
+        return tf, ''
+
+    def _yz_segment_world(self, request: RunRequest,
+                          base_frame: str, ee_frame: str,
+                          wait_s: float
+                          ) -> Tuple[Optional[float], Optional[Tuple[float, float, float, float]], str]:
+        """Compute |EE_origin - base_origin|_yz in the world frame.
+
+        Returns ``(distance_m, (base_y, base_z, ee_y, ee_z), reason)``.
+        ``distance_m`` is None if either lookup failed; the per-origin
+        tuple is provided for logging so the analysis can plot the
+        cluster directly in world Y-Z without re-deriving from base.
+        """
+        base_tf, base_reason = self._lookup_origin_in_world(
+            request, base_frame, wait_s)
+        if base_tf is None:
+            return None, None, base_reason
+        ee_tf, ee_reason = self._lookup_origin_in_world(
+            request, ee_frame, 0.0)
+        if ee_tf is None:
+            return None, None, ee_reason
+        b = base_tf.transform.translation
+        e = ee_tf.transform.translation
+        dy = e.y - b.y
+        dz = e.z - b.z
+        return math.hypot(dy, dz), (b.y, b.z, e.y, e.z), ''
+
+    def _wait_for_fresh_detection(
+            self, request: RunRequest, timeout_s: float
+            ) -> Optional['object']:
+        """Block until a detected base->ee TF arrives with a stamp that
+        has progressed since this call started. Returns the TF on
+        success, or None on timeout / cancel.
+
+        The first lookup snapshots the current stamp as the baseline;
+        subsequent lookups (~10 Hz) pass once the stamp differs. This
+        guarantees the captured sample reflects a detection that
+        arrived *after* the arm settled, not a stale buffered TF from
+        before the move.
+        """
+        tf0, _ = self._lookup_base_to_ee(request, timeout_s)
+        if tf0 is None:
+            return None
+        baseline_stamp_ns = (tf0.header.stamp.sec * 1_000_000_000
+                             + tf0.header.stamp.nanosec)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if self._stop_event.is_set():
+                return None
+            tf, _ = self._lookup_base_to_ee(request, 0.0)
+            if tf is not None:
+                stamp_ns = (tf.header.stamp.sec * 1_000_000_000
+                            + tf.header.stamp.nanosec)
+                if stamp_ns != baseline_stamp_ns:
+                    return tf
+            self._stop_event.wait(0.05)
+        return None
+
+    def _wait_for_home_confirmed(self, request: RunRequest,
+                                 label: str) -> bool:
+        """Wait for the EE marker to settle near the URDF home pose.
+
+        Polls detected base->ee and URDF base->ee at ~20 Hz and
+        compares their Y-Z segment lengths. The detection counts only
+        when its TF stamp has progressed since the last poll (so we
+        ignore a stale TF buffered from before the home move). The
+        gate passes when ``|d_detected - d_urdf| < home_tol_m`` for
+        ``home_hold_frames`` consecutive fresh detections.
+
+        On timeout, sets ``_failure_reason`` and signals stop so the
+        run finalises as 'failed' with a clear reason rather than
+        silently continuing with an unverified home.
+        """
+        timeout_s = request.home_timeout_s
+        tol_m = request.home_tol_m
+        hold = max(1, int(request.home_hold_frames))
+        deadline = time.monotonic() + timeout_s
+        last_stamp_ns: Optional[int] = None
+        consecutive_in_tol = 0
+        last_err: Optional[float] = None
+        self._emit_status(
+            f'home-confirm ({label}): waiting for detected vs URDF '
+            f'world Y-Z segment match (tol={tol_m * 1000:.0f} mm, '
+            f'hold={hold} frames, timeout={timeout_s:.1f} s)')
+        while time.monotonic() < deadline:
+            if self._stop_event.is_set():
+                return False
+            # Use base_tag -> ee_tag stamp progression as the freshness
+            # signal: it ticks every time apriltag_ros publishes a new
+            # detection. The actual segment magnitude is then computed
+            # in world-frame Y-Z so detection and URDF use the same axes.
+            det_tf, _ = self._lookup_base_to_ee(request, 0.0)
+            if det_tf is None:
+                consecutive_in_tol = 0
+                self._stop_event.wait(0.05)
+                continue
+            stamp_ns = (det_tf.header.stamp.sec * 1_000_000_000
+                        + det_tf.header.stamp.nanosec)
+            if stamp_ns == last_stamp_ns:
+                # Same stamp; no new detection yet.
+                self._stop_event.wait(0.05)
+                continue
+            last_stamp_ns = stamp_ns
+            d_det, _, det_reason = self._yz_segment_world(
+                request, request.base_tag_frame, request.ee_tag_frame, 0.0)
+            if d_det is None:
+                consecutive_in_tol = 0
+                continue
+            d_urdf, _, urdf_reason = self._yz_segment_world(
+                request, request.base_urdf_frame, request.ee_urdf_frame, 0.0)
+            if d_urdf is None:
+                self._failure_reason = (
+                    f'home-confirm ({label}): URDF tag chain '
+                    f'unavailable in world frame ({urdf_reason})')
+                self._emit_status(f'aborting: {self._failure_reason}')
+                self._stop_event.set()
+                return False
+            err = abs(d_det - d_urdf)
+            last_err = err
+            if err < tol_m:
+                consecutive_in_tol += 1
+                if consecutive_in_tol >= hold:
+                    self._emit_status(
+                        f'home-confirm ({label}): confirmed '
+                        f'(err={err * 1000:.1f} mm over '
+                        f'{consecutive_in_tol} frames)')
+                    return True
+            else:
+                consecutive_in_tol = 0
+        elapsed = time.monotonic() - (deadline - timeout_s)
+        last_err_mm = ('n/a' if last_err is None
+                       else f'{last_err * 1000:.1f} mm')
+        self._failure_reason = (
+            f'home-confirm ({label}): timeout after {elapsed:.1f} s '
+            f'(last err {last_err_mm}, tol {tol_m * 1000:.0f} mm)')
+        self._emit_status(f'aborting: {self._failure_reason}')
+        self._stop_event.set()
+        return False
+
     def _capture_observations(self, request: RunRequest, writer: RunWriter,
                               phase: str, cycle: int,
                               target_idx: Optional[int],
                               theta_right: float, theta_left: float):
-        """Take ``samples_per_visit`` snapshots of base->ee at the current pose.
+        """Capture exactly one base->ee detection at the current pose.
 
-        Each sample is stored as one row in tag_observations.csv tagged
-        with the phase (home|target). Strategy: try the first lookup
-        with the full ``detection_timeout_s`` budget; if it fails (e.g.
-        EE tag edge-on at home), abort the rest of the burst with one
-        log line so the run doesn't stall N * timeout seconds. Once the
-        first sample succeeds, subsequent lookups use a short wait
-        since detections are streaming at camera rate.
+        Multi-sample averaging was dropped: the arm is stationary by
+        the time we read, so repeated lookups recorded the detector
+        pixel noise floor without measuring anything that varied. The
+        single capture is gated on a TF stamp progression (a detection
+        whose stamp differs from the one buffered before settle ended)
+        so the row reflects a measurement made *after* the arm settled,
+        not a stale buffered transform.
+
+        Each row stores the raw apriltag base->ee transform (for tag-
+        frame diagnostics), the world-frame Y-Z origins of both the
+        detected and URDF base/EE markers (so the analysis can plot
+        clusters in a single consistent frame), and the headline
+        scalars ``d_detected``, ``d_urdf`` and the signed difference
+        ``d_error``. The d_* scalars are computed in the world frame
+        so the Y and Z axes refer to the same physical directions for
+        detection and URDF, regardless of how each parent tag frame
+        is oriented.
         """
-        n = max(1, request.test.samples_per_visit)
-        interval = max(0.0, request.test.sample_interval)
-        captured = 0
-        last_reason = ''
-        for i in range(n):
-            if self._stop_event.is_set():
-                return
-            wait_s = request.detection_timeout_s if i == 0 else 0.1
-            tf, reason = self._lookup_base_to_ee(request, wait_s)
-            if tf is not None:
-                t = tf.transform.translation
-                r = tf.transform.rotation
-                stamp = RclpyTime.from_msg(tf.header.stamp)
-                writer.add_tag_observation({
-                    'phase': phase,
-                    'cycle': cycle,
-                    'target_idx': '' if target_idx is None else target_idx,
-                    'sample_idx': i + 1,
-                    't_ros_ns': stamp.nanoseconds,
-                    'theta_right': theta_right,
-                    'theta_left': theta_left,
-                    'x': t.x, 'y': t.y, 'z': t.z,
-                    'qx': r.x, 'qy': r.y, 'qz': r.z, 'qw': r.w,
-                })
-                captured += 1
-            else:
-                last_reason = reason
-                if i == 0:
-                    # Tag is not visible at this pose; don't burn the
-                    # rest of the burst trying.
-                    break
-            if i < n - 1 and interval > 0:
-                if self._stop_event.wait(interval):
-                    return
-        if captured == 0:
+        if self._stop_event.is_set():
+            return
+        det = self._wait_for_fresh_detection(
+            request, request.detection_timeout_s)
+        if det is None:
+            reason = (f'no fresh detection after settle '
+                      f'(timeout={request.detection_timeout_s:.1f} s)')
             self._emit_status(
-                f'{phase} capture: 0 samples (cycle={cycle}, '
-                f'target_idx={target_idx}); {last_reason}')
-            # 'target' phase entered the gate with a fresh detection,
-            # so capturing zero samples means the tag was lost between
-            # gate-release and the first capture lookup. That's a real
-            # failure, not noise -- abort and finalise as 'failed'. The
-            # 'home' phase has no gate before it, so a missing tag
-            # there is just an unconfigured baseline; keep the warn
-            # behaviour and let the run continue.
+                f'{phase} capture: {reason} (cycle={cycle}, '
+                f'target_idx={target_idx})')
+            # 'target' phase: the run cannot recover -- we needed a
+            # measurement at this pose. 'home' baseline missing is
+            # logged but not fatal (the analysis still has the goal
+            # rows).
             if phase == 'target':
                 self._failure_reason = (
                     f'detection lost during sampling at cycle={cycle}, '
-                    f'target_idx={target_idx}: {last_reason}')
+                    f'target_idx={target_idx}: {reason}')
                 self._emit_status(f'aborting: {self._failure_reason}')
                 self._stop_event.set()
+            return
+        d_detected, det_origins, det_reason = self._yz_segment_world(
+            request, request.base_tag_frame, request.ee_tag_frame, 0.1)
+        d_urdf, urdf_origins, urdf_reason = self._yz_segment_world(
+            request, request.base_urdf_frame, request.ee_urdf_frame, 0.1)
+        if d_detected is None:
+            self._emit_status(
+                f'{phase} capture: detected segment unavailable in '
+                f'world frame ({det_reason}); aborting')
+            if phase == 'target':
+                self._failure_reason = (
+                    f'world-frame detection lookup failed at cycle={cycle}, '
+                    f'target_idx={target_idx}: {det_reason}')
+                self._stop_event.set()
+            return
+        if d_urdf is None:
+            d_urdf_val = float('nan')
+            d_error = float('nan')
+            urdf_origins = (float('nan'),) * 4
+            self._emit_status(
+                f'{phase} capture: URDF segment unavailable in world '
+                f'frame ({urdf_reason}); logging detection only')
+        else:
+            d_urdf_val = d_urdf
+            d_error = d_detected - d_urdf
+        det_base_y, det_base_z, det_ee_y, det_ee_z = det_origins
+        urdf_base_y, urdf_base_z, urdf_ee_y, urdf_ee_z = urdf_origins
+        t = det.transform.translation
+        r = det.transform.rotation
+        stamp = RclpyTime.from_msg(det.header.stamp)
+        writer.add_tag_observation({
+            'phase': phase,
+            'cycle': cycle,
+            'target_idx': '' if target_idx is None else target_idx,
+            'sample_idx': 1,
+            't_ros_ns': stamp.nanoseconds,
+            'theta_right': theta_right,
+            'theta_left': theta_left,
+            'x': t.x, 'y': t.y, 'z': t.z,
+            'qx': r.x, 'qy': r.y, 'qz': r.z, 'qw': r.w,
+            'det_base_y': det_base_y, 'det_base_z': det_base_z,
+            'det_ee_y': det_ee_y, 'det_ee_z': det_ee_z,
+            'urdf_base_y': urdf_base_y, 'urdf_base_z': urdf_base_z,
+            'urdf_ee_y': urdf_ee_y, 'urdf_ee_z': urdf_ee_z,
+            'd_detected': d_detected,
+            'd_urdf': d_urdf_val,
+            'd_error': d_error,
+        })
+        if math.isnan(d_error):
+            self._emit_status(
+                f'{phase} capture (cycle={cycle}, target_idx={target_idx}): '
+                f'd_detected={d_detected * 1000:.1f} mm  d_urdf=n/a')
         else:
             self._emit_status(
-                f'{phase} capture: {captured}/{n} samples '
-                f'(cycle={cycle}, target_idx={target_idx})')
+                f'{phase} capture (cycle={cycle}, target_idx={target_idx}): '
+                f'd_detected={d_detected * 1000:.1f} mm  '
+                f'd_urdf={d_urdf_val * 1000:.1f} mm  '
+                f'd_error={d_error * 1000:+.1f} mm')

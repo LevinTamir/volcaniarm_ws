@@ -21,10 +21,6 @@ accuracy_test_node:
     num_cycles: 5
     # Seconds to wait after each move for motors and camera to settle.
     settle_time: 2.0
-    # Number of pose samples to average at each settled visit.
-    samples_per_visit: 20
-    # Delay between consecutive pose samples [s].
-    sample_interval: 0.1
 
     # -- Arm control --
     joint_names:
@@ -33,12 +29,38 @@ accuracy_test_node:
     trajectory_duration: 2.0
 
     # -- AprilTag tracking --
-    # Tag frames published by the apriltag detector. Ground truth is
-    # T(base_tag -> ee_tag) looked up via TF (resolved through the
-    # camera). Compared against FK in post-processing after applying
-    # the known link->tag offsets.
+    # Tag frames published by the apriltag detector. Detected segment
+    # length is computed from T(base_tag -> ee_tag) via TF.
     base_tag_frame: apriltag_marker_base
     ee_tag_frame: apriltag_marker_ee
+    # URDF-side counterparts: published by robot_state_publisher from
+    # the static apriltag mount joints + live arm FK. Provide the
+    # ground-truth segment-length expectation against which the
+    # detection is compared at every capture.
+    base_urdf_frame: apriltag_base_link
+    ee_urdf_frame: apriltag_ee_link
+    # Common world-aligned frame both detection and URDF marker origins
+    # are looked up in before the Y-Z difference is computed. The
+    # apriltag_marker_* and apriltag_*_link parents have different
+    # orientations, so comparing their Y-Z components directly is
+    # wrong; expressing both origins in a single world-aligned frame
+    # makes Y and Z refer to the same physical axes for both.
+    world_frame: world
+    # Per-lookup wait budget on the apriltag TF (s).
+    detection_timeout_s: 1.0
+    # Freshness window for the dashboard's continue gate (s); also
+    # shapes how long stamp progression is treated as 'just arrived'.
+    detection_max_age_s: 0.5
+
+    # -- Repeatability home-confirm gate --
+    # Used by tests that set verify_home_with_tag (the repeatability
+    # test does, by construction). After every return-to-home, the
+    # runner waits for |d_detected - d_urdf| < home_tol_m to hold over
+    # home_hold_frames consecutive fresh detections, bounded by
+    # home_timeout_s. Aborts the run on timeout with a clear reason.
+    home_tol_m: 0.02
+    home_hold_frames: 5
+    home_timeout_s: 10.0
 
     # -- Output --
     # Per-run directory layout: <output_dir>/<test_type>/<YYYY-MM-DD>/<HH-MM-SS>/

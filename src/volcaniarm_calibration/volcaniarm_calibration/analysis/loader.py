@@ -194,31 +194,16 @@ def fk_apriltag_position(fk: pd.DataFrame) -> pd.DataFrame:
 
 
 def align_fk_to_tag(tag: pd.DataFrame, fk: pd.DataFrame) -> pd.DataFrame:
-    """Join target-phase tag samples to their commanded FK pose and
-    add scalar distance metrics that are robust to frame-convention
-    differences between apriltag_ros and the URDF.
+    """Join target-phase tag samples to their commanded FK pose.
 
     Returns columns:
-      - All tag observation columns (x, y, z in apriltag_marker_base
-        frame; quaternion).
+      - All tag observation columns including ``d_detected``, ``d_urdf``,
+        ``d_error`` written by the runner (Y-Z segment lengths in metres).
       - ``fk_x, fk_y, fk_z`` from FK (volcaniarm_base_link frame).
-      - ``d_tag`` = ``|tag_observation|`` (m): distance from base
-        AprilTag center to EE AprilTag center, scalar. **Rotation-
-        invariant** so any URDF-vs-apriltag_ros orientation mismatch
-        does not affect this number.
-      - ``d_fk`` = ``|FK position|`` (m): distance from
-        volcaniarm_base_link to right_arm_tip_link.
-      - ``d_diff = d_tag - d_fk`` (m): the difference between the
-        two distances. Carries only the URDF mount-offset translation
-        bias (rotation cancels in scalar distances).
 
-    Vector residual columns (``dx, dy, dz``) are intentionally NOT
-    computed: they require a frame bridge between apriltag_marker_base
-    (apriltag_ros image-derived axes) and volcaniarm_base_link (URDF
-    body axes). The two are not the same orientation in general, and
-    the static rotation between them is not encoded anywhere we can
-    consult without live TF. Use ``d_diff`` for accuracy and the
-    cluster scatter helpers in ``metrics.py`` for repeatability.
+    The headline accuracy metric is now ``d_error`` (signed Y-Z segment
+    residual, frame-independent). FK is still joined for completeness
+    so the notebook can plot per-target FK alongside detection.
     """
     target_tag = tag[tag['phase'] == 'target'].copy()
     target_tag['target_idx'] = target_tag['target_idx'].astype(int)
@@ -227,9 +212,4 @@ def align_fk_to_tag(tag: pd.DataFrame, fk: pd.DataFrame) -> pd.DataFrame:
     merged = target_tag.merge(
         fk[['cycle', 'target_idx', 'fk_x', 'fk_y', 'fk_z']],
         on=['cycle', 'target_idx'], how='left')
-    merged['d_tag'] = np.sqrt(
-        merged['x'] ** 2 + merged['y'] ** 2 + merged['z'] ** 2)
-    merged['d_fk'] = np.sqrt(
-        merged['fk_x'] ** 2 + merged['fk_y'] ** 2 + merged['fk_z'] ** 2)
-    merged['d_diff'] = merged['d_tag'] - merged['d_fk']
     return merged

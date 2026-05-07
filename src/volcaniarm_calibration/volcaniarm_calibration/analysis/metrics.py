@@ -121,6 +121,22 @@ def repeatability_iso9283(positions: pd.DataFrame,
     }
 
 
+def accuracy_segment_length(observations: pd.DataFrame) -> Stats:
+    """Y-Z segment-length accuracy metric for static-accuracy runs.
+
+    Reads the runner-logged ``d_error`` column (signed, metres) where
+    ``d_error = ||detected_base->ee||_yz - ||urdf_base->ee||_yz``,
+    filtered to ``phase == 'target'`` rows, and returns mean / std /
+    worst / 95% CI across them.
+
+    Frame-independent: the comparison is between two scalars, so any
+    static rotation between apriltag_marker_base and apriltag_base_link
+    cancels. The number is what the thesis quotes for static accuracy.
+    """
+    target = observations[observations['phase'] == 'target']
+    return summary(target['d_error'].dropna().tolist())
+
+
 def accuracy_iso9283(positions: pd.DataFrame,
                      commanded: Sequence[float],
                      dims: Sequence[str] = ('y', 'z')) -> dict:

@@ -1,18 +1,22 @@
 """Qt widget for the calibration dashboard.
 
-Human-in-the-loop flow for real-hardware calibration:
+Hands-off (auto-continue) and operator-gated flows for real-hardware
+calibration:
 
   1. Operator picks the test type, fills in initial and goal pose
-     (workspace y, z metres), iterations, samples per visit.
+     (workspace y, z metres), iteration count, and (for repeatability)
+     the home-confirm gate parameters.
   2. Click Start Run. The arm moves to the initial pose, captures a
      baseline reading of the apriltag base->ee transform, then begins
      the iteration loop.
-  3. At each iteration the arm settles at the goal pose and the runner
-     blocks. The operator physically repositions the real camera until
-     both apriltags are visible. Once the runner sees a fresh
-     ``apriltag_marker_base -> apriltag_marker_ee`` TF the Continue
-     button enables. Click Continue to capture and move on; Cancel
+  3. At each iteration the arm moves to the goal, settles, and the
+     runner waits for a freshly progressed apriltag TF stamp before
+     capturing. Auto-continue advances on the next fresh detection;
+     unchecking it falls back to a manual Continue click. Cancel
      aborts the whole run.
+  4. Repeatability tests additionally gate each return-to-home on the
+     detected vs URDF Y-Z segment length agreeing within tolerance for
+     the configured number of consecutive fresh frames.
 
 UI is built programmatically (no .ui file) for simplicity.
 """
@@ -157,10 +161,6 @@ class CalibrationDashboardWidget(QWidget):
         self._iterations.setRange(1, 100)
         self._iterations.setValue(3)
         cfg_form.addRow('iterations', self._iterations)
-        self._samples = QSpinBox()
-        self._samples.setRange(1, 200)
-        self._samples.setValue(20)
-        cfg_form.addRow('samples per visit', self._samples)
         self._settle_time = QDoubleSpinBox()
         self._settle_time.setRange(0.0, 10.0)
         self._settle_time.setSingleStep(0.5)
@@ -187,6 +187,34 @@ class CalibrationDashboardWidget(QWidget):
         self._auto_hold.setValue(1.0)
         cfg_form.addRow('auto-continue fresh-hold (s)', self._auto_hold)
         layout.addWidget(cfg_box)
+
+        # Home-confirm gate: only meaningful for tests that opt in via
+        # `verify_home_with_tag` (currently the repeatability test).
+        # Toggles visibility on test-type change so the operator only
+        # sees the controls when they apply.
+        self._home_box = QGroupBox('Home-confirm gate (repeatability)')
+        home_form = QFormLayout(self._home_box)
+        self._home_tol_mm = QDoubleSpinBox()
+        self._home_tol_mm.setRange(1.0, 100.0)
+        self._home_tol_mm.setSingleStep(1.0)
+        self._home_tol_mm.setDecimals(1)
+        self._home_tol_mm.setSuffix(' mm')
+        self._home_tol_mm.setValue(20.0)
+        home_form.addRow('Y-Z segment tol', self._home_tol_mm)
+        self._home_hold_frames = QSpinBox()
+        self._home_hold_frames.setRange(1, 30)
+        self._home_hold_frames.setValue(5)
+        home_form.addRow('hold (consecutive fresh frames)', self._home_hold_frames)
+        self._home_timeout_s = QDoubleSpinBox()
+        self._home_timeout_s.setRange(1.0, 60.0)
+        self._home_timeout_s.setSingleStep(1.0)
+        self._home_timeout_s.setDecimals(1)
+        self._home_timeout_s.setSuffix(' s')
+        self._home_timeout_s.setValue(10.0)
+        home_form.addRow('timeout', self._home_timeout_s)
+        layout.addWidget(self._home_box)
+        # Default invisible; _on_test_changed flips it for repeatability.
+        self._home_box.setVisible(False)
 
         # Initial pose (defaults to the workspace (y, z) of theta=(0,0)
         # once the FK service responds; until then a sentinel value).
@@ -369,8 +397,13 @@ class CalibrationDashboardWidget(QWidget):
     @Slot(str)
     def _on_test_changed(self, name: str):
         is_workspace = (name == 'workspace_coverage')
+        is_repeatability = (name == 'repeatability')
         self._goals_box.setVisible(is_workspace)
         self._goal_box.setVisible(not is_workspace)
+        # Home-confirm controls only apply to tests that gate on tag-
+        # confirmed home (repeatability). Hide them otherwise so the
+        # operator isn't presented with knobs that have no effect.
+        self._home_box.setVisible(is_repeatability)
         # Workspace coverage visits each goal exactly once -- the
         # iterations spinbox doesn't apply. Disable it and pin to 1
         # so the operator isn't misled by a value the runner ignores.
@@ -478,20 +511,26 @@ class CalibrationDashboardWidget(QWidget):
         # compat with iter_visits and any existing test subclasses);
         # the new runner reads `request.goals` directly so the targets
         # field is mostly bookkeeping now.
-        test = cls(
-            targets=goals,
-            num_cycles=self._iterations.value(),
-            samples_per_visit=self._samples.value(),
-            settle_time=self._settle_time.value(),
-            sample_interval=0.1,
-            return_home_between_targets=True,
-        )
+        try:
+            test = cls(
+                targets=goals,
+                num_cycles=self._iterations.value(),
+                settle_time=self._settle_time.value(),
+                return_home_between_targets=True,
+            )
+        except ValueError as exc:
+            self._log_msg(f'cannot start: {exc}')
+            self._status_label.setText(f'cannot start: {exc}')
+            return
         request = RunRequest(
             test=test,
             output_root=Path(DEFAULT_OUTPUT_DIR).expanduser(),
             initial_pose=(self._initial_y.value(), self._initial_z.value()),
             goals=tuple(goals),
             detection_max_age_s=self._fresh_window.value(),
+            home_tol_m=self._home_tol_mm.value() / 1000.0,
+            home_hold_frames=self._home_hold_frames.value(),
+            home_timeout_s=self._home_timeout_s.value(),
         )
         if self._runner.request_run(request):
             self._start_btn.setEnabled(False)
@@ -799,11 +838,13 @@ class CalibrationDashboardWidget(QWidget):
         plugin_settings.set_value('goal_y', self._goal_y.value())
         plugin_settings.set_value('goal_z', self._goal_z.value())
         plugin_settings.set_value('iterations', self._iterations.value())
-        plugin_settings.set_value('samples', self._samples.value())
         plugin_settings.set_value('settle_time', self._settle_time.value())
         plugin_settings.set_value('fresh_window', self._fresh_window.value())
         plugin_settings.set_value('auto_continue', self._auto_continue.isChecked())
         plugin_settings.set_value('auto_hold', self._auto_hold.value())
+        plugin_settings.set_value('home_tol_mm', self._home_tol_mm.value())
+        plugin_settings.set_value('home_hold_frames', self._home_hold_frames.value())
+        plugin_settings.set_value('home_timeout_s', self._home_timeout_s.value())
         plugin_settings.set_value('goals_text', self._goals_edit.toPlainText())
 
     def restore_settings(self, plugin_settings):
@@ -818,10 +859,12 @@ class CalibrationDashboardWidget(QWidget):
             ('goal_y', self._goal_y),
             ('goal_z', self._goal_z),
             ('iterations', self._iterations),
-            ('samples', self._samples),
             ('settle_time', self._settle_time),
             ('fresh_window', self._fresh_window),
             ('auto_hold', self._auto_hold),
+            ('home_tol_mm', self._home_tol_mm),
+            ('home_hold_frames', self._home_hold_frames),
+            ('home_timeout_s', self._home_timeout_s),
         ):
             v = plugin_settings.value(key)
             if v is not None:
