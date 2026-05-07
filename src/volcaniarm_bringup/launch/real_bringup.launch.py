@@ -1,3 +1,4 @@
+import math
 import os
 from pathlib import Path
 
@@ -58,6 +59,15 @@ def _load_camera_pose_config():
                 f'{cfg["mode"]}, got {cfg["parent_frame"]!r}')
         if len(cfg['xyz']) != 3 or len(cfg['rpy']) != 3:
             raise ValueError('xyz must have 3 values and rpy must have 3')
+        # Defensive: refuse non-finite values. A bug elsewhere (e.g. a
+        # cv2 hand-eye solve that returned NaN on an underconstrained
+        # 2-DOF arm) shouldn't be able to reach the URDF parser, which
+        # would otherwise hang the entire launch.
+        for key in ('xyz', 'rpy'):
+            for v in cfg[key]:
+                if not math.isfinite(float(v)):
+                    raise ValueError(
+                        f'{key} contains non-finite value {v!r}')
         return cfg
     except Exception as exc:
         print(f'[real_bringup] WARNING: ignoring {_CAMERA_POSE_CONFIG} ({exc})')

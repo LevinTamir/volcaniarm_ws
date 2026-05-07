@@ -1,17 +1,21 @@
-"""EE-sweep camera-pose calibration with two modes.
+"""EE-sweep camera-pose calibration -- position-only, two parent frames.
 
-Drives the arm through a curated list of safe EE poses, captures
+Drives the arm through the EE poses in calibration_poses.yaml, captures
 (URDF-truth EE-tag origin, detected EE-tag origin) per visit, and
-solves for the camera pose. Mode is auto-detected from the URDF
+solves for the camera position. Mode is auto-detected from the URDF
 parent of `camera_link`:
 
-  * `world` parent (camera-on-stand, URDF arg `mode:=tests`):
-    position-only solve. The stand orientation is fixed by physical
-    construction; we recover XYZ only and hold the URDF rpy.
+  * `world` parent (camera-on-stand, URDF arg `mode:=tests`)
+  * `camera_mount_rev_link` parent (camera-on-robot, URDF arg `mode:=work`)
 
-  * `camera_mount_rev_link` parent (camera-on-robot, URDF arg
-    `mode:=work`): full 6-DoF solve via cv2.calibrateHandEye
-    (eye-to-hand variant -- camera is fixed to the base, marker on EE).
+The math is the same in both modes: per-axis median of
+``p_parent_truth_i - R_parent_optical @ p_optical_detected_i`` with
+MAD-based outlier rejection. Camera orientation is *not* recovered --
+the volcaniarm is a 2-DOF planar arm and EE rotation diversity isn't
+sufficient for cv2.calibrateHandEye-style 6-DoF solves. Orientation is
+held at the URDF default of the parent->camera_link joint, which
+encodes the rigid mount geometry (the part that doesn't change between
+remountings).
 
 Output is the persistent `config/camera_pose.yaml` (consumed by
 `real_bringup.launch.py` at startup) plus a per-run audit
@@ -20,8 +24,8 @@ Output is the persistent `config/camera_pose.yaml` (consumed by
 Frame discipline (mirrors `_yz_segment_world` in calibration_runner):
 the truth-side and detection-side TF lookups are decoupled from the
 unknown camera_link xyz. Truth traverses
-`world -> ... -> apriltag_ee_link` (no camera). Detection is published
-directly by apriltag_ros as
+`<parent> -> ... -> apriltag_ee_link` (no camera traversal). Detection
+is published directly by apriltag_ros as
 `camera_color_optical_frame -> apriltag_marker_ee`. Origins of those
 two frames refer to the same physical point (the tag centre) so we
 only ever compare translations, never orientations.
@@ -93,16 +97,13 @@ class _PoseEntry:
 class _PoseSample:
     pose_idx: int
     comment: str
-    p_world_truth: np.ndarray            # (3,) world frame, URDF chain
-    p_optical_detected: np.ndarray       # (3,) optical frame, detector
-    # Optional 6-DoF transforms used by the eye-to-hand solve. Stored
-    # as (R, t) pairs to keep the per-pose payload self-contained.
-    R_base_ee: Optional[np.ndarray] = None      # (3,3) world->right_arm_tip rotation, snapshot at this pose
-    t_base_ee: Optional[np.ndarray] = None      # (3,)  world->right_arm_tip translation
-    R_optical_marker: Optional[np.ndarray] = None  # (3,3) optical->apriltag_marker_ee rotation
-    t_optical_marker: Optional[np.ndarray] = None  # (3,)
-    R_mount_ee: Optional[np.ndarray] = None     # (3,3) camera_mount_rev_link->right_arm_tip rotation (mode B)
-    t_mount_ee: Optional[np.ndarray] = None     # (3,)
+    # Origin of apriltag_ee_link expressed in the camera's URDF parent
+    # frame (world for stand, camera_mount_rev_link for on-robot). The
+    # parent traversal does NOT go through the unknown camera_link xyz,
+    # so this is decoupled from what we're solving for.
+    p_parent_truth: np.ndarray
+    # Origin of apriltag_marker_ee in optical frame (apriltag_ros).
+    p_optical_detected: np.ndarray
 
 
 # ------------------------------------------------------------------ #
@@ -378,19 +379,30 @@ class EESweepCameraCalibrationRunner:
     def detect_mode(self) -> Optional[str]:
         """Return MODE_STAND / MODE_ON_ROBOT / None based on URDF.
 
-        Walks one TF hop up from camera_link. Conservative: only
-        recognised parents trigger a non-None return so the dashboard
-        can disable the button when the URDF isn't in a calibration-
-        capable configuration.
+        Queries the TF buffer's frame graph for the *direct* parent of
+        `camera_link`. A bare `lookup_transform(parent, camera_link)` is
+        not sufficient: TF resolves the chain through whichever
+        intermediate frames exist, so both `world` and
+        `camera_mount_rev_link` lookups succeed in both modes -- the
+        difference between them is which static joint is published
+        directly above `camera_link`, not whether a TF path exists.
         """
-        for parent in (WORLD_FRAME, CAMERA_MOUNT_FRAME):
-            try:
-                self._runner._tf_buffer.lookup_transform(  # noqa: SLF001
-                    parent, CAMERA_LINK_FRAME, RclpyTime(),
-                    timeout=RclpyDuration(seconds=0.2))
-            except Exception:
-                continue
-            return MODE_STAND if parent == WORLD_FRAME else MODE_ON_ROBOT
+        try:
+            frames_yaml = self._runner._tf_buffer.all_frames_as_yaml()  # noqa: SLF001
+        except Exception:
+            return None
+        try:
+            frames = yaml.safe_load(frames_yaml) or {}
+        except Exception:
+            return None
+        entry = frames.get(CAMERA_LINK_FRAME)
+        if not isinstance(entry, dict):
+            return None
+        parent = entry.get('parent')
+        if parent == WORLD_FRAME:
+            return MODE_STAND
+        if parent == CAMERA_MOUNT_FRAME:
+            return MODE_ON_ROBOT
         return None
 
     # -- emit helpers -------------------------------------------------
@@ -439,29 +451,38 @@ class EESweepCameraCalibrationRunner:
                 self._emit_finished('failed', None, reason)
                 return
 
-            # Static URDF transforms gathered up front.
-            R_world_optical = self._lookup_rotation(WORLD_FRAME, OPTICAL_FRAME)
+            # The camera's URDF parent frame: where camera_link is anchored
+            # in the URDF, and the frame the calibrated XYZ ends up
+            # expressed in.
+            urdf_parent = WORLD_FRAME if mode == MODE_STAND else CAMERA_MOUNT_FRAME
+
+            # Static URDF transforms gathered up front. R_parent_optical's
+            # rotation is determined by static joints only -- the unknown
+            # translation in the camera_joint / calibration_camera_joint
+            # doesn't affect rotation, so this lookup is correct even
+            # before any calibration.
+            R_parent_optical = self._lookup_rotation(urdf_parent, OPTICAL_FRAME)
             tf_link_to_optical = self._lookup_static(
                 CAMERA_LINK_FRAME, OPTICAL_FRAME)
-            if R_world_optical is None or tf_link_to_optical is None:
-                reason = ('URDF chain incomplete: cannot read '
-                          'world->camera_color_optical_frame or '
-                          'camera_link->camera_color_optical_frame')
+            if R_parent_optical is None or tf_link_to_optical is None:
+                reason = (f'URDF chain incomplete: cannot read '
+                          f'{urdf_parent}->{OPTICAL_FRAME} or '
+                          f'{CAMERA_LINK_FRAME}->{OPTICAL_FRAME}')
                 self._emit_status(f'aborting: {reason}')
                 self._emit_finished('failed', None, reason)
                 return
             link_to_optical_xyz, link_to_optical_quat = _xyz_quat_from_transform(
                 tf_link_to_optical.transform)
             self._emit_status(
-                f'world->optical rpy_deg={np.degrees(_quat_to_rpy(_matrix_to_quat(R_world_optical))).round(2).tolist()} '
+                f'{urdf_parent}->{OPTICAL_FRAME} '
+                f'rpy_deg={np.degrees(_quat_to_rpy(_matrix_to_quat(R_parent_optical))).round(2).tolist()} '
                 f'(static URDF; held constant for the run)')
 
-            # Read the current URDF orientation of camera_link in its
-            # parent (world for stand, camera_mount_rev_link for on-robot).
-            # In stand mode this is what we copy into camera_pose.yaml
-            # since orientation is held; in on-robot mode it is just for
-            # logging since orientation gets solved.
-            urdf_parent = WORLD_FRAME if mode == MODE_STAND else CAMERA_MOUNT_FRAME
+            # Read the URDF orientation of camera_link in its parent. We
+            # solve for translation only and copy this orientation through
+            # to camera_pose.yaml unchanged -- the rigid mount geometry
+            # (URDF defaults of camera_joint / calibration_camera_joint
+            # rpy) is what fixes the camera orientation in physical space.
             tf_parent_camlink = self._lookup_static(urdf_parent, CAMERA_LINK_FRAME)
             urdf_camlink_xyz, urdf_camlink_quat = (
                 _xyz_quat_from_transform(tf_parent_camlink.transform)
@@ -469,7 +490,7 @@ class EESweepCameraCalibrationRunner:
 
             # Sweep + sample.
             samples, drift = self._sweep_poses(
-                poses, mode, R_world_optical,
+                poses, urdf_parent, R_parent_optical,
                 trajectory_duration, settle_time, detection_timeout_s)
 
             if self._runner._stop_event.is_set():  # noqa: SLF001
@@ -485,13 +506,12 @@ class EESweepCameraCalibrationRunner:
                 self._emit_finished('failed', None, reason)
                 return
 
-            if mode == MODE_STAND:
-                solved_xyz, solved_quat, residual_stats = self._solve_stand(
-                    samples, R_world_optical,
-                    link_to_optical_xyz, urdf_camlink_quat)
-            else:
-                solved_xyz, solved_quat, residual_stats = self._solve_on_robot(
-                    samples, link_to_optical_xyz, link_to_optical_quat)
+            # Same position-only solve in both modes; only the parent frame
+            # differs. Orientation is held at the URDF default of the
+            # parent->camera_link joint.
+            solved_xyz, solved_quat, residual_stats = self._solve(
+                samples, R_parent_optical,
+                link_to_optical_xyz, urdf_camlink_quat)
 
             # Park at home so the arm ends in a known state.
             self._emit_status('parking arm at home (theta=0, 0)')
@@ -500,10 +520,36 @@ class EESweepCameraCalibrationRunner:
                 0.0, 0.0,
                 self._runner._default_trajectory_duration)  # noqa: SLF001
 
+            # Defensive validation. With both modes now using the
+            # position-only median solve this should be unreachable in
+            # practice (no cv2 NaN risk), but the URDF parser is still
+            # downstream of this YAML and a bad write would brick the
+            # next launch -- so we keep the guard.
+            non_finite = (
+                not np.all(np.isfinite(solved_xyz))
+                or not np.all(np.isfinite(solved_quat)))
+            if non_finite:
+                reason = (f'solver returned non-finite values '
+                          f'(xyz={solved_xyz.tolist()}, '
+                          f'quat={solved_quat.tolist()}); '
+                          f'camera_pose.yaml NOT updated.')
+                self._emit_status(f'aborting: {reason}')
+                result = self._build_result(
+                    mode, samples, solved_xyz, solved_quat, residual_stats,
+                    R_parent_optical, drift, urdf_parent)
+                result['solver_status'] = 'failed_non_finite'
+                try:
+                    result_path = self._save_yaml(result)
+                    self._emit_status(f'saved per-run audit: {result_path}')
+                except Exception:
+                    result_path = None
+                self._emit_finished('failed', result_path, reason)
+                return
+
             # Write artefacts.
             result = self._build_result(
                 mode, samples, solved_xyz, solved_quat, residual_stats,
-                R_world_optical, drift, urdf_parent)
+                R_parent_optical, drift, urdf_parent)
             result_path = self._save_yaml(result)
             self._emit_status(f'saved per-run audit: {result_path}')
             config_path = self._save_camera_pose_config(
@@ -552,15 +598,21 @@ class EESweepCameraCalibrationRunner:
 
     # -- sweep + sample ---------------------------------------------
 
-    def _sweep_poses(self, poses: List[_PoseEntry], mode: str,
-                     R_world_optical_init: np.ndarray,
+    def _sweep_poses(self, poses: List[_PoseEntry], urdf_parent: str,
+                     R_parent_optical_init: np.ndarray,
                      trajectory_duration: float, settle_time: float,
                      detection_timeout_s: float
                      ) -> Tuple[List[_PoseSample], float]:
         """Drive arm through each pose, sample (URDF-truth EE, detected EE).
 
-        Returns (samples, max_R_world_optical_drift_F). The drift scalar
-        is the max Frobenius norm difference between R_world_optical at
+        ``urdf_parent`` is whatever frame the camera is parented to in
+        the URDF -- `world` for stand mode, `camera_mount_rev_link` for
+        on-robot. Truth is always `lookup(urdf_parent, apriltag_ee_link)`,
+        which traverses only static URDF + FK and is decoupled from the
+        unknown camera_link translation.
+
+        Returns (samples, max_R_parent_optical_drift_F). The drift scalar
+        is the max Frobenius norm difference between R_parent_optical at
         each pose vs the run-start snapshot; should be ~0 since the
         chain is fully static.
         """
@@ -596,51 +648,32 @@ class EESweepCameraCalibrationRunner:
                 self._emit_progress(idx, total)
                 continue
 
-            # Truth side: world -> apriltag_ee_link (origin only).
-            tf_truth = self._lookup_static(WORLD_FRAME, EE_URDF_FRAME)
+            # Truth side: parent -> apriltag_ee_link (origin only).
+            tf_truth = self._lookup_static(urdf_parent, EE_URDF_FRAME)
             if tf_truth is None:
                 self._emit_status(
-                    f'pose {idx}: URDF chain world->apriltag_ee_link '
+                    f'pose {idx}: URDF chain {urdf_parent}->{EE_URDF_FRAME} '
                     f'unavailable; skipping sample')
                 self._emit_progress(idx, total)
                 continue
-            p_world_truth, _ = _xyz_quat_from_transform(tf_truth.transform)
-            p_optical_detected, q_optical_detected = _xyz_quat_from_transform(
+            p_parent_truth, _ = _xyz_quat_from_transform(tf_truth.transform)
+            p_optical_detected, _ = _xyz_quat_from_transform(
                 tf_fresh.transform)
 
-            # Static-rotation guard (mode A): if R_world_optical drifts
-            # mid-run, the orientation we held constant is wrong.
-            R_now = self._lookup_rotation(WORLD_FRAME, OPTICAL_FRAME)
+            # Static-rotation guard: if the chain rotation drifts mid-run
+            # the orientation we hold constant is wrong.
+            R_now = self._lookup_rotation(urdf_parent, OPTICAL_FRAME)
             if R_now is not None:
-                drift = float(np.linalg.norm(R_now - R_world_optical_init))
+                drift = float(np.linalg.norm(R_now - R_parent_optical_init))
                 if drift > max_drift:
                     max_drift = drift
 
-            sample = _PoseSample(
+            samples.append(_PoseSample(
                 pose_idx=idx,
                 comment=p.comment,
-                p_world_truth=p_world_truth,
+                p_parent_truth=p_parent_truth,
                 p_optical_detected=p_optical_detected,
-                R_optical_marker=_quat_to_matrix(q_optical_detected),
-                t_optical_marker=p_optical_detected.copy(),
-            )
-
-            # Mode B needs gripper2base in the camera's parent frame too.
-            if mode == MODE_ON_ROBOT:
-                tf_mount_ee = self._lookup_static(
-                    CAMERA_MOUNT_FRAME, ROBOT_EE_FRAME)
-                if tf_mount_ee is None:
-                    self._emit_status(
-                        f'pose {idx}: URDF chain camera_mount_rev_link'
-                        f'->right_arm_tip_link unavailable; skipping sample')
-                    self._emit_progress(idx, total)
-                    continue
-                me_xyz, me_quat = _xyz_quat_from_transform(
-                    tf_mount_ee.transform)
-                sample.R_mount_ee = _quat_to_matrix(me_quat)
-                sample.t_mount_ee = me_xyz
-
-            samples.append(sample)
+            ))
             self._emit_progress(idx, total)
 
         return samples, max_drift
@@ -665,19 +698,31 @@ class EESweepCameraCalibrationRunner:
             return True
         return not self._runner._stop_event.wait(seconds)  # noqa: SLF001
 
-    # -- the math (per mode) -----------------------------------------
+    # -- the math ----------------------------------------------------
 
-    def _solve_stand(self, samples: List[_PoseSample],
-                     R_world_optical: np.ndarray,
-                     link_to_optical_xyz: np.ndarray,
-                     urdf_camlink_quat: Optional[np.ndarray]):
-        truths = np.array([s.p_world_truth for s in samples])
+    def _solve(self, samples: List[_PoseSample],
+               R_parent_optical: np.ndarray,
+               link_to_optical_xyz: np.ndarray,
+               urdf_camlink_quat: Optional[np.ndarray]):
+        """Position-only solve, parent-frame agnostic.
+
+        For each pose i, the per-axis estimate of the optical-frame
+        origin in the camera's parent frame is
+        ``p_parent_optical_i = p_parent_truth_i - R_parent_optical
+        @ p_optical_detected_i``. Aggregated by per-axis median +
+        MAD-trim, then converted to camera_link via the static
+        ``camera_link -> optical`` offset.
+
+        Orientation is held at the URDF default of the parent->camera_link
+        joint -- that's the rigid mount geometry, which is what determines
+        camera orientation in physical space (no observable rotation
+        diversity to recover orientation from on this 2-DOF arm anyway).
+        """
+        truths = np.array([s.p_parent_truth for s in samples])
         detecteds = np.array([s.p_optical_detected for s in samples])
         out = solve_position_only(
             truths, detecteds,
-            R_world_optical, link_to_optical_xyz)
-        # Orientation: hold the URDF default of calibration_camera_joint
-        # (which is what camera_link's parent orientation in world is).
+            R_parent_optical, link_to_optical_xyz)
         if urdf_camlink_quat is not None:
             quat = urdf_camlink_quat
         else:
@@ -693,68 +738,6 @@ class EESweepCameraCalibrationRunner:
         }
         return out['p_world_camera_link'], quat, residual_stats
 
-    def _solve_on_robot(self, samples: List[_PoseSample],
-                        link_to_optical_xyz: np.ndarray,
-                        link_to_optical_quat: np.ndarray):
-        R_mount_ee = [s.R_mount_ee for s in samples]
-        t_mount_ee = [s.t_mount_ee for s in samples]
-        R_optical_marker = [s.R_optical_marker for s in samples]
-        t_optical_marker = [s.t_optical_marker for s in samples]
-        out = solve_handeye_eye_to_hand(
-            R_mount_ee, t_mount_ee,
-            R_optical_marker, t_optical_marker)
-
-        # cv2 returned T(camera_mount_rev_link, optical). Convert to
-        # T(camera_mount_rev_link, camera_link) via the static URDF
-        # offset.
-        M_mount_to_optical = out['M_mount_to_optical']
-        M_link_to_optical = _se3(link_to_optical_xyz, link_to_optical_quat)
-        M_mount_to_link = M_mount_to_optical @ _se3_inv(M_link_to_optical)
-        xyz = M_mount_to_link[:3, 3].copy()
-        quat = _matrix_to_quat(M_mount_to_link[:3, :3])
-
-        # Reproject each detected origin via the solved transform and
-        # compare against the truth in the mount frame -- gives us a
-        # comparable residual scalar to mode A. Truth side here is
-        # T(camera_mount_rev_link, apriltag_ee_link), which we derive
-        # from the per-pose mount->ee FK + the (assumed) tag mount.
-        # Simpler: we compare detected-rotated-into-mount against the
-        # known T(camera_mount_rev_link, right_arm_tip_link) translation,
-        # which is what mode B's truth chain leaves us with after
-        # canceling the constant tag offset. This is a noise diagnostic;
-        # the cv2 solve handles the offset internally.
-        residuals_xyz: List[np.ndarray] = []
-        for s in samples:
-            p_optical_marker = s.t_optical_marker
-            p_mount_marker_pred = (
-                M_mount_to_optical[:3, :3] @ p_optical_marker
-                + M_mount_to_optical[:3, 3])
-            # Use the mount->ee FK as a rough truth, ignoring the
-            # constant tag offset (it cancels in residuals across poses).
-            truth_centroid = s.t_mount_ee
-            residuals_xyz.append(p_mount_marker_pred - truth_centroid)
-        residuals_arr = np.array(residuals_xyz) if residuals_xyz else np.zeros((0, 3))
-        # Center residuals to remove the constant tag offset.
-        if residuals_arr.shape[0] >= 1:
-            residuals_centered = residuals_arr - residuals_arr.mean(axis=0)
-            norms = np.linalg.norm(residuals_centered, axis=1)
-            rms = float(np.sqrt(np.mean(norms ** 2)))
-            std = float(np.std(norms))
-            mx = float(np.max(norms))
-        else:
-            residuals_centered = residuals_arr
-            rms = std = mx = 0.0
-
-        residual_stats = {
-            'rms_m': rms,
-            'std_m': std,
-            'max_m': mx,
-            'kept_indices': list(range(len(samples))),
-            'rejected_indices': [],
-            'per_pose_residuals': residuals_centered.tolist(),
-        }
-        return xyz, quat, residual_stats
-
     # -- output ------------------------------------------------------
 
     def _build_result(self, mode, samples, solved_xyz, solved_quat,
@@ -763,8 +746,7 @@ class EESweepCameraCalibrationRunner:
         rpy = _quat_to_rpy(solved_quat)
         return {
             'mode': mode,
-            'method': ('ee_sweep_position_only' if mode == MODE_STAND
-                       else 'ee_sweep_handeye_park'),
+            'method': 'ee_sweep_position_only',
             'timestamp': datetime.now().isoformat(),
             'samples_used': len(samples),
             'solved': {
@@ -786,13 +768,11 @@ class EESweepCameraCalibrationRunner:
                 for s in samples
             ],
             'frames': {
-                'truth_chain': (
-                    'world -> apriltag_ee_link' if mode == MODE_STAND
-                    else 'camera_mount_rev_link -> right_arm_tip_link'),
-                'detection': 'camera_color_optical_frame -> apriltag_marker_ee',
-                'output': f'{parent_frame} -> camera_link',
+                'truth_chain': f'{parent_frame} -> {EE_URDF_FRAME}',
+                'detection': f'{OPTICAL_FRAME} -> {EE_DETECTED_FRAME}',
+                'output': f'{parent_frame} -> {CAMERA_LINK_FRAME}',
             },
-            'r_world_optical_drift_during_run': float(drift),
+            'r_parent_optical_drift_during_run': float(drift),
         }
 
     def _save_yaml(self, result: dict) -> Path:
@@ -834,15 +814,10 @@ class EESweepCameraCalibrationRunner:
         self._emit_status(
             f'residual rms={residual_stats.get("rms_m", 0.0) * 1000:.2f} mm '
             f'max={residual_stats.get("max_m", 0.0) * 1000:.2f} mm')
-        if mode == MODE_STAND and residual_stats.get('rms_m', 0.0) > 0.020:
+        if residual_stats.get('rms_m', 0.0) > 0.020:
             self._emit_status(
                 'WARNING: rms residual > 20 mm; URDF apriltag mount may '
                 'be biased -- remeasure apriltag_ee_mount_joint origin')
-        if mode == MODE_ON_ROBOT and residual_stats.get('rms_m', 0.0) > 0.050:
-            self._emit_status(
-                'WARNING: rms residual > 50 mm; cv2.calibrateHandEye is '
-                'not converging -- check pose diversity and detector '
-                'rotation noise')
 
     # -- yaml load ---------------------------------------------------
 

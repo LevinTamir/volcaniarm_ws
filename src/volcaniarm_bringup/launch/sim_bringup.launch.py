@@ -1,3 +1,4 @@
+import math
 import os
 from pathlib import Path
 
@@ -46,6 +47,11 @@ def _camera_xacro_defaults() -> dict:
         for key in ('mode', 'parent_frame', 'child_frame', 'xyz', 'rpy'):
             if key not in cfg:
                 raise ValueError(f'missing key {key!r}')
+        for key in ('xyz', 'rpy'):
+            for v in cfg[key]:
+                if not math.isfinite(float(v)):
+                    raise ValueError(
+                        f'{key} contains non-finite value {v!r}')
     except Exception as exc:
         print(f'[sim_bringup] WARNING: ignoring {_CAMERA_POSE_CONFIG} ({exc})')
         return {**cal_cam, **on_robot_cam}
