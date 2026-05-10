@@ -244,6 +244,21 @@ def generate_launch_description():
         description="AprilTag edge length [m]",
     )
 
+    # Optional override for the EE marker world-orientation prior used
+    # by the EE-sweep calibration solver. Format: comma-separated rpy
+    # in radians (extrinsic XYZ Euler) of `apriltag_marker_ee` in
+    # world. Empty -> the runner reads R(world, apriltag_marker_ee)
+    # via TF at run start (uses URDF defaults). Set this when the URDF
+    # apriltag mount is biased and you want to bypass it; e.g. for
+    # "marker face up, image axes aligned with world" pass
+    # `marker_world_rpy:=0.0,0.0,0.0`.
+    marker_world_rpy_arg = DeclareLaunchArgument(
+        "marker_world_rpy",
+        default_value="",
+        description="Override marker world-orientation prior. Format "
+                    "'r,p,y' (rad), or empty to read from URDF.",
+    )
+
     # camera_pose.yaml (written by the dashboard's Calibrate camera
     # button) holds either the off-robot stand pose (parent: world) or
     # the on-robot mount pose (parent: camera_mount_rev_link), keyed by
@@ -413,6 +428,7 @@ def generate_launch_description():
         launch_arguments=[
             ("tag_size", LaunchConfiguration("tag_size")),
             ("camera_calibration_only", LaunchConfiguration("calibration")),
+            ("marker_world_rpy", LaunchConfiguration("marker_world_rpy")),
         ],
         condition=show_dashboard,
     )
@@ -458,6 +474,7 @@ def generate_launch_description():
             calibration_arg,
             pointcloud_arg,
             tag_size_arg,
+            marker_world_rpy_arg,
             calibration_camera_x_arg,
             calibration_camera_y_arg,
             calibration_camera_z_arg,

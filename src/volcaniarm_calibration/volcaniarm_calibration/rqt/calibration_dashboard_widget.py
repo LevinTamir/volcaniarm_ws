@@ -104,6 +104,28 @@ class CalibrationDashboardWidget(QWidget):
                 self._camera_calibration_only = bool(raw)
         except Exception:
             self._camera_calibration_only = False
+
+        # Operator override for the EE marker world-orientation prior
+        # used by the EE-sweep calibration solver. Format: 'r,p,y' in
+        # radians. Empty string -> URDF lookup at run start.
+        marker_rpy: Optional[tuple] = None
+        try:
+            if not node.has_parameter('marker_world_rpy'):
+                node.declare_parameter('marker_world_rpy', '')
+            raw = node.get_parameter('marker_world_rpy').value
+            if isinstance(raw, str) and raw.strip():
+                parts = [float(p) for p in raw.split(',')]
+                if len(parts) == 3:
+                    marker_rpy = (parts[0], parts[1], parts[2])
+                else:
+                    node.get_logger().warn(
+                        f'marker_world_rpy must be "r,p,y" (3 values); '
+                        f'got {raw!r}. Falling back to URDF lookup.')
+        except Exception as exc:
+            node.get_logger().warn(
+                f'marker_world_rpy parse failed ({exc}); '
+                f'falling back to URDF lookup.')
+        self._marker_world_rpy = marker_rpy
         self._bridge = _RunnerBridge()
         self._runner = CalibrationRunner(node)
         self._runner.status_cb = self._bridge.status.emit
@@ -134,7 +156,8 @@ class CalibrationDashboardWidget(QWidget):
         # AprilTag detection and writes a YAML record. Composes with
         # the test runner -- shares its TF buffer and _stop_event so a
         # single Cancel halts whichever is active.
-        self._cam_runner = CameraCalibrationRunner(self._runner)
+        self._cam_runner = CameraCalibrationRunner(
+            self._runner, marker_world_rpy=self._marker_world_rpy)
         self._cam_runner.status_cb = self._bridge.status.emit
         self._cam_runner.progress_cb = self._bridge.progress.emit
         self._cam_runner.finished_cb = (

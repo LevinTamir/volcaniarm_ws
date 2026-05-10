@@ -166,6 +166,14 @@ def generate_launch_description():
         description="Bridge the depth pointcloud topic from Gazebo",
     )
 
+    marker_world_rpy_arg = DeclareLaunchArgument(
+        "marker_world_rpy",
+        default_value="",
+        description="Override marker world-orientation prior used by "
+                    "the EE-sweep calibration. Format 'r,p,y' (rad), "
+                    "or empty to read from URDF at run start.",
+    )
+
     _cam_defaults = _camera_xacro_defaults()
     cal_cam_x_arg = DeclareLaunchArgument(
         "calibration_camera_x", default_value=_cam_defaults['calibration_camera_x'])
@@ -329,6 +337,7 @@ def generate_launch_description():
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
             ("tag_size", LaunchConfiguration("tag_size")),
             ("camera_calibration_only", LaunchConfiguration("calibration")),
+            ("marker_world_rpy", LaunchConfiguration("marker_world_rpy")),
         ],
         condition=show_dashboard,
     )
@@ -360,6 +369,7 @@ def generate_launch_description():
             controller_arg,
             tag_size_arg,
             pointcloud_arg,
+            marker_world_rpy_arg,
             cal_cam_x_arg, cal_cam_y_arg, cal_cam_z_arg,
             cal_cam_roll_arg, cal_cam_pitch_arg, cal_cam_yaw_arg,
             cam_x_arg, cam_y_arg, cam_z_arg,

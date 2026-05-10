@@ -45,6 +45,18 @@ def generate_launch_description():
         choices=['true', 'false'],
         description='Restrict the rqt dashboard to the Camera localization '
                     'group only (set when calibration:=true).')
+
+    # Operator override for the marker world-orientation prior used by
+    # the EE-sweep calibration solver. Format: comma-separated rpy in
+    # radians, e.g. `marker_world_rpy:=0.0,0.0,0.0` for "marker face
+    # up, image axes aligned with world". Empty string => use URDF
+    # lookup at run start.
+    marker_world_rpy_arg = DeclareLaunchArgument(
+        'marker_world_rpy', default_value='',
+        description='Override the marker world-orientation prior used by '
+                    'the EE-sweep calibration. Format: "r,p,y" (radians, '
+                    'extrinsic XYZ Euler) of apriltag_marker_ee in world. '
+                    'Empty -> read from URDF at run start.')
     # Must be propagated to apriltag, rviz, and rqt so the dashboard's
     # node clock matches the TF stamps (which inherit sim time from the
     # Gazebo camera). Otherwise the runner sees apparent ages of ~1.78e9
@@ -96,6 +108,7 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': use_sim_time,
             'camera_calibration_only': camera_calibration_only,
+            'marker_world_rpy': LaunchConfiguration('marker_world_rpy'),
         }],
         condition=IfCondition(LaunchConfiguration('use_rqt')),
     )
@@ -106,6 +119,7 @@ def generate_launch_description():
         tag_size_arg,
         use_sim_time_arg,
         camera_calibration_only_arg,
+        marker_world_rpy_arg,
         apriltag_node,
         rviz,
         rqt,
