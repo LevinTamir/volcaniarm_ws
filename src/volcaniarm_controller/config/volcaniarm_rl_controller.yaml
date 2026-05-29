@@ -48,8 +48,9 @@ volcaniarm_rl_controller:
     # joint, same order as `joints` above) to enforce mechanical /
     # safety limits independent of what the policy outputs.
     # Recommended on real hardware.
-    # joint_position_min: [...]
-    # joint_position_max: [...]
+    # Order matches `joints` above: [left_elbow, right_elbow].
+    joint_position_min: [-1.0, -1.0]
+    joint_position_max: [1.0, 1.0]
 
     # EMA smoothing on raw policy outputs. 1.0 = no smoothing
     # (policy output passed through unchanged). Lower values damp
@@ -57,7 +58,7 @@ volcaniarm_rl_controller:
     # control steps. Try 0.5-0.8 if observing chatter on real
     # hardware; keep at 1.0 for thesis-grade comparisons against
     # training-time behaviour.
-    action_smoothing_alpha: 1.0
+    action_smoothing_alpha: 0.3
 
     # Stale-target watchdog. If the latest target_topic message has a
     # non-zero header.stamp older than this many seconds, the
