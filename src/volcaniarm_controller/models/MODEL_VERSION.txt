@@ -1,0 +1,10 @@
+policy.onnx
+  source: volcaniarm_isaaclab logs/reach/rsl_rl/volcaniarm_reach/2026-05-05_10-56-15/exported/policy.onnx
+  md5:    0b136c01aaf6ddaa5221471688a9b051
+  task:   Volcaniarm-Reach-v0 (state-based, MLP)
+  notes:  Includes the smoothness fixes — action_rate / joint_vel penalties
+          restricted to elbow joints, 10× smoothness bump.
+
+policy_vision.onnx (not tracked — see .gitignore)
+  source: volcaniarm_isaaclab logs/reach_vision/rsl_rl/volcaniarm_reach_vision/2026-05-05_13-01-17/exported/policy_bundled.onnx
+  task:   Volcaniarm-Reach-Vision-v0 (image → ResNet18 + MLP, bundled)

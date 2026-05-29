@@ -1,3 +1,7 @@
-# Trained policy artifacts live here but aren't committed.
-*.onnx
+# Trained policy artifacts live here. The small state-based policy.onnx
+# (~7 KB) is committed. Larger artifacts — vision bundles, .pt checkpoints —
+# stay untracked: their source of truth is the training repo's
+# logs/<task>/rsl_rl/<run>/exported/, and committing them would bloat
+# this repo fast across retrains.
+*_vision.onnx
 *.pt
