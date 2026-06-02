@@ -8,14 +8,14 @@
        (skipping the on-robot mount) at a parameterised pose;
        real_bringup forwards the calibrated values from camera_pose.yaml
        so the URDF directly reflects the measured stand pose. Defaults
-       place the stand 1.5 m in front of the arm and 0.6 m above the
+       place the stand 1.5 m in front of the arm and 0.65 m above the
        floor. Note: world_to_base has yaw=pi, so the arm reaches into
        world -X. "In front of the arm" is world x=-1.5, with the
        camera looking back toward world +X (rpy=0 since camera_link
        inherits world's identity orientation). -->
   <xacro:arg name="calibration_camera_x"     default="-1.5" />
   <xacro:arg name="calibration_camera_y"     default="0.0" />
-  <xacro:arg name="calibration_camera_z"     default="0.6" />
+  <xacro:arg name="calibration_camera_z"     default="0.65" />
   <xacro:arg name="calibration_camera_roll"  default="0.0" />
   <xacro:arg name="calibration_camera_pitch" default="0.0" />
   <xacro:arg name="calibration_camera_yaw"   default="0.0" />

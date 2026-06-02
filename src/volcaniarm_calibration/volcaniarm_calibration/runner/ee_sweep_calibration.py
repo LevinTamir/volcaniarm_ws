@@ -83,6 +83,34 @@ MODE_STAND = 'calibration_stand'   # camera parented to world
 MODE_ON_ROBOT = 'on_robot_mount'   # camera parented to camera_mount_rev_link
 
 
+def write_camera_pose_config(mode: str, parent_frame: str,
+                             xyz: np.ndarray, quat: np.ndarray,
+                             source: str = 'ee_sweep') -> Path:
+    """Persist the solved camera pose to DEFAULT_CAMERA_POSE_CONFIG.
+
+    Single source of the camera_pose.yaml schema consumed by
+    real_bringup's validator. Both the EE-sweep solver and the
+    base-tag locator write through here so the two stay compatible.
+    `source` records which tool produced the pose.
+    """
+    rpy = _quat_to_rpy(quat)
+    DEFAULT_CAMERA_POSE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        'mode': mode,
+        'parent_frame': parent_frame,
+        'child_frame': CAMERA_LINK_FRAME,
+        'xyz': [float(v) for v in xyz],
+        'rpy': [float(v) for v in rpy],
+        'quat': [float(v) for v in quat],
+        'rpy_deg': [float(math.degrees(v)) for v in rpy],
+        'last_updated': datetime.now().isoformat(timespec='seconds'),
+        'source': source,
+    }
+    with DEFAULT_CAMERA_POSE_CONFIG.open('w') as f:
+        yaml.safe_dump(payload, f, sort_keys=False)
+    return DEFAULT_CAMERA_POSE_CONFIG
+
+
 StatusCb = Callable[[str], None]
 ProgressCb = Callable[[int, int], None]
 FinishedCb = Callable[[str, Optional[Path], str], None]
@@ -873,22 +901,8 @@ class EESweepCameraCalibrationRunner:
 
     def _save_camera_pose_config(self, mode: str, parent_frame: str,
                                  xyz: np.ndarray, quat: np.ndarray) -> Path:
-        rpy = _quat_to_rpy(quat)
-        DEFAULT_CAMERA_POSE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            'mode': mode,
-            'parent_frame': parent_frame,
-            'child_frame': CAMERA_LINK_FRAME,
-            'xyz': [float(v) for v in xyz],
-            'rpy': [float(v) for v in rpy],
-            'quat': [float(v) for v in quat],
-            'rpy_deg': [float(math.degrees(v)) for v in rpy],
-            'last_updated': datetime.now().isoformat(timespec='seconds'),
-            'source': 'ee_sweep',
-        }
-        with DEFAULT_CAMERA_POSE_CONFIG.open('w') as f:
-            yaml.safe_dump(payload, f, sort_keys=False)
-        return DEFAULT_CAMERA_POSE_CONFIG
+        return write_camera_pose_config(
+            mode, parent_frame, xyz, quat, source='ee_sweep')
 
     def _log_summary(self, mode: str, xyz: np.ndarray, quat: np.ndarray,
                      residual_stats: dict):
