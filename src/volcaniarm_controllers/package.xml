@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>volcaniarm_controller</name>
+  <name>volcaniarm_controllers</name>
   <version>0.0.0</version>
-  <description>Volcaniarm controllers including closed-loop trajectory controller</description>
+  <description>Volcaniarm custom controllers: passive-joint broadcaster and RL policy controller</description>
   <maintainer email="tamirlvn@gmail.com">tamir</maintainer>
   <license>TODO: License declaration</license>
 
@@ -12,7 +12,7 @@
 
   <depend>ament_index_cpp</depend>
   <depend>controller_interface</depend>
-  <depend>joint_trajectory_controller</depend>
+  <depend>hardware_interface</depend>
   <depend>onnxruntime_vendor</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
@@ -21,7 +21,10 @@
   <depend>sensor_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>volcaniarm_kinematics</depend>
 
+  <!-- Stock JTC is loaded as a plugin at runtime (no longer built against). -->
+  <exec_depend>joint_trajectory_controller</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>joy</exec_depend>
   <exec_depend>trajectory_msgs</exec_depend>

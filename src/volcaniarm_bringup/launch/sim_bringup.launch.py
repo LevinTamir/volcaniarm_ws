@@ -219,7 +219,7 @@ def generate_launch_description():
     )
 
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
-    volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
+    volcaniarm_controller_share = get_package_share_directory("volcaniarm_controllers")
     volcaniarm_motion_share = get_package_share_directory("volcaniarm_motion")
     volcaniarm_calibration_share = get_package_share_directory("volcaniarm_calibration")
 

@@ -137,7 +137,7 @@ def _camera_xacro_defaults() -> dict:
 
 
 def _build_controller_manager(context, robot_description_content):
-    volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
+    volcaniarm_controller_share = get_package_share_directory("volcaniarm_controllers")
     mode = LaunchConfiguration("controller").perform(context)
 
     yamls = []
@@ -317,7 +317,7 @@ def generate_launch_description():
     )
 
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
-    volcaniarm_controller_share = get_package_share_directory("volcaniarm_controller")
+    volcaniarm_controller_share = get_package_share_directory("volcaniarm_controllers")
     volcaniarm_calibration_share = get_package_share_directory("volcaniarm_calibration")
 
     # Robot description with real hardware (use_sim=false). The

@@ -29,7 +29,7 @@ volcaniarm_rl_controller:
     # Policy model (ONNX, exported by play.py). Supports
     # `$(find-pkg-share <pkg>)` substitution. Leave empty to run in
     # stub mode (holds the arm at default_joint_positions).
-    model_path: "$(find-pkg-share volcaniarm_controller)/models/policy.onnx"
+    model_path: "$(find-pkg-share volcaniarm_controllers)/models/policy.onnx"
 
     # EE target pose topic (geometry_msgs/PoseStamped, pose expressed
     # in `target_frame`).

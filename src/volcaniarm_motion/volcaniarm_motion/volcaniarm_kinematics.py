@@ -6,6 +6,13 @@ Provides IK and FK services that accept/return URDF joint angles.
 Internally converts between the planar FK model convention and URDF joint space.
 
 Includes configurable workspace limits as a safety envelope.
+
+DEPRECATED (feat/closed-loop-refactor): the closure math here duplicates the
+canonical C++ library ``volcaniarm_kinematics`` (single source of truth), and the
+IK uses a bare-acos branch that the library's branch-aware ``sideIK`` replaces.
+This node is slated for removal in Phase 3, when the MoveIt ``VolcaniarmIKPlugin``
+links the C++ library and supersedes the ``compute_ik`` / ``compute_fk`` services.
+Do not extend the math below; add it to the C++ library instead.
 """
 
 import math

@@ -8,7 +8,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 
 def _build_controller_manager(context, robot_description):
-    volcaniarm_controller = get_package_share_directory("volcaniarm_controller")
+    volcaniarm_controller = get_package_share_directory("volcaniarm_controllers")
     mode = LaunchConfiguration("controller").perform(context)
 
     yamls = []

@@ -2,11 +2,14 @@ controller_manager:
   ros__parameters:
     update_rate: 100 # Hz
 
+    # Actives: stock joint_trajectory_controller (the closed-loop subclass was
+    # retired; closure math now lives in volcaniarm_kinematics).
     volcaniarm_controller:
-      type: volcaniarm_controller/ClosedLoopTrajectoryController
+      type: joint_trajectory_controller/JointTrajectoryController
 
-    joint_state_broadcaster:
-      type: joint_state_broadcaster/JointStateBroadcaster
+    # Passives + full joint state: the single /joint_states source.
+    volcaniarm_passive_broadcaster:
+      type: volcaniarm_controller/PassiveBroadcaster
 
 
 volcaniarm_controller:
@@ -24,23 +27,26 @@ volcaniarm_controller:
     open_loop_control: true
     allow_integration_in_goal_trajectories: true
 
-    # Closed-loop passive joint configuration
+
+volcaniarm_passive_broadcaster:
+  ros__parameters:
     left_elbow_joint: volcaniarm_left_elbow_joint
     right_elbow_joint: volcaniarm_right_elbow_joint
 
+    # Order matters: [left_arm, right_arm, closure].
     passive_joints:
       - volcaniarm_left_arm_joint
       - volcaniarm_right_arm_joint
       - closure_joint
 
-    # End-effector marker visualization
+    # End-effector marker visualization (published off the RT path).
     ee_marker:
       enable: true
       frame_id: volcaniarm_base_link
       tool_offset: 0.0   # Tool X offset from end-effector [m]
       trail_size: 300
 
-    # 5-bar linkage kinematic parameters
+    # 5-bar linkage kinematic parameters (mirror volcaniarm_kinematics::Params).
     kinematics:
       L1: 0.41621         # Upper link length (elbow link) [m]
       L2: 0.62243         # Lower link length (arm link) [m]

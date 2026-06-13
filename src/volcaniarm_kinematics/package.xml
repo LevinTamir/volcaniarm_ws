@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>volcaniarm_kinematics</name>
+  <version>0.0.0</version>
+  <description>
+    Pure C++ kinematics library for the Volcaniarm planar five-bar linkage.
+    Single source of truth for the loop-closure math; zero ROS dependencies.
+  </description>
+  <maintainer email="tamirlvn@gmail.com">Tamir Levin</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

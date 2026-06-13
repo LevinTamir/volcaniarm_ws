@@ -8,7 +8,7 @@ and /volcaniarm_controller/joint_trajectory topic exist. Typically
 launched after sim_bringup.launch.py.
 
 Usage:
-  ros2 launch volcaniarm_controller joystick_teleop.launch.py
+  ros2 launch volcaniarm_controllers joystick_teleop.launch.py
 """
 
 import os
@@ -20,7 +20,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory('volcaniarm_controller')
+    pkg_share = get_package_share_directory('volcaniarm_controllers')
 
     use_sim_time_arg = DeclareLaunchArgument(
         'use_sim_time',
@@ -39,7 +39,7 @@ def generate_launch_description():
     )
 
     teleop_node = Node(
-        package='volcaniarm_controller',
+        package='volcaniarm_controllers',
         executable='joystick_teleop_node.py',
         name='volcaniarm_joystick_teleop',
         parameters=[

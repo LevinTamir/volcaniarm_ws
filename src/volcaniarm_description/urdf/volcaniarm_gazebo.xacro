@@ -11,10 +11,10 @@
   <gazebo>
     <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
       <xacro:if value="${_ctrl == 'traj' or _ctrl == 'all'}">
-        <parameters>$(find volcaniarm_controller)/config/volcaniarm_controllers.yaml</parameters>
+        <parameters>$(find volcaniarm_controllers)/config/volcaniarm_controllers.yaml</parameters>
       </xacro:if>
       <xacro:if value="${_ctrl == 'policy' or _ctrl == 'all'}">
-        <parameters>$(find volcaniarm_controller)/config/volcaniarm_rl_controller.yaml</parameters>
+        <parameters>$(find volcaniarm_controllers)/config/volcaniarm_rl_controller.yaml</parameters>
       </xacro:if>
     </plugin>
   </gazebo>

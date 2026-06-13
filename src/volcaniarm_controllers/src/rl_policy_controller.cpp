@@ -1,4 +1,4 @@
-#include "volcaniarm_controller/rl_policy_controller.hpp"
+#include "volcaniarm_controllers/rl_policy_controller.hpp"
 
 #include <algorithm>
 #include <cmath>

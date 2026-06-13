@@ -1,0 +1,12 @@
+<library path="passive_broadcaster">
+  <class name="volcaniarm_controller/PassiveBroadcaster"
+         type="volcaniarm_controller::PassiveBroadcaster"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Reads the two actuated elbow position state interfaces, solves the three
+      passive five-bar joint angles via volcaniarm_kinematics, and publishes all
+      five joints as a single sensor_msgs/JointState. Publishes EE markers and a
+      closure-infeasibility warning from a non-realtime timer.
+    </description>
+  </class>
+</library>

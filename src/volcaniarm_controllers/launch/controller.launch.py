@@ -10,11 +10,13 @@ def generate_launch_description():
         default_value="True",
     )
 
-    joint_state_broadcaster_spawner = Node(
+    # Publishes the full joint state (actives + solved passives); replaces the
+    # stock joint_state_broadcaster as the single /joint_states source.
+    passive_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
         arguments=[
-            "joint_state_broadcaster",
+            "volcaniarm_passive_broadcaster",
             "--controller-manager",
             "/controller_manager",
         ],
@@ -33,7 +35,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             use_sim_time_arg,
-            joint_state_broadcaster_spawner,
+            passive_broadcaster_spawner,
             volcaniarm_controller_spawner,
         ]
     )

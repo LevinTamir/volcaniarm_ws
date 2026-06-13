@@ -10,7 +10,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>volcaniarm_description</depend>
-  <depend>volcaniarm_controller</depend>
+  <depend>volcaniarm_controllers</depend>
   <depend>volcaniarm_calibration</depend>
   <depend>volcaniarm_motion</depend>
   <depend>gazebo_ros</depend>
