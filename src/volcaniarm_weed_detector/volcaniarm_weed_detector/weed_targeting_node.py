@@ -1,34 +1,37 @@
 #!/usr/bin/env python3
 """
-Motion planning node for the volcaniarm.
+Weed-targeting node for the volcaniarm.
 
-Features:
-  - Subscribes to weed detection topic, transforms position to arm frame via tf2
-  - Calls IK service to compute joint angles
-  - Sends trajectory to the controller
-  - Returns to home position after each operation
-  - Queues incoming detections to avoid dropping targets
+Subscribes to weed detections, transforms each to the arm frame via tf2,
+solves IK in-process with volcaniarm_kinematics (the single source of truth),
+sends a JointTrajectory to the controller, dwells, then returns home. Targets
+are queued so detections are not dropped while the arm is busy.
+
+This is the former volcaniarm_motion/motion_planning_node, moved here (detect +
+act in one package) and switched off the deprecated compute_ik service.
 """
+
+from collections import deque
 
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
-from collections import deque
 
 from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
-from volcaniarm_msgs.srv import ComputeIK
 from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import PointStamped
 
 import tf2_ros
 from tf2_geometry_msgs import do_transform_point
 
+import volcaniarm_kinematics_py as vk
 
-class MotionPlanningNode(Node):
+
+class WeedTargetingNode(Node):
     def __init__(self):
-        super().__init__('motion_planning_node')
+        super().__init__('weed_targeting_node')
         self.cb_group = ReentrantCallbackGroup()
 
         # ── Parameters ────────────────────────────────────────────
@@ -57,13 +60,12 @@ class MotionPlanningNode(Node):
         self.offset_y = self.get_parameter('offset_y').value
         self.offset_z = self.get_parameter('offset_z').value
 
+        # Linkage geometry (defaults mirror the URDF, guarded by the oracle).
+        self.kin = vk.Params()
+
         # ── TF2 ──────────────────────────────────────────────────
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
-
-        # ── IK client ────────────────────────────────────────────
-        self.ik_client = self.create_client(
-            ComputeIK, 'compute_ik', callback_group=self.cb_group)
 
         # ── Trajectory action ────────────────────────────────────
         self.action_client = ActionClient(
@@ -80,20 +82,16 @@ class MotionPlanningNode(Node):
         # ── State ────────────────────────────────────────────────
         self.busy = False
         self.target_queue = deque(maxlen=queue_size)
-
-        # Timer to process queued targets
         self.create_timer(0.1, self._process_queue, callback_group=self.cb_group)
 
         self.get_logger().info(
-            f'Motion planning ready — listening on {weed_topic}, '
+            f'Weed targeting ready — listening on {weed_topic}, '
             f'arm_frame={self.arm_frame}, return_home={self.return_home}')
 
     # ── Weed detection callback ───────────────────────────────────
 
     def weed_position_cb(self, msg: PointStamped):
-        """Transform weed position to arm frame and queue it."""
         try:
-            # Transform from detection frame to arm frame
             if msg.header.frame_id != self.arm_frame:
                 transform = self.tf_buffer.lookup_transform(
                     self.arm_frame, msg.header.frame_id,
@@ -106,63 +104,34 @@ class MotionPlanningNode(Node):
         z = msg.point.z + self.offset_z
         self.target_queue.append((y, z))
         self.get_logger().info(
-            f'Queued weed at y={y:.3f}, z={z:.3f} '
-            f'({len(self.target_queue)} in queue)')
+            f'Queued weed at y={y:.3f}, z={z:.3f} ({len(self.target_queue)} in queue)')
 
     # ── Queue processing ──────────────────────────────────────────
 
     def _process_queue(self):
-        """Process next target from the queue if not busy."""
         if self.busy or not self.target_queue:
             return
-
         y, z = self.target_queue.popleft()
         self.get_logger().info(f'Processing target y={y:.3f}, z={z:.3f}')
         self._move_to_position(y, z)
 
     def _move_to_position(self, y, z):
-        """Call IK and send trajectory to the target position."""
-        if not self.ik_client.service_is_ready():
-            self.get_logger().warn('IK service not available, re-queueing')
-            self.target_queue.appendleft((y, z))
+        # Solve IK in-process; seed nearest zero for a consistent branch.
+        ik = vk.inverse_ee(self.kin, y, z, 0.0, 0.0)
+        if not ik.valid:
+            self.get_logger().error(f'IK unreachable for y={y:.3f}, z={z:.3f}')
             return
-
         self.busy = True
-        request = ComputeIK.Request()
-        request.x = 0.0
-        request.y = y
-        request.z = z
-
-        future = self.ik_client.call_async(request)
-        future.add_done_callback(
-            lambda f: self._on_ik_result(f, go_home_after=self.return_home))
-
-    def _on_ik_result(self, future, go_home_after=False):
-        """Handle IK response and send trajectory."""
-        try:
-            response = future.result()
-        except Exception as e:
-            self.get_logger().error(f'IK call failed: {e}')
-            self.busy = False
-            return
-
-        if not response.success:
-            self.get_logger().error(f'IK failed: {response.message}')
-            self.busy = False
-            return
-
         self.get_logger().info(
-            f'IK → R={response.theta1:.3f}, L={response.theta2:.3f}')
+            f'IK → R={ik.theta_right:.3f}, L={ik.theta_left:.3f}')
         self._send_trajectory(
-            response.theta1, response.theta2,
+            ik.theta_right, ik.theta_left,
             self.trajectory_duration,
-            go_home_after=go_home_after)
+            go_home_after=self.return_home)
 
     # ── Trajectory execution ──────────────────────────────────────
 
-    def _send_trajectory(self, theta_right, theta_left, duration,
-                         go_home_after=False):
-        """Send a single-point trajectory."""
+    def _send_trajectory(self, theta_right, theta_left, duration, go_home_after=False):
         if not self.action_client.server_is_ready():
             self.get_logger().warn('Action server not ready')
             self.busy = False
@@ -170,7 +139,6 @@ class MotionPlanningNode(Node):
 
         goal = FollowJointTrajectory.Goal()
         goal.trajectory.joint_names = self.joint_names
-
         point = JointTrajectoryPoint()
         point.positions = [theta_right, theta_left]
         point.velocities = [0.0, 0.0]
@@ -189,7 +157,6 @@ class MotionPlanningNode(Node):
             self.get_logger().error('Goal rejected')
             self.busy = False
             return
-
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(
             lambda f: self._on_trajectory_done(f, go_home_after))
@@ -204,7 +171,7 @@ class MotionPlanningNode(Node):
         if go_home_after and self.dwell_time > 0:
             self.get_logger().info(f'Dwelling at target for {self.dwell_time:.1f}s')
             self._dwell_timer = self.create_timer(
-                self.dwell_time, lambda: self._on_dwell_done(),
+                self.dwell_time, self._on_dwell_done,
                 callback_group=self.cb_group)
         elif go_home_after:
             self._go_home()
@@ -212,7 +179,6 @@ class MotionPlanningNode(Node):
             self.busy = False
 
     def _on_dwell_done(self):
-        """Called after dwell time at target expires."""
         self._dwell_timer.cancel()
         self._dwell_timer.destroy()
         self._go_home()
@@ -220,17 +186,15 @@ class MotionPlanningNode(Node):
     # ── Home position ─────────────────────────────────────────────
 
     def _go_home(self):
-        """Send arm to home position."""
         self.get_logger().info('Returning to home position')
         self._send_trajectory(
             self.home_position[0], self.home_position[1],
-            self.home_duration,
-            go_home_after=False)
+            self.home_duration, go_home_after=False)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = MotionPlanningNode()
+    node = WeedTargetingNode()
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(node)
     try:

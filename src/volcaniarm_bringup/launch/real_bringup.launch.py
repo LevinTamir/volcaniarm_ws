@@ -433,11 +433,11 @@ def generate_launch_description():
         condition=show_dashboard,
     )
 
-    motion_launch = IncludeLaunchDescription(
+    weed_targeting_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                get_package_share_directory("volcaniarm_motion"),
-                "launch", "motion.launch.py")
+                get_package_share_directory("volcaniarm_weed_detector"),
+                "launch", "weed_targeting.launch.py")
         ),
         launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
     )
@@ -495,7 +495,7 @@ def generate_launch_description():
             controller_launch,
             rl_controller_launch,
             rl_inactive_spawner,
-            motion_launch,
+            weed_targeting_launch,
             realsense_camera,
             calibration_dashboard,
         ]

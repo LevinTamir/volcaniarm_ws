@@ -3,9 +3,10 @@
 Starts joy_node (reads the gamepad) and the custom teleop integrator
 node (stick → velocity → EE target → IK → JointTrajectory).
 
-Assumes the sim or real stack is already running so /compute_ik service
-and /volcaniarm_controller/joint_trajectory topic exist. Typically
-launched after sim_bringup.launch.py.
+Assumes the sim or real stack is already running so the
+/volcaniarm_controller/joint_trajectory topic exists (IK is solved
+in-process via volcaniarm_kinematics). Typically launched after
+sim_bringup.launch.py.
 
 Usage:
   ros2 launch volcaniarm_controllers joystick_teleop.launch.py

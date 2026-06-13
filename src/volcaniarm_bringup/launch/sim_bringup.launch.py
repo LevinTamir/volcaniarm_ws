@@ -227,7 +227,6 @@ def generate_launch_description():
 
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controllers")
-    volcaniarm_motion_share = get_package_share_directory("volcaniarm_motion")
     volcaniarm_calibration_share = get_package_share_directory("volcaniarm_calibration")
 
     # Gazebo launch — passes `mode`, `calibration`, and the full camera
@@ -349,12 +348,14 @@ def generate_launch_description():
         condition=show_dashboard,
     )
 
-    motion_launch = IncludeLaunchDescription(
+    # Weed-targeting behavior (formerly volcaniarm_motion/motion_planning_node,
+    # now in volcaniarm_weed_detector, using the volcaniarm_kinematics binding).
+    weed_targeting_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                volcaniarm_motion_share,
+                get_package_share_directory("volcaniarm_weed_detector"),
                 "launch",
-                "motion.launch.py",
+                "weed_targeting.launch.py",
             )
         ),
         launch_arguments=[
@@ -407,7 +408,7 @@ def generate_launch_description():
             rl_controller_launch,
             rl_inactive_spawner,
             display_launch,
-            motion_launch,
+            weed_targeting_launch,
             calibration_dashboard,
             move_group_launch,
             moveit_rviz_launch,
