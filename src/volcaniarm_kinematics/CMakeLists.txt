@@ -8,7 +8,8 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Pure C++ library: ament_cmake is the only build dependency, no ROS runtime deps.
+# The core library has no ROS runtime deps. The optional Python module below
+# links pybind only; the C++ library and its downstream linkers stay ROS-free.
 find_package(ament_cmake REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
@@ -19,6 +20,17 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
+
+# Python bindings so ROS Python nodes use this one source of truth for IK/FK.
+find_package(ament_cmake_python REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+find_package(pybind11_vendor REQUIRED)
+find_package(pybind11 REQUIRED)
+pybind11_add_module(volcaniarm_kinematics_py src/python_bindings.cpp)
+target_link_libraries(volcaniarm_kinematics_py PRIVATE ${PROJECT_NAME})
+# colcon/ament adds <prefix>/lib/pythonX.Y/site-packages to PYTHONPATH.
+set(_py_site "lib/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages")
+install(TARGETS volcaniarm_kinematics_py DESTINATION "${_py_site}")
 
 install(
   TARGETS ${PROJECT_NAME}
