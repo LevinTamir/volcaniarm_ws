@@ -4,8 +4,11 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /MotionPlanning1
+        - /MotionPlanning1/Planning Request1
   - Class: rviz_common/Views
     Name: Views
+  - Class: moveit_rviz_plugin/MotionPlanning
+    Name: MotionPlanning
 Visualization Manager:
   Class: ""
   Displays:
@@ -23,27 +26,51 @@ Visualization Manager:
       Move Group Namespace: ""
       Robot Description: robot_description
       Planning Scene Topic: /monitored_planning_scene
+      MoveIt_Allow_Replanning: false
+      MoveIt_Planning_Attempts: 10
+      MoveIt_Planning_Time: 5
+      MoveIt_Goal_Tolerance: 0
+      MoveIt_Use_Cartesian_Path: false
+      MoveIt_Workspace:
+        Center: {X: 0, Y: 0, Z: 0}
+        Size: {X: 2, Y: 2, Z: 2}
       Planning Request:
         Planning Group: volcaniarm
-        Interactive Marker Size: 0.1
-        Query Goal State: true
+        # The draggable EE goal handle. Bigger so it is easy to grab on a
+        # ~1 m arm; drag it to set the target EE position, watch the orange
+        # goal-state "ghost" snap there via IK, then Plan and Execute.
+        Interactive Marker Size: 0.25
         Query Start State: false
+        Query Goal State: true
+        Show Workspace: false
+        Goal State Alpha: 1
+        Goal State Color: 250; 128; 0
+        Start State Alpha: 1
+        Start State Color: 0; 255; 0
+        Colliding Link Color: 255; 0; 0
+        Joint Violation Color: 255; 0; 255
       Planned Path:
         Loop Animation: false
         State Display Time: 0.05 s
         Trajectory Topic: /display_planned_path
+        Show Robot Visual: true
+        Show Robot Collision: false
+        Robot Alpha: 0.5
         Show Trail: false
+        Interrupt Display: false
       Scene Geometry:
+        Show Scene Geometry: true
         Scene Alpha: 0.9
       Scene Robot:
         Show Robot Visual: true
         Show Robot Collision: false
+        Robot Alpha: 1
   Global Options:
     Fixed Frame: volcaniarm_base_link
     Background Color: 48; 48; 48
   Tools:
-    - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
@@ -57,6 +84,8 @@ Visualization Manager:
       Yaw: 3.6
 Window Geometry:
   Height: 900
-  Width: 1400
+  Width: 1500
   Hide Left Dock: false
   Hide Right Dock: false
+  MotionPlanning:
+    collapsed: false
