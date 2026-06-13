@@ -147,6 +147,40 @@ TEST(FiveBar, BranchContinuityAlongSweep)
   }
 }
 
+// forwardEE -> inverseEE round-trip: seeding with the true angles must recover
+// the actuated elbow angles exactly across the feasible workspace.
+TEST(FiveBar, ForwardInverseEeRoundTrip)
+{
+  Params p;
+  int feasible = 0;
+  for (double tl = -1.0; tl <= 1.0; tl += 0.05) {
+    for (double tr = -1.0; tr <= 1.0; tr += 0.05) {
+      if (closureMargin(p, tl, tr) <= 1e-3) {
+        continue;
+      }
+      EEPose pose = forwardEE(p, tl, tr);
+      if (!pose.valid) {
+        continue;
+      }
+      ++feasible;
+      ElbowAngles ik = inverseEE(p, pose.y, pose.z, tl, tr);
+      ASSERT_TRUE(ik.valid) << "tl=" << tl << " tr=" << tr;
+      EXPECT_NEAR(ik.theta_left, tl, 1e-9) << "tl=" << tl << " tr=" << tr;
+      EXPECT_NEAR(ik.theta_right, tr, 1e-9) << "tl=" << tl << " tr=" << tr;
+    }
+  }
+  EXPECT_GT(feasible, 0);
+}
+
+// A target well outside the reachable workspace returns valid == false.
+TEST(FiveBar, InverseEeUnreachable)
+{
+  Params p;
+  // Far below/away from the linkage: no circle intersection on either side.
+  ElbowAngles ik = inverseEE(p, 0.0, 5.0, 0.0, 0.0);
+  EXPECT_FALSE(ik.valid);
+}
+
 int main(int argc, char ** argv)
 {
   ::testing::InitGoogleTest(&argc, argv);

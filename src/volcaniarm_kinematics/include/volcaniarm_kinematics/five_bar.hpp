@@ -49,6 +49,13 @@ struct EEPose
   bool valid;
 };
 
+struct ElbowAngles
+{
+  double theta_left;
+  double theta_right;
+  bool valid;
+};
+
 // Y-Z position of one side's arm joint (the far end of the elbow link). The
 // arm-joint origin is (lateral, L1) in the rotated elbow frame; pass +arm_lateral
 // for the left side and -arm_lateral for the right.
@@ -82,6 +89,15 @@ double sideIK(
 // loop can close. Scalar form of the guard inside circleIntersect(), exposed for
 // the broadcaster's hold-last-valid check and (later) IK reachability tests.
 double closureMargin(const Params & p, double theta_L, double theta_R);
+
+// Inverse kinematics: given a target EE (closure point) Y-Z, solve the two
+// actuated elbow angles. The IK counterpart to forwardEE(). Each side's arm
+// joint lies at the intersection of circle(shoulder, L1eff) and circle(EE, L2)
+// with L1eff = hypot(L1, arm_lateral); the branch whose elbow angle is nearest
+// the per-side seed is chosen (continuity along a path). valid == false when the
+// target is unreachable on either side.
+ElbowAngles inverseEE(
+  const Params & p, double ee_y, double ee_z, double seed_left, double seed_right);
 
 }  // namespace volcaniarm_kinematics
 
