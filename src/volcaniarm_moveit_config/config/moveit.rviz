@@ -51,6 +51,20 @@ Visualization Manager:
         {}
       Update Interval: 0
       Value: false
+    - Class: moveit_rviz_plugin/Trajectory
+      Name: ClosedLoopPreview
+      Enabled: true
+      Robot Description: robot_description
+      Trajectory Topic: /display_planned_path_full
+      Color Enabled: true
+      Robot Color: 255; 130; 0
+      Robot Alpha: 0.6
+      Show Robot Visual: true
+      Show Robot Collision: false
+      Show Trail: false
+      Loop Animation: false
+      State Display Time: 0.05 s
+      Value: true
     - Acceleration_Scaling_Factor: 0.1
       Class: moveit_rviz_plugin/MotionPlanning
       Enabled: true

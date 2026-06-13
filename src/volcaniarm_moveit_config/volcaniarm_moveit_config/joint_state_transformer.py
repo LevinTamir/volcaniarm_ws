@@ -19,10 +19,17 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from control_msgs.action import FollowJointTrajectory
+from moveit_msgs.msg import DisplayTrajectory, RobotTrajectory
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 import volcaniarm_kinematics_py as vk
+
+# Full real-joint order for the preview ghost (planning model joint names).
+REAL_JOINTS = [
+    'volcaniarm_left_elbow_joint', 'volcaniarm_right_elbow_joint',
+    'volcaniarm_left_arm_joint', 'volcaniarm_right_arm_joint', 'closure_joint',
+]
 
 
 class JointStateTransformer(Node):
@@ -63,8 +70,59 @@ class JointStateTransformer(Node):
         self.create_subscription(
             JointState, '/joint_states', self._on_joint_states, 10, callback_group=cb)
 
+        # Ghost preview: MoveIt's planned path only moves the phantom tool0 (it
+        # can't solve the loop), so expand the planned phantom trajectory into a
+        # full real-joint trajectory and republish it for a ghost-arm display.
+        self._preview_pub = self.create_publisher(
+            DisplayTrajectory, '/display_planned_path_full', 1)
+        self.create_subscription(
+            DisplayTrajectory, '/display_planned_path', self._on_planned_path, 1,
+            callback_group=cb)
+
         self.get_logger().info(
             f'joint_state_transformer ready: phantom EE plan -> inverse_ee -> {out_action}')
+
+    def _phantom_point_to_full(self, names, point, seed):
+        """Map one phantom point -> full real-joint positions (or None)."""
+        iy = names.index('tool_joint_y')
+        iz = names.index('tool_joint_z')
+        ee_y = self.home_y + point.positions[iy]
+        ee_z = self.home_z + point.positions[iz]
+        ik = vk.inverse_ee(self.kin, ee_y, ee_z, seed[0], seed[1])
+        if not ik.valid:
+            return None, seed
+        pa = vk.passive_angles(self.kin, ik.theta_left, ik.theta_right)
+        if not pa.valid:
+            return None, seed
+        # Order must match REAL_JOINTS.
+        pos = [ik.theta_left, ik.theta_right, pa.left_arm, pa.right_arm, pa.closure]
+        return pos, (ik.theta_left, ik.theta_right)
+
+    def _on_planned_path(self, msg):
+        out = DisplayTrajectory()
+        out.model_id = msg.model_id
+        out.trajectory_start = msg.trajectory_start
+        for rt in msg.trajectory:
+            jt = rt.joint_trajectory
+            if not jt.points or 'tool_joint_y' not in jt.joint_names \
+                    or 'tool_joint_z' not in jt.joint_names:
+                continue
+            full = JointTrajectory()
+            full.header = jt.header
+            full.joint_names = list(REAL_JOINTS)
+            seed = (0.0, 0.0)
+            for p in jt.points:
+                pos, seed = self._phantom_point_to_full(jt.joint_names, p, seed)
+                if pos is None:
+                    continue
+                fp = JointTrajectoryPoint()
+                fp.positions = pos
+                fp.time_from_start = p.time_from_start
+                full.points.append(fp)
+            new_rt = RobotTrajectory()
+            new_rt.joint_trajectory = full
+            out.trajectory.append(new_rt)
+        self._preview_pub.publish(out)
 
     def _on_joint_states(self, msg):
         pos = dict(zip(msg.name, msg.position))
