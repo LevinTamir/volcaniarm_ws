@@ -216,6 +216,24 @@ bool VolcaniarmIKPlugin::getPositionFK(
   return true;
 }
 
+bool VolcaniarmIKPlugin::supportsGroup(
+  const moveit::core::JointModelGroup * jmg, std::string * error_text_out) const
+{
+  // Accept the five-bar group even though it is not a serial chain. Require it to
+  // contain the five loop joints; the closed-loop solve is handled analytically.
+  const auto & names = jmg->getJointModelNames();
+  auto has = [&names](const char * n) {
+    return std::find(names.begin(), names.end(), n) != names.end();
+  };
+  if (has(kLeftElbow) && has(kRightElbow) && has(kLeftArm) && has(kRightArm) && has(kClosure)) {
+    return true;
+  }
+  if (error_text_out != nullptr) {
+    *error_text_out = "group must contain the five Volcaniarm loop joints";
+  }
+  return false;
+}
+
 const std::vector<std::string> & VolcaniarmIKPlugin::getJointNames() const
 {
   return joint_names_;

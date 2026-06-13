@@ -70,6 +70,13 @@ public:
   const std::vector<std::string> & getJointNames() const override;
   const std::vector<std::string> & getLinkNames() const override;
 
+  // The five-bar group is a two-branch closed loop, not a serial chain, so the
+  // default chain-only check must be overridden. We validate the group instead
+  // by confirming it carries the five loop joints (done in initialize).
+  bool supportsGroup(
+    const moveit::core::JointModelGroup * jmg, std::string * error_text_out = nullptr)
+  const override;
+
 private:
   // Core analytic solve shared by all IK entry points. Honours an optional
   // collision/validity callback (returns only a solution the callback accepts).

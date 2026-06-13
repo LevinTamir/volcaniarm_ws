@@ -1,0 +1,21 @@
+# MoveIt executes through the existing ros2_control JTC. Only the two ACTUATED
+# elbow joints are commanded (joint order matches volcaniarm_controllers.yaml);
+# the passive joints are re-derived on the robot by the passive broadcaster.
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+trajectory_execution:
+  allowed_execution_duration_scaling: 1.2
+  allowed_goal_duration_margin: 0.5
+  allowed_start_tolerance: 0.05
+
+moveit_simple_controller_manager:
+  controller_names:
+    - volcaniarm_controller
+
+  volcaniarm_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      - volcaniarm_right_elbow_joint
+      - volcaniarm_left_elbow_joint

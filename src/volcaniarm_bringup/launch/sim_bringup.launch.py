@@ -166,6 +166,13 @@ def generate_launch_description():
         description="Bridge the depth pointcloud topic from Gazebo",
     )
 
+    moveit_arg = DeclareLaunchArgument(
+        "moveit",
+        default_value="false",
+        choices=["true", "false"],
+        description="Launch MoveIt move_group + MotionPlanning RViz",
+    )
+
     marker_world_rpy_arg = DeclareLaunchArgument(
         "marker_world_rpy",
         default_value="",
@@ -355,6 +362,25 @@ def generate_launch_description():
         ],
     )
 
+    # MoveIt (opt-in): move_group + MotionPlanning RViz, reusing the running
+    # robot_state_publisher, JTC and passive broadcaster.
+    is_moveit = IfCondition(LaunchConfiguration("moveit"))
+    volcaniarm_moveit_share = get_package_share_directory("volcaniarm_moveit_config")
+    move_group_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(volcaniarm_moveit_share, "launch", "move_group.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_moveit,
+    )
+    moveit_rviz_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(volcaniarm_moveit_share, "launch", "moveit_rviz.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_moveit,
+    )
+
     return LaunchDescription(
         [
             use_sim_time_arg,
@@ -369,6 +395,7 @@ def generate_launch_description():
             controller_arg,
             tag_size_arg,
             pointcloud_arg,
+            moveit_arg,
             marker_world_rpy_arg,
             cal_cam_x_arg, cal_cam_y_arg, cal_cam_z_arg,
             cal_cam_roll_arg, cal_cam_pitch_arg, cal_cam_yaw_arg,
@@ -382,5 +409,7 @@ def generate_launch_description():
             display_launch,
             motion_launch,
             calibration_dashboard,
+            move_group_launch,
+            moveit_rviz_launch,
         ]
     )
