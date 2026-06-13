@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<!-- MoveIt planning extras (gated by planning:=true).
+     MoveIt cannot plan a closed loop, so we hand it an OPEN phantom chain: two
+     prismatic joints positioning the end-effector point `tool0`. MoveIt plans
+     these; the joint_state_transformer node converts the planned tool pose into
+     the real elbow angles via volcaniarm_kinematics (inverse_ee).
+
+     Every loop joint axis is parallel to volcaniarm_base_link X, so the EE X is
+     invariant (the planar five-bar moves in the X=0.291 plane). Two prismatic
+     DOF (Y, Z) therefore fully describe the EE, and the RViz goal marker becomes
+     naturally Y-Z only.
+
+     The phantom origins place tool0 at the home EE (forward_ee at q=0 =
+     (0.291, 0, 0.7489) in volcaniarm_base_link) when both phantom joints are 0,
+     so tool_joint_y/z are EE displacement FROM home and the default state IS home. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- EE motion plane X and home EE Z, in volcaniarm_base_link (forward_ee at q=0). -->
+  <xacro:property name="X_EE_PLANE" value="0.291"/>
+  <xacro:property name="Z_EE_HOME" value="0.7489"/>
+
+  <link name="tool_planar_y"/>
+  <link name="tool0"/>
+
+  <joint name="tool_joint_y" type="prismatic">
+    <parent link="volcaniarm_base_link"/>
+    <child link="tool_planar_y"/>
+    <origin xyz="${X_EE_PLANE} 0 ${Z_EE_HOME}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.4" upper="0.4" effort="0" velocity="2.0"/>
+  </joint>
+
+  <joint name="tool_joint_z" type="prismatic">
+    <parent link="tool_planar_y"/>
+    <child link="tool0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.45" upper="0.25" effort="0" velocity="2.0"/>
+  </joint>
+
+</robot>

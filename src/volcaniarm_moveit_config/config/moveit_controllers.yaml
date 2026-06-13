@@ -1,6 +1,10 @@
-# MoveIt executes through the existing ros2_control JTC. Only the two ACTUATED
-# elbow joints are commanded (joint order matches volcaniarm_controllers.yaml);
-# the passive joints are re-derived on the robot by the passive broadcaster.
+# MoveIt executes the planned phantom (EE Y-Z) trajectory to the
+# joint_state_transformer node, which it treats as an ordinary
+# FollowJointTrajectory controller. The transformer runs inverse_ee to convert
+# the phantom trajectory into the real elbow trajectory and forwards it to the
+# JTC (/volcaniarm_controller/follow_joint_trajectory).
+#
+# Resolved action: /joint_state_transformer/follow_joint_trajectory
 moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
 
 trajectory_execution:
@@ -10,12 +14,12 @@ trajectory_execution:
 
 moveit_simple_controller_manager:
   controller_names:
-    - volcaniarm_controller
+    - joint_state_transformer
 
-  volcaniarm_controller:
+  joint_state_transformer:
     type: FollowJointTrajectory
     action_ns: follow_joint_trajectory
     default: true
     joints:
-      - volcaniarm_right_elbow_joint
-      - volcaniarm_left_elbow_joint
+      - tool_joint_y
+      - tool_joint_z

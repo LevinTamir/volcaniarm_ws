@@ -1,32 +1,16 @@
-# Velocity/acceleration limits used by time-parameterization and Pilz. All five
-# loop joints are in the group; the passives follow the actives but Pilz wants
-# limits for every group joint.
+# Velocity/acceleration limits for time-parameterization of the phantom planning
+# joints (the EE Y-Z prismatic DOF that MoveIt plans). Units: m/s, m/s^2.
 default_velocity_scaling_factor: 0.5
 default_acceleration_scaling_factor: 0.5
 
 joint_limits:
-  volcaniarm_left_elbow_joint:
+  tool_joint_y:
     has_velocity_limits: true
-    max_velocity: 1.0
+    max_velocity: 0.5
     has_acceleration_limits: true
-    max_acceleration: 2.0
-  volcaniarm_right_elbow_joint:
+    max_acceleration: 1.0
+  tool_joint_z:
     has_velocity_limits: true
-    max_velocity: 1.0
+    max_velocity: 0.5
     has_acceleration_limits: true
-    max_acceleration: 2.0
-  volcaniarm_left_arm_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 4.0
-  volcaniarm_right_arm_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 4.0
-  closure_joint:
-    has_velocity_limits: true
-    max_velocity: 2.0
-    has_acceleration_limits: true
-    max_acceleration: 4.0
+    max_acceleration: 1.0

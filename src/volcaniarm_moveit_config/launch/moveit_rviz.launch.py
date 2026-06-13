@@ -17,18 +17,13 @@ def generate_launch_description():
     config_share = get_package_share_directory("volcaniarm_moveit_config")
     rviz_config = os.path.join(config_share, "config", "moveit.rviz")
 
-    # RViz MotionPlanning needs the model, semantics and kinematics to drive the
-    # planning panel and the interactive marker.
     moveit_config = (
         MoveItConfigsBuilder("volcaniarm", package_name="volcaniarm_moveit_config")
-        .robot_description(file_path=urdf_xacro, mappings={"use_sim": "true"})
+        .robot_description(file_path=urdf_xacro, mappings={"planning": "true"})
         .robot_description_semantic(file_path="srdf/volcaniarm.srdf.xacro")
         .robot_description_kinematics(file_path="config/kinematics.yaml")
         .joint_limits(file_path="config/joint_limits.yaml")
-        .planning_pipelines(
-            pipelines=["pilz_industrial_motion_planner"],
-            default_planning_pipeline="pilz_industrial_motion_planner",
-        )
+        .planning_pipelines(pipelines=["ompl"])
         .to_moveit_configs()
     )
 

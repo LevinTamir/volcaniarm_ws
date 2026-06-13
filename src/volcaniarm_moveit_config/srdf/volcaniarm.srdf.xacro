@@ -1,41 +1,43 @@
 <?xml version="1.0"?>
+<!-- Semantic description for MoveIt planning of the Volcaniarm five-bar.
+     MoveIt plans the OPEN phantom chain (volcaniarm_base_link -> tool0 via the
+     prismatic tool_joint_y/z); the joint_state_transformer node converts the
+     planned tool pose into the real elbow angles (inverse_ee) for execution.
+     The five real loop joints are passive (MoveIt never commands them). -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm">
-  <!--
-    Planning group for the planar five-bar. It is a two-branch closed loop, so
-    the group combines the right-branch chain (base -> right_arm_tip_link, the IK
-    tip) with the left-branch joints + closure, giving all five loop joints. The
-    three passive joints are marked <passive_joint>; only the two elbows are
-    actuated and executed by the JTC.
-  -->
-  <group name="volcaniarm">
-    <chain base_link="volcaniarm_base_link" tip_link="right_arm_tip_link"/>
-    <joint name="volcaniarm_left_elbow_joint"/>
-    <joint name="volcaniarm_left_arm_joint"/>
-    <joint name="closure_joint"/>
+
+  <!-- Planning group: the 2-DOF phantom chain positioning the EE point tool0. -->
+  <group name="ee">
+    <chain base_link="volcaniarm_base_link" tip_link="tool0"/>
   </group>
 
+  <!-- Home = q=0 assembly. The phantom origins put tool0 on the home EE when both
+       phantom joints are 0, so the default state is home and the goal marker
+       starts exactly on the EE. -->
+  <group_state name="home" group="ee">
+    <joint name="tool_joint_y" value="0.0"/>
+    <joint name="tool_joint_z" value="0.0"/>
+  </group_state>
+
+  <!-- The real linkage joints are driven by the loop closure / the transformer,
+       never commanded directly by MoveIt. -->
+  <passive_joint name="volcaniarm_left_elbow_joint"/>
+  <passive_joint name="volcaniarm_right_elbow_joint"/>
   <passive_joint name="volcaniarm_left_arm_joint"/>
   <passive_joint name="volcaniarm_right_arm_joint"/>
   <passive_joint name="closure_joint"/>
 
-  <group_state name="home" group="volcaniarm">
-    <joint name="volcaniarm_left_elbow_joint" value="0"/>
-    <joint name="volcaniarm_right_elbow_joint" value="0"/>
-  </group_state>
-
-  <!-- Adjacent links (connected by a joint) never meaningfully self-collide. -->
+  <!-- Disable the permanently-closed loop link pairs so the mechanism is not
+       flagged as self-colliding during phantom planning. -->
   <disable_collisions link1="volcaniarm_base_link" link2="volcaniarm_left_elbow_link" reason="Adjacent"/>
   <disable_collisions link1="volcaniarm_base_link" link2="volcaniarm_right_elbow_link" reason="Adjacent"/>
   <disable_collisions link1="volcaniarm_left_elbow_link" link2="volcaniarm_left_arm_link" reason="Adjacent"/>
   <disable_collisions link1="volcaniarm_right_elbow_link" link2="volcaniarm_right_arm_link" reason="Adjacent"/>
   <disable_collisions link1="volcaniarm_left_arm_link" link2="closure_dummy_link" reason="Adjacent"/>
   <disable_collisions link1="volcaniarm_right_arm_link" link2="right_arm_tip_link" reason="Adjacent"/>
-  <!-- The closure pin: these two leaves coincide by construction. -->
   <disable_collisions link1="closure_dummy_link" link2="right_arm_tip_link" reason="Closure"/>
   <disable_collisions link1="closure_dummy_link" link2="volcaniarm_right_arm_link" reason="Closure"/>
   <disable_collisions link1="right_arm_tip_link" link2="volcaniarm_left_arm_link" reason="Closure"/>
-  <!-- The two arm links meet at the closure point. -->
   <disable_collisions link1="volcaniarm_left_arm_link" link2="volcaniarm_right_arm_link" reason="Closure"/>
-  <!-- Base sits between the two elbows. -->
   <disable_collisions link1="volcaniarm_left_elbow_link" link2="volcaniarm_right_elbow_link" reason="Never"/>
 </robot>

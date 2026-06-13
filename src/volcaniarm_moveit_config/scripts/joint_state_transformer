@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from volcaniarm_moveit_config.joint_state_transformer import main
+main()

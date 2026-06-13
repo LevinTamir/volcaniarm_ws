@@ -3,27 +3,23 @@
 <package format="3">
   <name>volcaniarm_moveit_config</name>
   <version>0.0.0</version>
-  <description>MoveIt configuration for the Volcaniarm planar five-bar (custom analytic IK, Pilz/Cartesian planning).</description>
+  <description>MoveIt configuration for the Volcaniarm five-bar: phantom Y-Z planning chain + joint_state_transformer (closed-loop IK via volcaniarm_kinematics).</description>
   <maintainer email="tamirlvn@gmail.com">Tamir Levin</maintainer>
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
-
-  <!-- IK plugin build deps (the plugin now lives in this package). -->
-  <depend>moveit_core</depend>
-  <depend>pluginlib</depend>
-  <depend>rclcpp</depend>
-  <depend>geometry_msgs</depend>
-  <depend>moveit_msgs</depend>
-  <depend>tf2_eigen</depend>
-  <depend>volcaniarm_kinematics</depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <exec_depend>moveit_ros_move_group</exec_depend>
   <exec_depend>moveit_ros_visualization</exec_depend>
   <exec_depend>moveit_kinematics</exec_depend>
-  <exec_depend>pilz_industrial_motion_planner</exec_depend>
+  <exec_depend>moveit_planners_ompl</exec_depend>
   <exec_depend>moveit_simple_controller_manager</exec_depend>
   <exec_depend>moveit_configs_utils</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>volcaniarm_kinematics</exec_depend>
   <exec_depend>volcaniarm_description</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>

@@ -1,7 +1,8 @@
-volcaniarm:
-  kinematics_solver: volcaniarm_ik_plugin/VolcaniarmIKPlugin
+# The planning group is the open phantom Y-Z chain (two prismatic joints), so the
+# IK is trivial and stock KDL handles it - no custom plugin needed. The real
+# closed-loop IK happens in the joint_state_transformer (volcaniarm_kinematics).
+ee:
+  kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
   kinematics_solver_search_resolution: 0.005
-  kinematics_solver_timeout: 0.005
-  # Planar five-bar: orientation is fully determined by the EE position, so the
-  # plugin solves from the target position only.
-  position_only_ik: true
+  kinematics_solver_timeout: 0.05
+  kinematics_solver_attempts: 3

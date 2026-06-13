@@ -41,6 +41,11 @@
        parameter when forwarded by the bringup launches. -->
   <xacro:arg name="tag_size" default="0.064" />
 
+  <!-- MoveIt planning render: add the open phantom Y-Z chain to tool0 so MoveIt
+       can plan the (otherwise unplannable) closed loop. Only enabled for the
+       move_group robot_description; the real/sim model leaves it off. -->
+  <xacro:arg name="planning" default="false" />
+
   <!-- Camera mount position tuning
        camera_mount_x range: 0.155 to 0.655
        camera_mount_pitch: rev joint pitch in radians -->
@@ -75,6 +80,11 @@
     value="${mount_ee_marker or mount_base_marker}" />
   <xacro:if value="${any_marker}">
     <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_apriltag.xacro" />
+  </xacro:if>
+
+  <!-- MoveIt phantom planning chain (volcaniarm_base_link -> tool0); off by default. -->
+  <xacro:if value="$(arg planning)">
+    <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_moveit.xacro" />
   </xacro:if>
 
   <!-- World fixed link -->

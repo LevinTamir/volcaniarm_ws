@@ -244,7 +244,7 @@ Visualization Manager:
         Goal State Color: 250; 128; 0
         Interactive Marker Size: 0.25
         Joint Violation Color: 255; 0; 255
-        Planning Group: volcaniarm
+        Planning Group: ee
         Query Goal State: true
         Query Start State: false
         Show Workspace: false
