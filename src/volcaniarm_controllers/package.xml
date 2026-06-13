@@ -21,6 +21,7 @@
   <depend>sensor_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>urdf</depend>
   <depend>volcaniarm_kinematics</depend>
 
   <!-- Stock JTC is loaded as a plugin at runtime (no longer built against). -->

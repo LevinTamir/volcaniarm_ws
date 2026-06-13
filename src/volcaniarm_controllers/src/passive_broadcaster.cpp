@@ -8,12 +8,78 @@
 
 #include "pluginlib/class_list_macros.hpp"
 #include "rclcpp/logging.hpp"
+#include "urdf/model.h"
 
 namespace volcaniarm_controller
 {
 
 using controller_interface::interface_configuration_type;
 using controller_interface::InterfaceConfiguration;
+
+namespace
+{
+// Roll (Rx) of a joint's parent->child origin. All five loop joints rotate about
+// X, so roll is the only meaningful rpy component.
+double jointRoll(const urdf::JointConstSharedPtr & j)
+{
+  double r = 0.0, p = 0.0, y = 0.0;
+  j->parent_to_joint_origin_transform.rotation.getRPY(r, p, y);
+  return r;
+}
+
+// Derive the five-bar geometry from robot_description so the URDF is the single
+// source of truth. The constants come straight from the joint origins:
+//   base_z, l0           <- left elbow joint origin (z, -y)
+//   L1, arm_lateral      <- left arm joint origin (z, y)
+//   L2                   <- closure joint origin (z)
+//   *_rpy                <- each joint origin roll
+// Returns false (caller keeps Params defaults) if the URDF can't be parsed or a
+// joint is missing.
+bool deriveParamsFromUrdf(
+  const std::string & urdf_xml,
+  const std::string & left_elbow, const std::string & right_elbow,
+  const std::string & left_arm, const std::string & right_arm,
+  const std::string & closure,
+  volcaniarm_kinematics::Params & out)
+{
+  if (urdf_xml.empty()) {
+    return false;
+  }
+  urdf::Model model;
+  try {
+    if (!model.initString(urdf_xml)) {
+      return false;
+    }
+  } catch (const std::exception &) {
+    // urdf's parser plugins can throw if their backend libs aren't loadable.
+    return false;
+  }
+  const auto le = model.getJoint(left_elbow);
+  const auto re = model.getJoint(right_elbow);
+  const auto la = model.getJoint(left_arm);
+  const auto ra = model.getJoint(right_arm);
+  const auto cl = model.getJoint(closure);
+  if (!le || !re || !la || !ra || !cl) {
+    return false;
+  }
+
+  const auto & le_pos = le->parent_to_joint_origin_transform.position;
+  const auto & la_pos = la->parent_to_joint_origin_transform.position;
+  const auto & cl_pos = cl->parent_to_joint_origin_transform.position;
+
+  out.base_z = le_pos.z;
+  out.l0 = -le_pos.y;          // left elbow sits at y = -l0
+  out.L1 = la_pos.z;
+  out.arm_lateral = la_pos.y;  // left arm offset is +arm_lateral (right is -)
+  out.L2 = cl_pos.z;
+  out.left_elbow_rpy = jointRoll(le);
+  out.right_elbow_rpy = jointRoll(re);
+  out.left_arm_rpy = jointRoll(la);
+  out.right_arm_rpy = jointRoll(ra);
+  out.closure_rpy = jointRoll(cl);
+  return true;
+}
+}  // namespace
 
 controller_interface::CallbackReturn PassiveBroadcaster::on_init()
 {
@@ -28,18 +94,8 @@ controller_interface::CallbackReturn PassiveBroadcaster::on_init()
   auto_declare<double>("ee_marker.tool_offset", 0.0);
   auto_declare<int>("ee_marker.trail_size", 300);
 
-  // Kinematic parameters (defaults match volcaniarm_kinematics::Params).
-  volcaniarm_kinematics::Params d;
-  auto_declare<double>("kinematics.L1", d.L1);
-  auto_declare<double>("kinematics.L2", d.L2);
-  auto_declare<double>("kinematics.l0", d.l0);
-  auto_declare<double>("kinematics.base_z", d.base_z);
-  auto_declare<double>("kinematics.arm_lateral", d.arm_lateral);
-  auto_declare<double>("kinematics.left_elbow_rpy", d.left_elbow_rpy);
-  auto_declare<double>("kinematics.right_elbow_rpy", d.right_elbow_rpy);
-  auto_declare<double>("kinematics.left_arm_rpy", d.left_arm_rpy);
-  auto_declare<double>("kinematics.right_arm_rpy", d.right_arm_rpy);
-  auto_declare<double>("kinematics.closure_rpy", d.closure_rpy);
+  // Kinematic geometry is NOT a parameter: it is derived from robot_description
+  // in on_configure so the URDF is the single source of truth.
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -79,16 +135,21 @@ controller_interface::CallbackReturn PassiveBroadcaster::on_configure(
   tool_offset_ = node->get_parameter("ee_marker.tool_offset").as_double();
   trail_max_size_ = static_cast<size_t>(node->get_parameter("ee_marker.trail_size").as_int());
 
-  params_.L1 = node->get_parameter("kinematics.L1").as_double();
-  params_.L2 = node->get_parameter("kinematics.L2").as_double();
-  params_.l0 = node->get_parameter("kinematics.l0").as_double();
-  params_.base_z = node->get_parameter("kinematics.base_z").as_double();
-  params_.arm_lateral = node->get_parameter("kinematics.arm_lateral").as_double();
-  params_.left_elbow_rpy = node->get_parameter("kinematics.left_elbow_rpy").as_double();
-  params_.right_elbow_rpy = node->get_parameter("kinematics.right_elbow_rpy").as_double();
-  params_.left_arm_rpy = node->get_parameter("kinematics.left_arm_rpy").as_double();
-  params_.right_arm_rpy = node->get_parameter("kinematics.right_arm_rpy").as_double();
-  params_.closure_rpy = node->get_parameter("kinematics.closure_rpy").as_double();
+  // Derive the linkage geometry from robot_description (single source of truth).
+  // Falls back to the volcaniarm_kinematics::Params defaults on any failure.
+  if (deriveParamsFromUrdf(
+      get_robot_description(), left_elbow_joint_, right_elbow_joint_,
+      passive_joints_[0], passive_joints_[1], passive_joints_[2], params_))
+  {
+    RCLCPP_INFO(
+      node->get_logger(),
+      "Derived kinematics from URDF: L1=%.5f L2=%.5f l0=%.5f base_z=%.5f arm_lateral=%.5f",
+      params_.L1, params_.L2, params_.l0, params_.base_z, params_.arm_lateral);
+  } else {
+    RCLCPP_WARN(
+      node->get_logger(),
+      "Could not derive kinematics from robot_description; using built-in defaults");
+  }
 
   // Full-state publisher (the single /joint_states source).
   joint_state_pub_ =

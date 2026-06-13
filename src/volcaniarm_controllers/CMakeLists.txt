@@ -18,6 +18,7 @@ find_package(realtime_tools REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(urdf REQUIRED)
 find_package(volcaniarm_kinematics REQUIRED)
 
 # Passive-joint broadcaster: solves the closed-loop passives from the actuated
@@ -39,6 +40,7 @@ ament_target_dependencies(passive_broadcaster
   sensor_msgs
   visualization_msgs
   geometry_msgs
+  urdf
   volcaniarm_kinematics
 )
 pluginlib_export_plugin_description_file(
@@ -111,6 +113,7 @@ ament_export_dependencies(
   sensor_msgs
   visualization_msgs
   geometry_msgs
+  urdf
   volcaniarm_kinematics
 )
 
