@@ -5,12 +5,14 @@
 namespace volcaniarm_kinematics
 {
 
-Point2 elbowTip(const Params & p, double elbow_rpy, double theta, double shoulder_y)
+Point2 elbowTip(
+  const Params & p, double elbow_rpy, double theta, double shoulder_y, double lateral)
 {
   const double alpha = elbow_rpy + theta;
+  // Arm-joint origin (lateral, L1) in the elbow frame, rotated about X by alpha.
   Point2 tip;
-  tip.y = shoulder_y + p.L1 * (-std::sin(alpha));
-  tip.z = p.base_z + p.L1 * std::cos(alpha);
+  tip.y = shoulder_y + lateral * std::cos(alpha) - p.L1 * std::sin(alpha);
+  tip.z = p.base_z + lateral * std::sin(alpha) + p.L1 * std::cos(alpha);
   return tip;
 }
 
@@ -44,8 +46,8 @@ EEResult circleIntersect(
 
 PassiveAngles passiveAngles(const Params & p, double theta_left, double theta_right)
 {
-  const Point2 tip_l = elbowTip(p, p.left_elbow_rpy, theta_left, -p.l0);
-  const Point2 tip_r = elbowTip(p, p.right_elbow_rpy, theta_right, p.l0);
+  const Point2 tip_l = elbowTip(p, p.left_elbow_rpy, theta_left, -p.l0, p.arm_lateral);
+  const Point2 tip_r = elbowTip(p, p.right_elbow_rpy, theta_right, p.l0, -p.arm_lateral);
 
   PassiveAngles out{0.0, 0.0, 0.0, false};
 
@@ -72,8 +74,8 @@ PassiveAngles passiveAngles(const Params & p, double theta_left, double theta_ri
 EEPose forwardEE(
   const Params & p, double theta_left, double theta_right, double tool_offset)
 {
-  const Point2 tip_l = elbowTip(p, p.left_elbow_rpy, theta_left, -p.l0);
-  const Point2 tip_r = elbowTip(p, p.right_elbow_rpy, theta_right, p.l0);
+  const Point2 tip_l = elbowTip(p, p.left_elbow_rpy, theta_left, -p.l0, p.arm_lateral);
+  const Point2 tip_r = elbowTip(p, p.right_elbow_rpy, theta_right, p.l0, -p.arm_lateral);
 
   const EEResult ee = circleIntersect(p, tip_l.y, tip_l.z, tip_r.y, tip_r.z);
 
@@ -89,12 +91,15 @@ EEPose forwardEE(
 }
 
 double sideIK(
-  const Params & p, double elbow_rpy, double shoulder_y,
+  const Params & p, double elbow_rpy, double shoulder_y, double lateral,
   double y_tip, double z_tip, double theta_seed)
 {
-  // Invert elbowTip(): y_tip - shoulder_y = -L1*sin(alpha),
-  //                    z_tip - base_z    =  L1*cos(alpha).
-  const double alpha = std::atan2(-(y_tip - shoulder_y), z_tip - p.base_z);
+  // Invert elbowTip(): (y_tip - shoulder_y, z_tip - base_z) is the vector
+  // (lateral, L1) rotated about X by alpha = elbow_rpy + theta. Rotation adds
+  // angles, so alpha = atan2(dz, dy) - atan2(L1, lateral).
+  const double dy = y_tip - shoulder_y;
+  const double dz = z_tip - p.base_z;
+  const double alpha = std::atan2(dz, dy) - std::atan2(p.L1, lateral);
   double theta = alpha - elbow_rpy;
 
   // Wrap onto the 2*pi branch nearest the seed for continuity along a sweep.
@@ -105,8 +110,8 @@ double sideIK(
 
 double closureMargin(const Params & p, double theta_L, double theta_R)
 {
-  const Point2 tip_l = elbowTip(p, p.left_elbow_rpy, theta_L, -p.l0);
-  const Point2 tip_r = elbowTip(p, p.right_elbow_rpy, theta_R, p.l0);
+  const Point2 tip_l = elbowTip(p, p.left_elbow_rpy, theta_L, -p.l0, p.arm_lateral);
+  const Point2 tip_r = elbowTip(p, p.right_elbow_rpy, theta_R, p.l0, -p.arm_lateral);
   const double d = std::hypot(tip_l.y - tip_r.y, tip_l.z - tip_r.z);
   return 2.0 * p.L2 - d;
 }

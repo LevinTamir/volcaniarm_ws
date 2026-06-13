@@ -34,6 +34,7 @@ controller_interface::CallbackReturn PassiveBroadcaster::on_init()
   auto_declare<double>("kinematics.L2", d.L2);
   auto_declare<double>("kinematics.l0", d.l0);
   auto_declare<double>("kinematics.base_z", d.base_z);
+  auto_declare<double>("kinematics.arm_lateral", d.arm_lateral);
   auto_declare<double>("kinematics.left_elbow_rpy", d.left_elbow_rpy);
   auto_declare<double>("kinematics.right_elbow_rpy", d.right_elbow_rpy);
   auto_declare<double>("kinematics.left_arm_rpy", d.left_arm_rpy);
@@ -82,6 +83,7 @@ controller_interface::CallbackReturn PassiveBroadcaster::on_configure(
   params_.L2 = node->get_parameter("kinematics.L2").as_double();
   params_.l0 = node->get_parameter("kinematics.l0").as_double();
   params_.base_z = node->get_parameter("kinematics.base_z").as_double();
+  params_.arm_lateral = node->get_parameter("kinematics.arm_lateral").as_double();
   params_.left_elbow_rpy = node->get_parameter("kinematics.left_elbow_rpy").as_double();
   params_.right_elbow_rpy = node->get_parameter("kinematics.right_elbow_rpy").as_double();
   params_.left_arm_rpy = node->get_parameter("kinematics.left_arm_rpy").as_double();

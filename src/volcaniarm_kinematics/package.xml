@@ -13,6 +13,11 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
+  <!-- Pinocchio CI oracle (Phase 2): validate the analytic solver against the
+       live URDF. Test-only; the runtime library stays ROS-free. -->
+  <test_depend>pinocchio</test_depend>
+  <test_depend>volcaniarm_description</test_depend>
+  <test_depend>xacro</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

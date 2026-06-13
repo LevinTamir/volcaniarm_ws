@@ -16,20 +16,20 @@ double dist(const Point2 & a, const Point2 & b)
 }
 }  // namespace
 
-// elbowTip() and sideIK() must be exact inverses (per side), and the seed must
-// select the 2*pi branch nearest itself.
+// elbowTip() and sideIK() must be exact inverses (per side), including the
+// arm-joint lateral offset (left +arm_lateral, right -arm_lateral).
 TEST(FiveBar, ElbowTipSideIkRoundTrip)
 {
   Params p;
   for (double theta = -1.4; theta <= 1.4; theta += 0.05) {
     // Left side.
-    Point2 tip_l = elbowTip(p, p.left_elbow_rpy, theta, -p.l0);
-    double rec_l = sideIK(p, p.left_elbow_rpy, -p.l0, tip_l.y, tip_l.z, theta);
+    Point2 tip_l = elbowTip(p, p.left_elbow_rpy, theta, -p.l0, p.arm_lateral);
+    double rec_l = sideIK(p, p.left_elbow_rpy, -p.l0, p.arm_lateral, tip_l.y, tip_l.z, theta);
     EXPECT_NEAR(rec_l, theta, 1e-9) << "left theta=" << theta;
 
     // Right side.
-    Point2 tip_r = elbowTip(p, p.right_elbow_rpy, theta, p.l0);
-    double rec_r = sideIK(p, p.right_elbow_rpy, p.l0, tip_r.y, tip_r.z, theta);
+    Point2 tip_r = elbowTip(p, p.right_elbow_rpy, theta, p.l0, -p.arm_lateral);
+    double rec_r = sideIK(p, p.right_elbow_rpy, p.l0, -p.arm_lateral, tip_r.y, tip_r.z, theta);
     EXPECT_NEAR(rec_r, theta, 1e-9) << "right theta=" << theta;
   }
 }
@@ -39,18 +39,20 @@ TEST(FiveBar, SideIkBranchSelectionFollowsSeed)
 {
   Params p;
   const double theta = 0.3;
-  Point2 tip = elbowTip(p, p.left_elbow_rpy, theta, -p.l0);
+  Point2 tip = elbowTip(p, p.left_elbow_rpy, theta, -p.l0, p.arm_lateral);
 
-  double near_zero = sideIK(p, p.left_elbow_rpy, -p.l0, tip.y, tip.z, theta);
-  double near_plus = sideIK(p, p.left_elbow_rpy, -p.l0, tip.y, tip.z, theta + kTwoPi);
-  double near_minus = sideIK(p, p.left_elbow_rpy, -p.l0, tip.y, tip.z, theta - kTwoPi);
+  double near_zero = sideIK(p, p.left_elbow_rpy, -p.l0, p.arm_lateral, tip.y, tip.z, theta);
+  double near_plus =
+    sideIK(p, p.left_elbow_rpy, -p.l0, p.arm_lateral, tip.y, tip.z, theta + kTwoPi);
+  double near_minus =
+    sideIK(p, p.left_elbow_rpy, -p.l0, p.arm_lateral, tip.y, tip.z, theta - kTwoPi);
 
   EXPECT_NEAR(near_zero, theta, 1e-9);
   EXPECT_NEAR(near_plus, theta + kTwoPi, 1e-9);
   EXPECT_NEAR(near_minus, theta - kTwoPi, 1e-9);
 }
 
-// In the feasible region the EE must lie exactly L2 from BOTH elbow tips, and the
+// In the feasible region the EE must lie exactly L2 from BOTH arm joints, and the
 // passive solve must agree with forwardEE.
 TEST(FiveBar, ClosureInvariantOverWorkspaceGrid)
 {
@@ -63,8 +65,8 @@ TEST(FiveBar, ClosureInvariantOverWorkspaceGrid)
       }
       ++feasible;
 
-      Point2 tip_l = elbowTip(p, p.left_elbow_rpy, tl, -p.l0);
-      Point2 tip_r = elbowTip(p, p.right_elbow_rpy, tr, p.l0);
+      Point2 tip_l = elbowTip(p, p.left_elbow_rpy, tl, -p.l0, p.arm_lateral);
+      Point2 tip_r = elbowTip(p, p.right_elbow_rpy, tr, p.l0, -p.arm_lateral);
       EEResult ee = circleIntersect(p, tip_l.y, tip_l.z, tip_r.y, tip_r.z);
       ASSERT_TRUE(ee.valid) << "tl=" << tl << " tr=" << tr;
 
@@ -91,8 +93,8 @@ TEST(FiveBar, ClosureMarginMatchesFeasibilityBoundary)
   for (double tl = -1.4; tl <= 1.4; tl += 0.07) {
     for (double tr = -1.4; tr <= 1.4; tr += 0.07) {
       double margin = closureMargin(p, tl, tr);
-      Point2 tip_l = elbowTip(p, p.left_elbow_rpy, tl, -p.l0);
-      Point2 tip_r = elbowTip(p, p.right_elbow_rpy, tr, p.l0);
+      Point2 tip_l = elbowTip(p, p.left_elbow_rpy, tl, -p.l0, p.arm_lateral);
+      Point2 tip_r = elbowTip(p, p.right_elbow_rpy, tr, p.l0, -p.arm_lateral);
       double d = dist(tip_l, tip_r);
       EXPECT_NEAR(margin, 2.0 * p.L2 - d, 1e-12);
 
@@ -107,20 +109,20 @@ TEST(FiveBar, ClosureMarginMatchesFeasibilityBoundary)
   }
 }
 
-// Pushing the elbow tips apart drives the margin negative and the solve invalid;
+// Pushing the arm joints apart drives the margin negative and the solve invalid;
 // the degenerate EEResult must fall back to the tip midpoint.
 TEST(FiveBar, InfeasibleFallsBackToMidpoint)
 {
   Params p;
-  // The tips spread farthest apart near alpha = +/- pi/2, i.e. tl = +0.7854 and
-  // tr = -0.7854 (left tip swings to -Y, right tip to +Y). This is the only
+  // The arm joints spread farthest apart near alpha = +/- pi/2, i.e. tl = +0.7854
+  // and tr = -0.7854 (left tip swings to -Y, right tip to +Y). This is the only
   // region where the loop cannot close (a thin sliver: max deficit ~17 mm).
   const double tl = M_PI / 2.0 - p.left_elbow_rpy;   // ~0.7854
   const double tr = -M_PI / 2.0 - p.right_elbow_rpy;  // ~-0.7854
   ASSERT_LT(closureMargin(p, tl, tr), 0.0);
 
-  Point2 tip_l = elbowTip(p, p.left_elbow_rpy, tl, -p.l0);
-  Point2 tip_r = elbowTip(p, p.right_elbow_rpy, tr, p.l0);
+  Point2 tip_l = elbowTip(p, p.left_elbow_rpy, tl, -p.l0, p.arm_lateral);
+  Point2 tip_r = elbowTip(p, p.right_elbow_rpy, tr, p.l0, -p.arm_lateral);
   EEResult ee = circleIntersect(p, tip_l.y, tip_l.z, tip_r.y, tip_r.z);
   EXPECT_FALSE(ee.valid);
   EXPECT_NEAR(ee.y, (tip_l.y + tip_r.y) / 2.0, 1e-12);
@@ -135,11 +137,10 @@ TEST(FiveBar, InfeasibleFallsBackToMidpoint)
 TEST(FiveBar, BranchContinuityAlongSweep)
 {
   Params p;
-  double seed = -1.3;
-  double prev = seed;
+  double prev = -1.3;
   for (double theta = -1.3; theta <= 1.3; theta += 0.02) {
-    Point2 tip = elbowTip(p, p.left_elbow_rpy, theta, -p.l0);
-    double rec = sideIK(p, p.left_elbow_rpy, -p.l0, tip.y, tip.z, prev);
+    Point2 tip = elbowTip(p, p.left_elbow_rpy, theta, -p.l0, p.arm_lateral);
+    double rec = sideIK(p, p.left_elbow_rpy, -p.l0, p.arm_lateral, tip.y, tip.z, prev);
     EXPECT_NEAR(rec, theta, 1e-9);
     EXPECT_LT(std::abs(rec - prev), 0.1) << "discontinuity at theta=" << theta;
     prev = rec;

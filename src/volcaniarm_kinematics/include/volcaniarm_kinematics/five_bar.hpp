@@ -49,8 +49,11 @@ struct EEPose
   bool valid;
 };
 
-// Y-Z position of one elbow's link tip (the far end of the L1 link).
-Point2 elbowTip(const Params & p, double elbow_rpy, double theta, double shoulder_y);
+// Y-Z position of one side's arm joint (the far end of the elbow link). The
+// arm-joint origin is (lateral, L1) in the rotated elbow frame; pass +arm_lateral
+// for the left side and -arm_lateral for the right.
+Point2 elbowTip(
+  const Params & p, double elbow_rpy, double theta, double shoulder_y, double lateral);
 
 // FK loop closure: intersect the two L2 circles centred on the elbow tips and
 // pick the lower intersection (the physical EE). See EEResult for the failure
@@ -67,12 +70,12 @@ PassiveAngles passiveAngles(const Params & p, double theta_left, double theta_ri
 EEPose forwardEE(
   const Params & p, double theta_left, double theta_right, double tool_offset = 0.0);
 
-// Per-side inverse kinematics: given a desired elbow-tip Y-Z and the side's
-// shoulder_y, return the actuated angle on the branch nearest theta_seed.
-// Inverse of elbowTip(); the seed resolves the 2*pi periodic ambiguity and
-// gives branch continuity along a sweep.
+// Per-side inverse kinematics: given a desired arm-joint Y-Z and the side's
+// shoulder_y / lateral offset, return the actuated angle on the branch nearest
+// theta_seed. Inverse of elbowTip(); the seed resolves the 2*pi periodic
+// ambiguity and gives branch continuity along a sweep.
 double sideIK(
-  const Params & p, double elbow_rpy, double shoulder_y,
+  const Params & p, double elbow_rpy, double shoulder_y, double lateral,
   double y_tip, double z_tip, double theta_seed);
 
 // Feasibility margin: 2*L2 - distance(left_tip, right_tip). Positive means the
