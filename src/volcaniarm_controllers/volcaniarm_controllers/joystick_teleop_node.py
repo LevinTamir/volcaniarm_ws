@@ -3,19 +3,23 @@
 
 Hold the deadman button and deflect the left stick to slew the EE
 target along Y (arm plane) and Z (world up). Each tick the node
-integrates velocity from the stick, clamps to the workspace, calls
-ComputeIK, and streams a short-horizon JointTrajectory point to the
-volcaniarm_controller.
+integrates velocity from the stick, clamps to the workspace, solves
+IK in-process (volcaniarm_kinematics), and streams a short-horizon
+JointTrajectory point to the volcaniarm_controller.
 
 On every deadman rising edge the node snaps its internal target to
-the arm's current EE position (computed via ComputeFK on the latest
-/joint_states), so pressing the deadman never teleports the arm —
-motion continues from wherever the arm already is.
+the arm's current EE position (forward_ee on the latest /joint_states),
+so pressing the deadman never teleports the arm — motion continues from
+wherever the arm already is.
 
 The /volcaniarm_controller/joint_trajectory topic is used (not the
 follow_joint_trajectory action) because the action handshake is too
 heavy for a 20 Hz streaming setpoint — the controller preempts
 whatever was in flight the moment a new point arrives.
+
+Kinematics come from the volcaniarm_kinematics C++ library via its pybind
+module (the single source of truth); IK/FK are computed in-process, so
+there is no compute_ik/compute_fk service dependency.
 """
 
 import rclpy
@@ -23,7 +27,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import Joy, JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
-from volcaniarm_msgs.srv import ComputeIK, ComputeFK
+
+import volcaniarm_kinematics_py as vk
 
 
 class JoystickTeleopNode(Node):
@@ -47,15 +52,13 @@ class JoystickTeleopNode(Node):
 
         # Latest elbow joint positions, keyed by name (populated from
         # /joint_states). Needed to FK → current EE when deadman is
-        # first pressed.
+        # first pressed, and to seed IK branch selection.
         self.joint_positions = {}
 
-        # Prevents overlapping service calls.
-        self.ik_pending = False
-        self.fk_pending = False
+        # Linkage geometry. Defaults mirror the URDF exactly (guarded by the
+        # Pinocchio oracle); IK/FK run in-process via the C++ library.
+        self.kin = vk.Params()
 
-        self.ik_client = self.create_client(ComputeIK, 'compute_ik')
-        self.fk_client = self.create_client(ComputeFK, 'compute_fk')
         self.traj_pub = self.create_publisher(
             JointTrajectory, p['trajectory_topic'], 10)
         self.create_subscription(Joy, '/joy', self._joy_cb, 10)
@@ -135,7 +138,7 @@ class JoystickTeleopNode(Node):
             self._publish_home()
             return
 
-        if not self.deadman_held or self.ik_pending:
+        if not self.deadman_held:
             return
 
         # No target yet (first deadman press didn't complete / FK failed) →
@@ -163,104 +166,58 @@ class JoystickTeleopNode(Node):
 
         self.target_y, self.target_z = new_y, new_z
 
-        if not self.ik_client.service_is_ready():
+        # Seed IK with the current elbow angles for branch continuity.
+        seed_left = self.joint_positions.get(self.left_joint, 0.0)
+        seed_right = self.joint_positions.get(self.right_joint, 0.0)
+        ik = vk.inverse_ee(self.kin, self.target_y, self.target_z, seed_left, seed_right)
+        if not ik.valid:
             self.get_logger().warn(
-                'compute_ik service not ready — is volcaniarm_kinematics running?',
-                throttle_duration_sec=2.0,
-            )
+                f'IK unreachable for y={self.target_y:.3f}, z={self.target_z:.3f}',
+                throttle_duration_sec=2.0)
             return
+        # joint_names order is [right_elbow, left_elbow].
+        self._publish_point([ik.theta_right, ik.theta_left],
+                            self.params['trajectory_horizon'])
 
-        req = ComputeIK.Request()
-        req.x = 0.0
-        req.y = self.target_y
-        req.z = self.target_z
-        self.ik_pending = True
-        future = self.ik_client.call_async(req)
-        future.add_done_callback(self._on_ik_done)
-
-    def _publish_home(self):
-        """Send both elbows to the configured home positions."""
-        positions = list(self.params['home_positions'])
-        self.get_logger().info(
-            f"Going to home position {tuple(positions)}")
-        horizon = float(self.params['home_duration_sec'])
+    def _publish_point(self, positions, horizon):
         sec = int(horizon)
         nsec = int((horizon - sec) * 1e9)
         traj = JointTrajectory()
         traj.joint_names = list(self.params['joint_names'])
         pt = JointTrajectoryPoint()
-        pt.positions = positions
+        pt.positions = list(positions)
         pt.time_from_start = Duration(sec=sec, nanosec=nsec)
         traj.points.append(pt)
         self.traj_pub.publish(traj)
+
+    def _publish_home(self):
+        """Send both elbows to the configured home positions."""
+        positions = list(self.params['home_positions'])
+        self.get_logger().info(f"Going to home position {tuple(positions)}")
+        self._publish_point(positions, float(self.params['home_duration_sec']))
         # Force the next deadman press to re-FK from the post-home pose,
         # so stick teleop doesn't drag the arm back to the stale target.
         self.target_y = None
         self.target_z = None
 
     def _resync_target_from_current_pose(self):
-        """Snap internal target to current EE via FK on live joint states."""
-        if self.fk_pending:
-            return
+        """Snap internal target to current EE via forward_ee on live states."""
         if self.right_joint not in self.joint_positions or \
            self.left_joint not in self.joint_positions:
             self.get_logger().warn(
                 'No /joint_states yet — deadman press ignored, '
                 'target not synced.', throttle_duration_sec=2.0)
             return
-        if not self.fk_client.service_is_ready():
-            self.get_logger().warn(
-                'compute_fk service not ready — is volcaniarm_kinematics running?',
-                throttle_duration_sec=2.0,
-            )
+        tl = self.joint_positions[self.left_joint]
+        tr = self.joint_positions[self.right_joint]
+        ee = vk.forward_ee(self.kin, tl, tr)
+        if not ee.valid:
+            self.get_logger().warn('forward_ee invalid at current pose',
+                                   throttle_duration_sec=2.0)
             return
-
-        # ComputeFK convention (see volcaniarm_kinematics.py): theta1 is
-        # the URDF right_elbow angle, theta2 is the URDF left_elbow angle.
-        req = ComputeFK.Request()
-        req.theta1 = self.joint_positions[self.right_joint]
-        req.theta2 = self.joint_positions[self.left_joint]
-        self.fk_pending = True
-        future = self.fk_client.call_async(req)
-        future.add_done_callback(self._on_fk_done)
-
-    def _on_fk_done(self, future):
-        self.fk_pending = False
-        try:
-            resp = future.result()
-        except Exception as e:
-            self.get_logger().error(f'FK call raised: {e}')
-            return
-        if not resp.success:
-            self.get_logger().warn(f'FK rejected: {resp.message}')
-            return
-        self.target_y, self.target_z = resp.y, resp.z
+        self.target_y, self.target_z = ee.y, ee.z
         self.get_logger().info(
-            f'Target synced to current EE: y={resp.y:.3f}, z={resp.z:.3f}')
-
-    def _on_ik_done(self, future):
-        self.ik_pending = False
-        try:
-            resp = future.result()
-        except Exception as e:
-            self.get_logger().error(f'IK call raised: {e}')
-            return
-
-        if not resp.success:
-            self.get_logger().warn(f'IK rejected: {resp.message}')
-            return
-
-        horizon = self.params['trajectory_horizon']
-        sec = int(horizon)
-        nsec = int((horizon - sec) * 1e9)
-
-        traj = JointTrajectory()
-        traj.joint_names = list(self.params['joint_names'])
-        pt = JointTrajectoryPoint()
-        pt.positions = [resp.theta1, resp.theta2]
-        pt.time_from_start = Duration(sec=sec, nanosec=nsec)
-        traj.points.append(pt)
-        self.traj_pub.publish(traj)
+            f'Target synced to current EE: y={ee.y:.3f}, z={ee.z:.3f}')
 
 
 def main():

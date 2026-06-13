@@ -25,7 +25,7 @@ from rclpy.time import Time as RclpyTime
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectoryPoint
-from volcaniarm_msgs.srv import ComputeIK, ComputeFK
+import volcaniarm_kinematics_py as vk
 
 import tf2_ros
 
@@ -112,10 +112,9 @@ class CalibrationRunner:
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, node)
 
-        self._ik_client = node.create_client(
-            ComputeIK, 'compute_ik', callback_group=self._cb_group)
-        self._fk_client = node.create_client(
-            ComputeFK, 'compute_fk', callback_group=self._cb_group)
+        # Kinematics in-process via the C++ library (single source of truth);
+        # no compute_ik/compute_fk service. Defaults mirror the URDF exactly.
+        self._kin = vk.Params()
         self._action_client = ActionClient(
             node, FollowJointTrajectory,
             '/volcaniarm_controller/follow_joint_trajectory',
@@ -503,48 +502,21 @@ class CalibrationRunner:
     # -- ROS plumbing ---------------------------------------------
 
     def _wait_for_clients(self, timeout_s: float = 5.0) -> bool:
-        ok = (self._ik_client.wait_for_service(timeout_sec=timeout_s)
-              and self._fk_client.wait_for_service(timeout_sec=timeout_s)
-              and self._action_client.wait_for_server(timeout_sec=timeout_s))
-        return ok
+        # IK/FK are in-process now; only the trajectory action needs waiting.
+        return self._action_client.wait_for_server(timeout_sec=timeout_s)
 
     def _call_ik(self, y: float, z: float):
-        req = ComputeIK.Request()
-        req.x = 0.0
-        req.y = y
-        req.z = z
-        future = self._ik_client.call_async(req)
-        # Wait synchronously: the runner is on its own thread; the
-        # node's executor (run on a separate thread by the host)
-        # services the future.
-        deadline = time.monotonic() + 5.0
-        while not future.done() and time.monotonic() < deadline:
-            if self._stop_event.is_set():
-                return None
-            time.sleep(0.02)
-        if not future.done():
+        # Returns (theta1=right, theta2=left) to match the prior service API.
+        ik = vk.inverse_ee(self._kin, y, z, 0.0, 0.0)
+        if not ik.valid:
             return None
-        resp = future.result()
-        if resp is None or not resp.success:
-            return None
-        return float(resp.theta1), float(resp.theta2)
+        return float(ik.theta_right), float(ik.theta_left)
 
     def _call_fk(self, theta_right: float, theta_left: float):
-        req = ComputeFK.Request()
-        req.theta1 = theta_right
-        req.theta2 = theta_left
-        future = self._fk_client.call_async(req)
-        deadline = time.monotonic() + 2.0
-        while not future.done() and time.monotonic() < deadline:
-            if self._stop_event.is_set():
-                return None
-            time.sleep(0.02)
-        if not future.done():
+        ee = vk.forward_ee(self._kin, theta_left, theta_right)
+        if not ee.valid:
             return None
-        resp = future.result()
-        if resp is None or not resp.success:
-            return None
-        return float(resp.x), float(resp.y), float(resp.z)
+        return float(ee.x), float(ee.y), float(ee.z)
 
     def _send_and_wait(self, joint_names, theta_right: float,
                        theta_left: float, duration: float) -> bool:
