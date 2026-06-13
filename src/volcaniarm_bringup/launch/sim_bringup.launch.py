@@ -304,10 +304,12 @@ def generate_launch_description():
         condition=is_all,
     )
 
-    # Display (RViz). Skipped when the calibration dashboard is up.
+    # Display (RViz). Skipped when the calibration dashboard is up, or when
+    # moveit:=true (the MoveIt MotionPlanning RViz replaces the plain display).
     show_display = IfCondition(PythonExpression([
         "'", LaunchConfiguration("calibration"), "' == 'false' and ",
-        "'", LaunchConfiguration("mode"), "' != 'tests'",
+        "'", LaunchConfiguration("mode"), "' != 'tests' and ",
+        "'", LaunchConfiguration("moveit"), "' == 'false'",
     ]))
     display_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
