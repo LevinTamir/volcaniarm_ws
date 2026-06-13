@@ -17,7 +17,6 @@
   <depend>control_msgs</depend>
   <depend>trajectory_msgs</depend>
   <depend>visualization_msgs</depend>
-  <depend>volcaniarm_msgs</depend>
   <exec_depend>volcaniarm_kinematics</exec_depend>
   <depend>rqt_gui</depend>
   <depend>rqt_gui_py</depend>
