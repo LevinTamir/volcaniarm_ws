@@ -9,13 +9,21 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- IK plugin build deps (the plugin now lives in this package). -->
+  <depend>moveit_core</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>moveit_msgs</depend>
+  <depend>tf2_eigen</depend>
+  <depend>volcaniarm_kinematics</depend>
+
   <exec_depend>moveit_ros_move_group</exec_depend>
   <exec_depend>moveit_ros_visualization</exec_depend>
   <exec_depend>moveit_kinematics</exec_depend>
   <exec_depend>pilz_industrial_motion_planner</exec_depend>
   <exec_depend>moveit_simple_controller_manager</exec_depend>
   <exec_depend>moveit_configs_utils</exec_depend>
-  <exec_depend>volcaniarm_ik_plugin</exec_depend>
   <exec_depend>volcaniarm_description</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
