@@ -780,22 +780,27 @@ class CalibrationDashboardWidget(QWidget):
             self._log_msg('preflight: no fresh /detections -- skipping tag-set check')
             return True
         ids = self._visible_tag_ids
-        if EE_TAG_ID not in ids:
-            self._log_msg(
-                f'preflight FAILED: EE tag (id {EE_TAG_ID}) not visible '
-                f'(seen: {sorted(ids) or "none"}). Check camera aim / markers.')
-            return False
         mode = self._cam_runner.detect_mode()
+        # Hard refuse ONLY on a clear camera-placement contradiction: the base
+        # tag is only mounted in tests/stand mode, so seeing it while the URDF
+        # says on-robot means the camera is actually on the stand (wrong arg).
         if mode == MODE_ON_ROBOT and BASE_TAG_ID in ids:
             self._log_msg(
                 f'preflight FAILED: base tag (id {BASE_TAG_ID}) visible in '
                 'on-robot/work mode -- the camera is probably on the stand '
                 '(relaunch with mode:=tests).')
             return False
+        # Soft warnings: a tag not being in frame yet is fine -- the EE tag is
+        # brought into view during the sweep, not at the home pose.
+        if EE_TAG_ID not in ids:
+            self._log_msg(
+                f'preflight: EE tag (id {EE_TAG_ID}) not visible at the current '
+                f'pose (seen: {sorted(ids) or "none"}) -- it will be acquired '
+                'during the sweep; continuing.')
         if mode == MODE_STAND and BASE_TAG_ID not in ids:
             self._log_msg(
-                f'preflight: base tag (id {BASE_TAG_ID}) not visible in stand/'
-                'tests mode -- stand cross-check will be unavailable (continuing).')
+                f'preflight: base tag (id {BASE_TAG_ID}) not visible -- stand '
+                'cross-check unavailable; continuing.')
         return True
 
     @Slot()
