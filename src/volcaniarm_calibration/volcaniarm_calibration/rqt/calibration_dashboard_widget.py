@@ -24,6 +24,7 @@ UI is built programmatically (no .ui file) for simplicity.
 from __future__ import annotations
 
 import html
+import math
 import re
 import shutil
 import subprocess
@@ -32,7 +33,15 @@ from pathlib import Path
 import threading
 from typing import Optional
 
+import yaml
+
 from ament_index_python.packages import get_package_share_directory
+from apriltag_msgs.msg import AprilTagDetectionArray
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import StaticTransformBroadcaster
+
+EE_TAG_ID = 20
+BASE_TAG_ID = 5
 
 from python_qt_binding.QtCore import Signal, Slot, QObject, QTimer
 from python_qt_binding.QtWidgets import (
@@ -164,6 +173,19 @@ class CalibrationDashboardWidget(QWidget):
             lambda status, path, reason: self._bridge.camera_calib_finished.emit(
                 status, str(path) if path else '', reason))
 
+        # Live preview: broadcast the just-solved pose as camera_link_calibrated
+        # so the operator sees current (URDF camera_link) vs candidate in RViz
+        # before saving. Re-broadcast on each solve.
+        self._calib_tf_broadcaster = StaticTransformBroadcaster(self._runner.node)
+
+        # Preflight: track which AprilTag IDs the camera currently sees, to
+        # catch a (mode, calibration) / camera-placement mismatch before a run.
+        self._visible_tag_ids: set = set()
+        self._visible_tags_t: float = 0.0
+        self._got_detections: bool = False
+        self._runner.node.create_subscription(
+            AprilTagDetectionArray, '/detections', self._on_detections, 10)
+
         self._build_ui()
         self._wire_signals()
         self._defaults_from_fk_in_background()
@@ -194,8 +216,22 @@ class CalibrationDashboardWidget(QWidget):
             'Sweeps the arm through the EE poses in calibration_poses.yaml '
             'and solves for the camera pose. Mode is auto-detected from '
             'the URDF: parent of camera_link is world (stand) or '
-            'camera_mount_rev_link (on-robot).')
+            'camera_mount_rev_link (on-robot). Solving does NOT save -- '
+            'review the preview, then "Save & apply".')
         align_outer.addWidget(self._calibrate_btn)
+        # Save gate: a solve only previews (camera_link_calibrated TF + overlay);
+        # the operator reviews residuals + delta vs the applied pose here, then
+        # explicitly saves. Nothing is written to camera_pose.yaml on solve.
+        self._calib_review = QLabel('')
+        self._calib_review.setWordWrap(True)
+        self._calib_review.setStyleSheet('color: gray;')
+        align_outer.addWidget(self._calib_review)
+        self._save_apply_btn = QPushButton('Save & apply')
+        self._save_apply_btn.setEnabled(False)
+        self._save_apply_btn.setToolTip(
+            'Write the previewed calibration to camera_pose.yaml and append it '
+            'to camera_pose_history.yaml. Takes effect on the next launch.')
+        align_outer.addWidget(self._save_apply_btn)
         layout.addWidget(align_box)
 
         cfg_box = QGroupBox('Test configuration')
@@ -437,6 +473,7 @@ class CalibrationDashboardWidget(QWidget):
         self._cancel_btn.clicked.connect(self._on_cancel_clicked)
         self._move_initial_btn.clicked.connect(self._on_move_initial_clicked)
         self._calibrate_btn.clicked.connect(self._on_calibrate_clicked)
+        self._save_apply_btn.clicked.connect(self._on_save_apply_clicked)
         # Refresh the alignment status label periodically so it picks
         # up new result.yaml files written between dashboard sessions.
         self._align_timer = QTimer(self)
@@ -730,9 +767,43 @@ class CalibrationDashboardWidget(QWidget):
             '~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'
             'config/camera_pose.yaml').expanduser()
 
+    def _on_detections(self, msg: AprilTagDetectionArray):
+        self._visible_tag_ids = {int(d.id) for d in msg.detections}
+        self._visible_tags_t = time.monotonic()
+        self._got_detections = True
+
+    def _preflight_ok(self) -> bool:
+        """Refuse to calibrate if the visible tag set contradicts the detected
+        camera placement. Non-blocking if no detections are arriving (e.g. the
+        topic isn't wired) -- we only enforce when we actually see tags."""
+        if not self._got_detections or (time.monotonic() - self._visible_tags_t) > 2.0:
+            self._log_msg('preflight: no fresh /detections -- skipping tag-set check')
+            return True
+        ids = self._visible_tag_ids
+        if EE_TAG_ID not in ids:
+            self._log_msg(
+                f'preflight FAILED: EE tag (id {EE_TAG_ID}) not visible '
+                f'(seen: {sorted(ids) or "none"}). Check camera aim / markers.')
+            return False
+        mode = self._cam_runner.detect_mode()
+        if mode == MODE_ON_ROBOT and BASE_TAG_ID in ids:
+            self._log_msg(
+                f'preflight FAILED: base tag (id {BASE_TAG_ID}) visible in '
+                'on-robot/work mode -- the camera is probably on the stand '
+                '(relaunch with mode:=tests).')
+            return False
+        if mode == MODE_STAND and BASE_TAG_ID not in ids:
+            self._log_msg(
+                f'preflight: base tag (id {BASE_TAG_ID}) not visible in stand/'
+                'tests mode -- stand cross-check will be unavailable (continuing).')
+        return True
+
     @Slot()
     def _on_calibrate_clicked(self):
         if self._cam_runner.is_busy():
+            return
+        if not self._preflight_ok():
+            self._status_label.setText('preflight failed -- see log')
             return
         if self._cam_runner.request():
             self._log_msg('camera localization: starting')
@@ -741,15 +812,13 @@ class CalibrationDashboardWidget(QWidget):
     @Slot(str, str, str)
     def _on_camera_calib_finished(self, status: str, result_path: str,
                                   reason: str):
-        """Slot for CameraCalibrationRunner.finished_cb.
-
-        Just logs the outcome and refreshes the alignment status; no
-        TF publisher to start (the URDF chain stays the source of
-        truth).
-        """
+        """Solve finished. The save gate means a solve only PREVIEWS the
+        candidate (residuals + delta + camera_link_calibrated TF + overlay);
+        nothing is written until the operator clicks 'Save & apply'."""
         if status == 'completed':
-            self._log_msg(f'camera localization saved: {result_path}')
-            self._status_label.setText('camera localization completed')
+            self._log_msg(f'camera localization solved (audit: {result_path})')
+            self._present_candidate()
+            self._status_label.setText('camera localization solved -- review & save')
         elif status == 'canceled':
             self._log_msg('camera localization canceled')
             self._status_label.setText('camera localization canceled')
@@ -758,6 +827,84 @@ class CalibrationDashboardWidget(QWidget):
                     else 'camera localization failed')
             self._log_msg(text)
             self._status_label.setText(text)
+        self._refresh_alignment_state()
+
+    def _present_candidate(self):
+        """Populate the review label + enable Save from the solved candidate."""
+        r = getattr(self._cam_runner, 'last_result', None)
+        if not r:
+            return
+        solved, res = r['solved'], r['residuals']
+        rms_mm, max_mm = res['rms_m'] * 1e3, res['max_m'] * 1e3
+        delta_txt = ''
+        cur = self._read_camera_pose_yaml()
+        if cur and cur.get('xyz') and cur.get('rpy'):
+            dt = math.sqrt(sum((a - b) ** 2
+                               for a, b in zip(solved['xyz'], cur['xyz']))) * 1e3
+            drot = max(abs(a - b)
+                       for a, b in zip(solved['rpy'], cur['rpy'])) * 180.0 / math.pi
+            delta_txt = f'  |  Δ vs applied: {dt:.1f} mm, {drot:.2f}°'
+        prev_rms = self._last_history_rms()
+        warn, color = '', 'black'
+        if prev_rms is not None and res['rms_m'] > prev_rms:
+            warn = f'  ⚠ worse than last saved ({prev_rms * 1e3:.1f} mm)'
+            color = '#b36b00'
+        self._calib_review.setStyleSheet(f'color: {color};')
+        self._calib_review.setText(
+            f"candidate [{r['mode']}]: RMS {rms_mm:.1f} mm, max {max_mm:.1f} mm, "
+            f"{r['samples_used']} poses{delta_txt}{warn}")
+        self._save_apply_btn.setEnabled(True)
+        self._broadcast_calibrated_preview(r)
+
+    def _read_camera_pose_yaml(self) -> Optional[dict]:
+        p = self._camera_pose_config_path()
+        if not p.exists():
+            return None
+        try:
+            return yaml.safe_load(p.read_text()) or None
+        except Exception:
+            return None
+
+    def _last_history_rms(self) -> Optional[float]:
+        p = self._camera_pose_config_path().parent / 'camera_pose_history.yaml'
+        try:
+            hist = yaml.safe_load(p.read_text()) if p.exists() else None
+            if hist:
+                return float(hist[-1].get('rms_m'))
+        except Exception:
+            pass
+        return None
+
+    def _broadcast_calibrated_preview(self, r: dict):
+        """Broadcast parent_frame -> camera_link_calibrated for the candidate."""
+        try:
+            solved = r['solved']
+            t = TransformStamped()
+            t.header.stamp = self._runner.node.get_clock().now().to_msg()
+            t.header.frame_id = solved['parent_frame']
+            t.child_frame_id = 'camera_link_calibrated'
+            t.transform.translation.x = float(solved['xyz'][0])
+            t.transform.translation.y = float(solved['xyz'][1])
+            t.transform.translation.z = float(solved['xyz'][2])
+            q = solved['quat']
+            t.transform.rotation.x = float(q[0])
+            t.transform.rotation.y = float(q[1])
+            t.transform.rotation.z = float(q[2])
+            t.transform.rotation.w = float(q[3])
+            self._calib_tf_broadcaster.sendTransform(t)
+            self._log_msg('preview: broadcasting camera_link_calibrated TF')
+        except Exception as exc:
+            self._log_msg(f'preview TF failed: {exc}')
+
+    @Slot()
+    def _on_save_apply_clicked(self):
+        path = self._cam_runner.apply_last_result()
+        if path is None:
+            self._log_msg('nothing to save -- run a calibration first')
+            return
+        self._log_msg(f'camera pose saved & applied: {path} (effective next launch)')
+        self._status_label.setText('camera pose saved (relaunch to apply)')
+        self._save_apply_btn.setEnabled(False)
         self._refresh_alignment_state()
 
     # -- runner-side slots ---------------------------------------

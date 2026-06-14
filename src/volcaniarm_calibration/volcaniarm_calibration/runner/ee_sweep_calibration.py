@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import math
 import os
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -81,6 +82,17 @@ CAMERA_MOUNT_FRAME = 'camera_mount_rev_link'
 
 MODE_STAND = 'calibration_stand'   # camera parented to world
 MODE_ON_ROBOT = 'on_robot_mount'   # camera parented to camera_mount_rev_link
+
+
+def _git_sha() -> Optional[str]:
+    """Short git HEAD SHA for calibration-history provenance (or None)."""
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=str(DEFAULT_CAMERA_POSE_CONFIG.parent),
+            stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:
+        return None
 
 
 def write_camera_pose_config(mode: str, parent_frame: str,
@@ -446,6 +458,10 @@ class EESweepCameraCalibrationRunner:
         self.status_cb: Optional[StatusCb] = None
         self.progress_cb: Optional[ProgressCb] = None
         self.finished_cb: Optional[FinishedCb] = None
+        # Save gate: a successful solve stashes its result here (NOT written to
+        # camera_pose.yaml). The dashboard previews it, then apply_last_result()
+        # persists it on explicit operator confirmation.
+        self.last_result: Optional[dict] = None
 
     # -- public control surface ---------------------------------------
 
@@ -695,17 +711,18 @@ class EESweepCameraCalibrationRunner:
                 self._emit_finished('failed', result_path, reason)
                 return
 
-            # Write artefacts.
+            # Write the per-run audit, but DO NOT touch camera_pose.yaml yet:
+            # the save gate persists it only on explicit operator confirmation
+            # (apply_last_result), after they review the preview + residuals.
             result = self._build_result(
                 mode, samples, solved_xyz, solved_quat, residual_stats,
                 drift, urdf_parent)
             result_path = self._save_yaml(result)
             self._emit_status(f'saved per-run audit: {result_path}')
-            config_path = self._save_camera_pose_config(
-                mode, urdf_parent, solved_xyz, solved_quat)
-            self._emit_status(
-                f'updated default camera pose config: {config_path}')
+            self.last_result = result
             self._log_summary(mode, solved_xyz, solved_quat, residual_stats)
+            self._emit_status(
+                'solved -- review the preview, then "Save & apply" to persist')
             self._emit_finished('completed', result_path, '')
         except Exception as exc:
             self._node.get_logger().error(
@@ -903,6 +920,46 @@ class EESweepCameraCalibrationRunner:
                                  xyz: np.ndarray, quat: np.ndarray) -> Path:
         return write_camera_pose_config(
             mode, parent_frame, xyz, quat, source='ee_sweep')
+
+    # -- save gate -----------------------------------------------------
+
+    def apply_last_result(self) -> Optional[Path]:
+        """Persist the last solved result to camera_pose.yaml + append to the
+        versioned history. Returns the config path, or None if nothing solved."""
+        r = self.last_result
+        if not r:
+            return None
+        solved = r['solved']
+        xyz = np.array(solved['xyz'], dtype=float)
+        quat = np.array(solved['quat'], dtype=float)
+        config_path = write_camera_pose_config(
+            r['mode'], solved['parent_frame'], xyz, quat, source='ee_sweep')
+        self._append_history(r, config_path)
+        return config_path
+
+    def _append_history(self, r: dict, config_path: Path) -> None:
+        hist_path = config_path.parent / 'camera_pose_history.yaml'
+        entry = {
+            'timestamp': datetime.now().isoformat(),
+            'git_sha': _git_sha(),
+            'mode': r['mode'],
+            'parent_frame': r['solved']['parent_frame'],
+            'xyz': r['solved']['xyz'],
+            'rpy': r['solved']['rpy'],
+            'rms_m': r['residuals']['rms_m'],
+            'max_m': r['residuals']['max_m'],
+            'samples_used': r['samples_used'],
+        }
+        try:
+            existing = []
+            if hist_path.exists():
+                existing = yaml.safe_load(hist_path.read_text()) or []
+            existing.append(entry)
+            with hist_path.open('w') as f:
+                yaml.safe_dump(existing, f, sort_keys=False)
+        except Exception as exc:
+            self._node.get_logger().warn(
+                f'could not append calibration history: {exc}')
 
     def _log_summary(self, mode: str, xyz: np.ndarray, quat: np.ndarray,
                      residual_stats: dict):
