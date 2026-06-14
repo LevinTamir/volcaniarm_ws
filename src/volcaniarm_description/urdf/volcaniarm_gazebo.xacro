@@ -24,24 +24,32 @@
   </gazebo>
 
   <!-- RGBD Camera sensor.
-       HFOV 1.5 rad (~86 deg) intentionally exceeds the real D435 color
-       spec (~69 deg) to widen the calibration camera's coverage so the
-       full EE operating envelope (home tip near world Z=0.23 to high
-       targets near Z=1.58) fits in a single frame at 2.5 m standoff.
-       Resolution/rate were dropped from 1280x720@30 to 848x480@15 (and
-       visualize off) because the per-step RGBD render+pointcloud was the
-       dominant Gazebo RTF cost; lighter rendering recovers real-time. At
-       848 px the 0.2 m sim apriltags are ~36 px wide at 2.5 m (~4-5 px
-       per bit, still above the 36h11 decode floor). If a run needs tag
-       coverage closer to a calibrated D435, raise width/height back up;
-       FOV does not affect render cost. -->
+       Tuned to mimic the real D435 *color* stream that apriltag_ros
+       consumes, while staying decodable for the 0.064 m tags and light
+       enough for an acceptable Gazebo RTF:
+         - HFOV 1.204 rad (~69 deg) = the real D435 color H-FoV. The old
+           1.5 rad (~86 deg) matched the D435 *depth* FoV, not color. The
+           16:9 image makes the derived V-FoV ~42 deg, also matching the
+           color stream. Narrower FoV makes each tag larger in pixels at
+           no render cost.
+         - 1280x720 (native D435 mode): a 0.064 m tag is ~43 px at ~1.6 m
+           (decodable; ~68 px at ~1.0 m). 720p is the practical floor for
+           64 mm tags; 848x480 left them at ~28 px, below the 36h11 floor.
+         - 10 Hz (was 15) + visualize off claws back the render load that
+           720p adds; calibration sweeps and weed detection don't need a
+           fast frame rate.
+       The bridged camera_info follows this sensor, so apriltag picks up
+       the intrinsics automatically. Note: at 69/42 deg and 1.6 m the full
+       EE Z-envelope no longer fits one frame (the old 86 deg was a
+       non-physical widening); that mirrors the real D435 and is handled
+       by standoff/tilt on hardware. -->
   <gazebo reference="camera_link">
       <sensor name="rgbd_camera" type="rgbd_camera">
           <camera>
-              <horizontal_fov>1.5</horizontal_fov>
+              <horizontal_fov>1.204</horizontal_fov>
               <image>
-                  <width>848</width>
-                  <height>480</height>
+                  <width>1280</width>
+                  <height>720</height>
               </image>
               <clip>
                   <near>0.3</near>
@@ -49,7 +57,7 @@
               </clip>
           </camera>
           <always_on>1</always_on>
-          <update_rate>15</update_rate>
+          <update_rate>10</update_rate>
           <visualize>false</visualize>
           <topic>rgbd_camera</topic>
           <!-- All sensor outputs (image, depth, pointcloud,
