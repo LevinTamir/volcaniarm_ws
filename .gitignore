@@ -33,6 +33,7 @@ __pycache__/
 /src/apriltag_ros/
 /src/easy_handeye2/
 /src/onnxruntime_vendor/
+/src/volcaniarm_lerobot/
 
 # Per-physical-setup state written by the calibration dashboard's
 # Calibrate camera button. Read by real_bringup at launch to override
