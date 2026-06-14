@@ -91,11 +91,11 @@ Two things worth knowing about the pipeline:
 
 **Recommended:** give each dataset its own root on a disk with space (encoded video still adds
 up over many episodes), kept out of both the colcon workspace and the HF cache, e.g.
-`~/lerobot_data/volcaniarm_<task>/`. Pass the **same `--dataset.root` on the first (create) run
+`~/projects/volcaniarm_lerobot_data/volcaniarm_<task>/`. Pass the **same `--dataset.root` on the first (create) run
 and every later (`--resume=true`) run** so episodes accumulate into one dataset:
 
 ```bash
-ROOT=~/lerobot_data/volcaniarm_demo
+ROOT=~/projects/volcaniarm_lerobot_data/volcaniarm_demo
 # first run (creates):
 lerobot-record --robot.type=volcaniarm --robot.id=volcaniarm_0 \
   --teleop.type=volcaniarm_gamepad --teleop.id=joy --display_data=true \
