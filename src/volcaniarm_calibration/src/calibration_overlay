@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from volcaniarm_calibration.calibration_overlay_node import main
+main()

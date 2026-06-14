@@ -87,6 +87,24 @@ def generate_launch_description():
         output='screen',
     )
 
+    # Reprojection-overlay: detected vs FK-predicted EE-tag corners on the
+    # live image (verifies the candidate calibration by eye). Same image /
+    # camera_info / detections topics the detector uses.
+    overlay_node = Node(
+        package='volcaniarm_calibration',
+        executable='calibration_overlay',
+        name='calibration_overlay',
+        parameters=[{
+            'tag_size': tag_size,
+            'use_sim_time': use_sim_time,
+            'image_topic': '/camera/color/image_raw',
+            'camera_info_topic': '/camera/color/camera_info',
+            'detections_topic': '/detections',
+        }],
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('use_rviz')),
+    )
+
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -121,6 +139,7 @@ def generate_launch_description():
         camera_calibration_only_arg,
         marker_world_rpy_arg,
         apriltag_node,
+        overlay_node,
         rviz,
         rqt,
     ])

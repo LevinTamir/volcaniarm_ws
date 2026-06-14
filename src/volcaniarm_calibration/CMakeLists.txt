@@ -11,6 +11,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   src/accuracy_test
   src/camera_locator
+  src/calibration_overlay
   DESTINATION lib/${PROJECT_NAME}
 )
 
