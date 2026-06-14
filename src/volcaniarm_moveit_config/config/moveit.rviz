@@ -8,7 +8,7 @@ Panels:
         - /MotionPlanning1
         - /MotionPlanning1/Planning Request1
       Splitter Ratio: 0.5
-    Tree Height: 326
+    Tree Height: 441
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -32,7 +32,7 @@ Visualization Manager:
         Y: 0
         Z: 0
       Plane: XY
-      Plane Cell Count: 10
+      Plane Cell Count: 20
       Reference Frame: <Fixed Frame>
       Value: true
     - Class: rviz_default_plugins/TF
@@ -51,21 +51,210 @@ Visualization Manager:
         {}
       Update Interval: 0
       Value: false
-    - Class: moveit_rviz_plugin/Trajectory
-      Name: ClosedLoopPreview
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: RGB8
+      Decay Time: 0
       Enabled: true
-      Robot Description: robot_description
-      Trajectory Topic: /display_planned_path_full
-      Color Enabled: true
-      Robot Color: 255; 130; 0
-      Robot Alpha: 0.6
-      Show Robot Visual: true
-      Show Robot Collision: false
-      Show Trail: false
-      Loop Animation: false
-      State Display Time: 0.05 s
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.009999999776482582
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /camera/depth/color/points
+      Use Fixed Frame: true
+      Use rainbow: true
       Value: true
-    - Acceleration_Scaling_Factor: 0.1
+    - Class: moveit_rviz_plugin/Trajectory
+      Color Enabled: true
+      Enabled: true
+      Interrupt Display: false
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+        base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        camera_color_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        camera_color_optical_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        camera_depth_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        camera_depth_optical_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        camera_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        camera_link_optical:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        camera_mount_linear_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        camera_mount_rev_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        closure_dummy_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fl_caster_wheel_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fl_caster_wheel_mount_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fl_table_leg_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fr_caster_wheel_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fr_caster_wheel_mount_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        fr_table_leg_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        right_arm_tip_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rl_caster_wheel_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rl_caster_wheel_mount_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rl_table_leg_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rr_caster_wheel_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rr_caster_wheel_mount_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rr_table_leg_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        tool0:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        tool_planar_y:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        volcaniarm_base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        volcaniarm_left_arm_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        volcaniarm_left_elbow_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        volcaniarm_right_arm_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        volcaniarm_right_elbow_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        world:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+      Loop Animation: false
+      Name: ClosedLoopPreview
+      Robot Alpha: 0.6000000238418579
+      Robot Color: 255; 130; 0
+      Robot Description: robot_description
+      Show Robot Collision: false
+      Show Robot Visual: true
+      Show Trail: false
+      State Display Time: 0.05 s
+      Trail Step Size: 1
+      Trajectory Topic: /display_planned_path_full
+      Use Sim Time: false
+      Value: true
+    - Acceleration_Scaling_Factor: 0.4
       Class: moveit_rviz_plugin/MotionPlanning
       Enabled: true
       Move Group Namespace: ""
@@ -206,6 +395,14 @@ Visualization Manager:
             Show Axes: false
             Show Trail: false
             Value: true
+          tool0:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+          tool_planar_y:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
           volcaniarm_base_link:
             Alpha: 1
             Show Axes: false
@@ -391,6 +588,14 @@ Visualization Manager:
             Show Axes: false
             Show Trail: false
             Value: true
+          tool0:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+          tool_planar_y:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
           volcaniarm_base_link:
             Alpha: 1
             Show Axes: false
@@ -424,7 +629,7 @@ Visualization Manager:
         Show Robot Collision: false
         Show Robot Visual: true
       Value: true
-      Velocity_Scaling_Factor: 0.1
+      Velocity_Scaling_Factor: 0.4
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -442,7 +647,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 2.8994429111480713
+      Distance: 3.2642829418182373
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -457,24 +662,26 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.11500009149312973
+      Pitch: 0.24500009417533875
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 3.099996328353882
+      Yaw: 3.3849966526031494
     Saved: ~
 Window Geometry:
+  ClosedLoopPreview - Trajectory Slider:
+    collapsed: false
   Displays:
     collapsed: false
-  Height: 1013
+  Height: 1131
   Hide Left Dock: false
   Hide Right Dock: false
   MotionPlanning:
     collapsed: false
   MotionPlanning - Trajectory Slider:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000002b400000397fc0200000005fb00000044004d006f00740069006f006e0050006c0061006e006e0069006e00670020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000004400fffffffb000000100044006900730070006c006100790073010000003f00000186000000cc00fffffffb0000000a005600690065007700730000000112000000ab000000a900fffffffb0000001c004d006f00740069006f006e0050006c0061006e006e0069006e006701000001cb000001960000019600fffffffb0000001c004d006f00740069006f006e0050006c0061006e006e0069006e006701000003670000006f0000006f00ffffff000003220000039700000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000100000000000002b40000040dfc0200000006fb00000044004d006f00740069006f006e0050006c0061006e006e0069006e00670020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000004400fffffffb000000100044006900730070006c006100790073010000003f000001f9000000cc00fffffffb0000000a005600690065007700730000000112000000ab000000a900fffffffb0000001c004d006f00740069006f006e0050006c0061006e006e0069006e0067010000023e0000020e0000019600fffffffb0000001c004d006f00740069006f006e0050006c0061006e006e0069006e006701000003670000006f0000000000000000fb0000004a0043006c006f007300650064004c006f006f007000500072006500760069006500770020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000004400ffffff000004840000040d00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Views:
     collapsed: false
-  Width: 1500
-  X: 50
-  Y: 0
+  Width: 1854
+  X: 1986
+  Y: 32
