@@ -9,6 +9,10 @@
     # 0.064. Override via the `tag_size:=` launch arg (forwarded by
     # both bringup launches into the dashboard and the URDF xacro)
     # when running with the larger 0.200 prints.
+    #
+    # ACCURACY HYGIENE (real hardware): depth error scales ~linearly with
+    # tag-size error, so MEASURE the printed tag's black square with calipers
+    # and pass the measured value via tag_size:= (don't trust the nominal).
     size: 0.064
     # Strict decoding. The 36h11 family has Hamming distance 11, so
     # 0-bit-error rejection still gives essentially zero false-positive

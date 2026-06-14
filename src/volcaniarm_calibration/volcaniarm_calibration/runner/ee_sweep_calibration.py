@@ -717,6 +717,15 @@ class EESweepCameraCalibrationRunner:
             result = self._build_result(
                 mode, samples, solved_xyz, solved_quat, residual_stats,
                 drift, urdf_parent)
+            if mode == MODE_ON_ROBOT:
+                rail = self._decompose_rail(solved_xyz)
+                if rail:
+                    result['rail_decomposition'] = rail
+                    self._emit_status(
+                        'rail: suggested camera_mount_x='
+                        f"{rail['camera_mount_x_suggested']:.4f} m (from "
+                        f"{rail['camera_mount_x_current']:.4f}); off-axis mount "
+                        f"tolerance {rail['off_axis_tolerance_m'] * 1e3:.1f} mm")
             result_path = self._save_yaml(result)
             self._emit_status(f'saved per-run audit: {result_path}')
             self.last_result = result
@@ -851,6 +860,29 @@ class EESweepCameraCalibrationRunner:
             return self._runner._tf_buffer.lookup_transform(  # noqa: SLF001
                 parent, child, RclpyTime(),
                 timeout=RclpyDuration(seconds=0.5))
+        except Exception:
+            return None
+
+    def _decompose_rail(self, solved_xyz) -> Optional[dict]:
+        """On-robot only: split the solved camera_joint translation into the
+        rail (camera_mount_x, base X) and the off-axis residual (mount
+        tolerance). Informational -- the operator reviews the suggested rail
+        value; it is not auto-written to camera_pose.yaml (validate on hardware).
+        """
+        try:
+            t_rev = self._lookup_static('base_link', CAMERA_MOUNT_FRAME)
+            t_lin = self._lookup_static('base_link', 'camera_mount_linear_link')
+            if t_rev is None or t_lin is None:
+                return None
+            q = t_rev.transform.rotation
+            r_base_rev = _quat_to_matrix(np.array([q.x, q.y, q.z, q.w]))
+            offset_base = r_base_rev @ np.asarray(solved_xyz, dtype=float)
+            cur_x = float(t_lin.transform.translation.x)
+            return {
+                'camera_mount_x_current': cur_x,
+                'camera_mount_x_suggested': cur_x + float(offset_base[0]),
+                'off_axis_tolerance_m': float(np.hypot(offset_base[1], offset_base[2])),
+            }
         except Exception:
             return None
 

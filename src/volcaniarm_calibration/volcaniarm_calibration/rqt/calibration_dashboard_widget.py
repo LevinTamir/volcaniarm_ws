@@ -849,10 +849,16 @@ class CalibrationDashboardWidget(QWidget):
         if prev_rms is not None and res['rms_m'] > prev_rms:
             warn = f'  ⚠ worse than last saved ({prev_rms * 1e3:.1f} mm)'
             color = '#b36b00'
+        rail = r.get('rail_decomposition')
+        rail_txt = ''
+        if rail:
+            rail_txt = (
+                f"\nrail: set camera_mount_x:={rail['camera_mount_x_suggested']:.4f} "
+                f"(off-axis mount tol {rail['off_axis_tolerance_m'] * 1e3:.1f} mm)")
         self._calib_review.setStyleSheet(f'color: {color};')
         self._calib_review.setText(
             f"candidate [{r['mode']}]: RMS {rms_mm:.1f} mm, max {max_mm:.1f} mm, "
-            f"{r['samples_used']} poses{delta_txt}{warn}")
+            f"{r['samples_used']} poses{delta_txt}{warn}{rail_txt}")
         self._save_apply_btn.setEnabled(True)
         self._broadcast_calibrated_preview(r)
 
