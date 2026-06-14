@@ -13,6 +13,8 @@
   <depend>ament_index_cpp</depend>
   <depend>controller_interface</depend>
   <depend>hardware_interface</depend>
+  <depend>cv_bridge</depend>
+  <depend>libopencv-dev</depend>
   <depend>onnxruntime_vendor</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>

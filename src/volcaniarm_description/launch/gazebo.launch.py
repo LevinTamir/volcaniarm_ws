@@ -72,8 +72,10 @@ def generate_launch_description():
     controller_arg = DeclareLaunchArgument(
         name="controller",
         default_value="traj",
-        choices=["traj", "policy", "all"],
-        description="Which controller(s) to load into gz_ros2_control",
+        choices=["traj", "policy", "vision_policy", "all"],
+        description="Which controller(s) to load into gz_ros2_control. "
+                    "'vision_policy' loads the image-based RL controller "
+                    "(matches volcaniarm_rl_vision_controller.yaml).",
     )
 
     tag_size_arg = DeclareLaunchArgument(

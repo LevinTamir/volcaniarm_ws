@@ -18,6 +18,9 @@ def _build_controller_manager(context, robot_description):
     if mode in ("policy", "all"):
         yamls.append(os.path.join(
             volcaniarm_controller, "config", "volcaniarm_rl_controller.yaml"))
+    if mode == "vision_policy":
+        yamls.append(os.path.join(
+            volcaniarm_controller, "config", "volcaniarm_rl_vision_controller.yaml"))
 
     return [Node(
         package="controller_manager",
@@ -51,13 +54,22 @@ def generate_launch_description():
     controller_arg = DeclareLaunchArgument(
         "controller",
         default_value="traj",
-        choices=["traj", "policy", "all"],
+        choices=["traj", "policy", "vision_policy", "all"],
         description="Which controller(s) to load into controller_manager",
     )
 
+    # Forward `controller:=` to xacro so this RSP publishes a URDF
+    # whose <parameters> block matches the YAML that
+    # _build_controller_manager actually loads. Without this the URDF
+    # races display.launch.py's RSP on /robot_description with the
+    # wrong YAML reference (same bug we hit on the Gazebo path).
     robot_description = ParameterValue(
         Command(
-            ["xacro ", LaunchConfiguration("model"), " sim_engine:=isaac"]
+            [
+                "xacro ", LaunchConfiguration("model"),
+                " sim_engine:=isaac",
+                " controller:=", LaunchConfiguration("controller"),
+            ]
         ),
         value_type=str,
     )

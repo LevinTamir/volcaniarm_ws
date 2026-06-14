@@ -146,10 +146,19 @@ def generate_launch_description():
                     "(expects Isaac Sim already running with the ROS2 bridge and the scene loaded)",
     )
 
+    # Controller mode:
+    #   traj          → only trajectory controller loaded + active (default)
+    #   policy        → only state-based RL policy controller loaded + active
+    #   vision_policy → only vision RL policy controller loaded + active
+    #                   (subscribes to /camera/color/image_raw, runs the
+    #                    bundled ResNet18+actor ONNX exported from the
+    #                    Volcaniarm-Reach-Vision-v0 task)
+    #   all           → trajectory + state-based RL loaded; trajectory active,
+    #                   policy inactive (claim via `ros2 control switch_controllers`)
     controller_arg = DeclareLaunchArgument(
         "controller",
         default_value="traj",
-        choices=["traj", "policy", "all"],
+        choices=["traj", "policy", "vision_policy", "all"],
         description="Which controller(s) to load",
     )
 
@@ -221,6 +230,9 @@ def generate_launch_description():
     is_policy_only = IfCondition(
         PythonExpression(["'", LaunchConfiguration("controller"), "' == 'policy'"])
     )
+    is_vision_policy_only = IfCondition(
+        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'vision_policy'"])
+    )
     is_all = IfCondition(
         PythonExpression(["'", LaunchConfiguration("controller"), "' == 'all'"])
     )
@@ -291,6 +303,19 @@ def generate_launch_description():
         condition=is_policy_only,
     )
 
+    # Vision policy sub-launch (JSB + vision policy active). Included
+    # only for `vision_policy`.
+    rl_vision_controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_controller_share, "launch", "rl_vision_controller.launch.py"
+            )
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_vision_policy_only,
+    )
+
+    # For `all`: load the policy controller inactive so it can be claimed later.
     rl_inactive_spawner = Node(
         package="controller_manager",
         executable="spawner",
@@ -321,6 +346,7 @@ def generate_launch_description():
         ),
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
+            ("controller", LaunchConfiguration("controller")),
         ],
         condition=show_display,
     )
@@ -408,6 +434,7 @@ def generate_launch_description():
             isaac_launch,
             controller_launch,
             rl_controller_launch,
+            rl_vision_controller_launch,
             rl_inactive_spawner,
             display_launch,
             weed_targeting_launch,

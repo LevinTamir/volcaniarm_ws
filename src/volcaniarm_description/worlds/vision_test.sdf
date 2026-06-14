@@ -1,0 +1,111 @@
+<sdf version="1.6">
+  <world name="vision_test">
+    <!-- Test world for the vision RL controller. Same physics + lighting
+         as `lab.sdf` but the weed_target is replaced by a green cylinder
+         that mirrors the training surrogate
+         (volcaniarm_isaaclab/.../reach_vision_env_cfg.py:plant)
+         exactly: radius 0.025 m, height 0.10 m, diffuse (0.15, 0.55, 0.15).
+         Pose is in Gazebo world frame; the existing trained policy was
+         trained on a randomized pose, so any Y in [-0.4, 0.4] under the
+         arm is a valid test target. Edit the <pose> below to relocate. -->
+
+    <physics name="fast" type="dart">
+      <max_step_size>0.005</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <dart>
+        <solver>
+          <solver_type>pgs</solver_type>
+        </solver>
+        <collision_detector>ode</collision_detector>
+      </dart>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <gravity>0 0 -9.8</gravity>
+    <atmosphere type="adiabatic"/>
+
+    <scene>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.8 1.0 1</background>
+      <grid>false</grid>
+    </scene>
+
+    <!-- Concrete-grey ground plane (matches reach_vision floor colour
+         FLOOR_COLOR=(0.72, 0.70, 0.68) in reach_vision_env_cfg.py). -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>3 3</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction><ode><mu>50</mu></ode></friction>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>3 3</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.72 0.70 0.68 1</ambient>
+            <diffuse>0.72 0.70 0.68 1</diffuse>
+            <specular>0.1 0.1 0.1 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Green-cylinder test target. Same geometry as the training plant
+         surrogate. Cylinder default origin is at its centre, so a
+         <pose> Z = height/2 = 0.05 places the bottom flush with the
+         ground. Y=0.25 keeps it under the arm, well inside the
+         workspace. -->
+    <model name="green_cylinder">
+      <static>true</static>
+      <pose>-0.12 0.25 0.05 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.025</radius>
+              <length>0.10</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.10 0.40 0.10 1</ambient>
+            <diffuse>0.15 0.55 0.15 1</diffuse>
+            <specular>0.05 0.10 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

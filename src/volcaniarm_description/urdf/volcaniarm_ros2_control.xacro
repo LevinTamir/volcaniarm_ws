@@ -41,8 +41,16 @@
         <!-- ros2_control Common Interfaces -->
         <!-- effort is exported (zero on real HW, physics value in Isaac) so the
              URDF interface set is identical across gazebo / isaac / real and
-             the JointStateTopicSystem plugin can land Isaac's effort field. -->
-        <joint name="volcaniarm_right_elbow_joint">
+             the JointStateTopicSystem plugin can land Isaac's effort field.
+             Order: left first, then right — matches the joint declaration
+             order in the IsaacLab training URDF
+             (volcaniarm_isaaclab/assets/urdf/urdf/volcaniarm.urdf). The
+             trained policy was authored against [left, right] joint order
+             for both observation and action vectors; aligning declaration
+             order here eliminates any chance of the topic-based hardware
+             interface or controller_manager binding interfaces in a
+             different order than the policy expects. -->
+        <joint name="volcaniarm_left_elbow_joint">
             <command_interface name="position">
               <param name="min">-3.14</param>
               <param name="max">3.14</param>
@@ -54,7 +62,7 @@
             <state_interface name="effort" />
         </joint>
 
-        <joint name="volcaniarm_left_elbow_joint">
+        <joint name="volcaniarm_right_elbow_joint">
             <command_interface name="position">
               <param name="min">-3.14</param>
               <param name="max">3.14</param>

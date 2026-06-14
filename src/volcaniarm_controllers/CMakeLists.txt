@@ -10,6 +10,8 @@ find_package(ament_cmake_python REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(controller_interface REQUIRED)
 find_package(hardware_interface REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 find_package(onnxruntime_vendor REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -69,8 +71,34 @@ pluginlib_export_plugin_description_file(
   controller_interface rl_policy_controller.xml
 )
 
+# Vision RL policy controller library (image → bundled ONNX → joints)
+add_library(rl_vision_policy_controller SHARED
+  src/rl_vision_policy_controller.cpp
+)
+target_include_directories(rl_vision_policy_controller PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(rl_vision_policy_controller
+  ament_index_cpp
+  controller_interface
+  cv_bridge
+  pluginlib
+  rclcpp
+  rclcpp_lifecycle
+  realtime_tools
+  sensor_msgs
+)
+target_link_libraries(rl_vision_policy_controller
+  onnxruntime::onnxruntime
+  ${OpenCV_LIBS}
+)
+pluginlib_export_plugin_description_file(
+  controller_interface rl_vision_policy_controller.xml
+)
+
 install(
-  TARGETS passive_broadcaster rl_policy_controller
+  TARGETS passive_broadcaster rl_policy_controller rl_vision_policy_controller
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -99,12 +127,13 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-ament_export_libraries(passive_broadcaster rl_policy_controller)
+ament_export_libraries(passive_broadcaster rl_policy_controller rl_vision_policy_controller)
 ament_export_include_directories(include)
 ament_export_dependencies(
   ament_index_cpp
   controller_interface
   hardware_interface
+  cv_bridge
   onnxruntime_vendor
   pluginlib
   rclcpp

@@ -100,3 +100,4 @@ vcs export src --exact > third_party.repos
 ### Related repos
 - Firmware: [volcaniarm_firmware](https://github.com/LevinTamir/volcaniarm_firmware)
 - Isaac Lab: [volcaniarm_isaaclab](https://github.com/LevinTamir/volcaniarm_isaaclab)
+- ONNX Runtime vendor: [onnxruntime_vendor](https://github.com/LevinTamir/onnxruntime_vendor)
