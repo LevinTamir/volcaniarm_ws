@@ -112,18 +112,14 @@ def generate_launch_description():
                     "pose calibration UI exposed.",
     )
 
-    # Default world depends on (mode, calibration). Tests-mode runs use
-    # a stripped-down world without lab clutter so the apriltags are
-    # unobstructed; work-mode keeps the full lab world.
+    # All modes (work and tests/calibration) use the full lab world so the
+    # scene is consistent. Override with world_name:=calibration for a
+    # stripped-down world if lab clutter ever obstructs the apriltags.
     world_name_arg = DeclareLaunchArgument(
         "world_name",
-        default_value=PythonExpression([
-            "'calibration' if '",
-            LaunchConfiguration("mode"),
-            "' == 'tests' else 'lab'",
-        ]),
-        description="Gazebo world name (without .sdf extension); "
-                    "defaults to 'calibration' when mode:=tests, else 'lab'",
+        default_value="lab",
+        description="Gazebo world name (without .sdf extension); defaults to 'lab' "
+                    "for all modes (use world_name:=calibration to strip lab clutter)",
     )
 
     camera_mount_x_arg = DeclareLaunchArgument(
