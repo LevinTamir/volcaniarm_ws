@@ -51,19 +51,22 @@
 
     <scene>
       <ambient>0.4 0.4 0.4 1</ambient>
-      <background>0.7 0.8 1.0 1</background>
+      <background>0.85 0.86 0.88 1</background>
       <grid>false</grid>
     </scene>
 
     <!-- Small ground plane under the robot -->
     <model name="ground_plane">
       <static>true</static>
+      <!-- Offset toward the open front (-X) so the floor is shallow behind the arm
+           (+X) and extends into the open front working area (not a centred square). -->
+      <pose>-0.75 0 0 0 0 0</pose>
       <link name="link">
         <collision name="collision">
           <geometry>
             <plane>
               <normal>0 0 1</normal>
-              <size>3 3</size>
+              <size>3.5 5</size>
             </plane>
           </geometry>
           <surface>
@@ -78,22 +81,83 @@
           <geometry>
             <plane>
               <normal>0 0 1</normal>
-              <size>3 3</size>
+              <size>3.5 5</size>
             </plane>
           </geometry>
           <material>
-            <ambient>0.45 0.3 0.15 1</ambient>
-            <diffuse>0.45 0.3 0.15 1</diffuse>
-            <specular>0.1 0.1 0.1 1</specular>
+            <ambient>0.45 0.44 0.40 1</ambient>
+            <diffuse>0.72 0.70 0.63 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
           </material>
         </visual>
       </link>
     </model>
 
-    <!-- Potted weed: vase + plant as one model, origin at vase bottom -->
+    <!-- Lab walls: back wall (+X, ~1 m behind the arm) + two side walls (+/-Y at
+         2.5 m), giving an indoors backdrop while the front (-X, the working side) is
+         left open so the view and camera aren't boxed in. Side walls run from the open
+         front back to the rear wall. 2.5 m tall, light beige, visual only. -->
+    <model name="lab_walls">
+      <static>true</static>
+      <link name="walls_link">
+        <visual name="wall_px">
+          <pose>1.0 0 1.25 0 0 0</pose>
+          <geometry><box><size>0.05 5.0 2.5</size></box></geometry>
+          <material>
+            <ambient>0.62 0.59 0.53 1</ambient>
+            <diffuse>0.90 0.86 0.78 1</diffuse>
+            <specular>0.02 0.02 0.02 1</specular>
+          </material>
+        </visual>
+        <visual name="wall_py">
+          <pose>-0.75 2.5 1.25 0 0 0</pose>
+          <geometry><box><size>3.5 0.05 2.5</size></box></geometry>
+          <material>
+            <ambient>0.62 0.59 0.53 1</ambient>
+            <diffuse>0.90 0.86 0.78 1</diffuse>
+            <specular>0.02 0.02 0.02 1</specular>
+          </material>
+        </visual>
+        <visual name="wall_ny">
+          <pose>-0.75 -2.5 1.25 0 0 0</pose>
+          <geometry><box><size>3.5 0.05 2.5</size></box></geometry>
+          <material>
+            <ambient>0.62 0.59 0.53 1</ambient>
+            <diffuse>0.90 0.86 0.78 1</diffuse>
+            <specular>0.02 0.02 0.02 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Black mat under the robot. Covers the table-leg footprint
+         (0.68 x 1.40 m, legs at +/-0.34 x, +/-0.698 y around base_link, robot
+         spawned at world origin) plus ~15 cm margin each side. Thin box sitting on
+         the floor; visual only. The potted plant rests on top of it. -->
+    <model name="floor_mat">
+      <static>true</static>
+      <pose>0 0 0.0025 0 0 0</pose>
+      <link name="mat_link">
+        <visual name="mat_visual">
+          <geometry>
+            <box>
+              <size>1.00 1.70 0.005</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.02 0.02 0.02 1</ambient>
+            <diffuse>0.04 0.04 0.04 1</diffuse>
+            <specular>0.0 0.0 0.0 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Potted weed: vase + plant as one model. Raised by the mat thickness
+         (0.005) so the vase bottom rests on top of the black mat. -->
     <model name="weed_target">
       <static>true</static>
-      <pose>-0.12 0.25 0 0 0 0</pose>
+      <pose>-0.12 0.25 0.005 0 0 0</pose>
 
       <link name="vase_link">
         <!-- Vase cylinder: 0.15m tall, shifted up so bottom sits at Z=0 -->
@@ -111,15 +175,24 @@
           </material>
         </visual>
 
-        <!-- Plant mesh sitting on top of the vase (Z=0.15) -->
+        <!-- 3D-printed fake plant (green PLA), to match the real one. The STL is
+             modelled in mm so scale to metres (0.001). Its origin is a bbox corner,
+             so shift X/Y by -half the footprint to centre it on the vase axis; the
+             bottom (mesh min Z = 0) then sits on the vase top at Z=0.15. Visual only,
+             no collision (same as before). -->
         <visual name="plant_visual">
-          <pose>0 0 0.15 0 0 0</pose>
+          <pose>-0.0347 -0.0316 0.15 0 0 0</pose>
           <geometry>
             <mesh>
-              <uri>model://plant/meshes/plant.dae</uri>
-              <scale>1 1 1</scale>
+              <uri>model://plant/meshes/small_fake_plant.STL</uri>
+              <scale>0.001 0.001 0.001</scale>
             </mesh>
           </geometry>
+          <material>
+            <ambient>0.02 0.15 0.03 1</ambient>
+            <diffuse>0.10 0.55 0.12 1</diffuse>
+            <specular>0.20 0.25 0.20 1</specular>
+          </material>
         </visual>
       </link>
     </model>
