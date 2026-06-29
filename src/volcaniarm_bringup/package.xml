@@ -13,6 +13,7 @@
   <depend>volcaniarm_controllers</depend>
   <depend>volcaniarm_calibration</depend>
   <depend>volcaniarm_weed_detector</depend>
+  <depend>volcaniarm_moveit_config</depend>
   <depend>gazebo_ros</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>

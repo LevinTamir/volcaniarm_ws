@@ -224,6 +224,13 @@ def generate_launch_description():
                     "enables the on-robot eye-in-hand calibration.",
     )
 
+    moveit_arg = DeclareLaunchArgument(
+        "moveit",
+        default_value="false",
+        choices=["true", "false"],
+        description="Launch MoveIt move_group + MotionPlanning RViz",
+    )
+
     # Pointcloud is on by default for parity with sim and so RViz / the
     # weed detector see depth without needing an extra arg. Disable on
     # bandwidth-constrained setups with pointcloud:=false.
@@ -397,12 +404,14 @@ def generate_launch_description():
     )
 
     # Display (RViz) launch. Skipped when the calibration dashboard is
-    # up (the dashboard's RViz takes over instead) or when running the
+    # up (the dashboard's RViz takes over instead), when running the
     # full test workflow (mode=tests, calibration=false; the test
-    # runner's RViz takes over).
+    # runner's RViz takes over), or when moveit:=true (the MoveIt
+    # MotionPlanning RViz replaces the plain display).
     show_display = IfCondition(PythonExpression([
         "'", LaunchConfiguration("calibration"), "' == 'false' and ",
-        "'", LaunchConfiguration("mode"), "' != 'tests'",
+        "'", LaunchConfiguration("mode"), "' != 'tests' and ",
+        "'", LaunchConfiguration("moveit"), "' == 'false'",
     ]))
     display_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -464,6 +473,25 @@ def generate_launch_description():
         }.items(),
     )
 
+    # MoveIt (opt-in): move_group + MotionPlanning RViz, reusing the running
+    # robot_state_publisher, JTC and passive broadcaster.
+    is_moveit = IfCondition(LaunchConfiguration("moveit"))
+    volcaniarm_moveit_share = get_package_share_directory("volcaniarm_moveit_config")
+    move_group_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(volcaniarm_moveit_share, "launch", "move_group.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_moveit,
+    )
+    moveit_rviz_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(volcaniarm_moveit_share, "launch", "moveit_rviz.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_moveit,
+    )
+
     return LaunchDescription(
         [
             use_sim_time_arg,
@@ -472,6 +500,7 @@ def generate_launch_description():
             controller_arg,
             mode_arg,
             calibration_arg,
+            moveit_arg,
             pointcloud_arg,
             tag_size_arg,
             marker_world_rpy_arg,
@@ -498,5 +527,7 @@ def generate_launch_description():
             weed_targeting_launch,
             realsense_camera,
             calibration_dashboard,
+            move_group_launch,
+            moveit_rviz_launch,
         ]
     )
