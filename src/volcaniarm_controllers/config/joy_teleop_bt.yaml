@@ -1,14 +1,25 @@
 volcaniarm_joystick_teleop:
   ros__parameters:
+    # Bluetooth profile. The gamepad enumerates differently over USB vs
+    # Bluetooth, so the button/axis indices differ from joy_teleop_usb.yaml.
+    # Pick one at launch with joy_profile:=usb|bt.
+    #
+    # To confirm the indices for YOUR pad over Bluetooth, connect it and run
+    #   ros2 topic echo /joy
+    # then watch which buttons[]/axes[] entries change as you press/move.
+    # Known Xbox USB->BT shifts: RB 5->7, right stick vertical axis 4->3.
+    # Left stick (axes 0/1) stays the same.
+
     # Integration / publish rate
     rate_hz: 20.0
 
     # Hold-to-activate button (axes ignored unless held).
-    # Default 5 = RB (Xbox) / R1 (PS).
-    deadman_button: 5
+    # 7 = RB (Xbox) / R1 (PS) over Bluetooth. (= button 5 over USB)
+    deadman_button: 7
 
     # Axis mappings: left-stick X -> EE Y (arm plane),
     #                left-stick Y -> EE Z (world up).
+    # Left stick is axes 0/1 over both USB and Bluetooth.
     axis_y: 0
     axis_z: 1
     invert_y: false
@@ -38,9 +49,10 @@ volcaniarm_joystick_teleop:
       - volcaniarm_left_elbow_joint
 
     # Home: deadman + this button publishes one trajectory point sending
-    # both elbows to home_positions over home_duration_sec. Default 0
-    # is X (Xbox) / square (PS). After triggering, release+repress the
-    # deadman to resume stick teleop from the new pose.
+    # both elbows to home_positions over home_duration_sec. After
+    # triggering, release+repress the deadman to resume stick teleop.
+    # NOTE: buttons shift over Bluetooth -- verify this index with
+    # `ros2 topic echo /joy` on your pad if home does not trigger.
     home_button: 0
     # Order MUST match joint_names above (right first, left second).
     home_positions: [0.0, 0.0]
