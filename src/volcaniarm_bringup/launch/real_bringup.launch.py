@@ -396,10 +396,9 @@ def generate_launch_description():
         condition=is_all,
     )
 
-    # Display (RViz) launch. Skipped when the calibration dashboard is
-    # up (the dashboard's RViz takes over instead) or when running the
-    # full test workflow (mode=tests, calibration=false; the test
-    # runner's RViz takes over).
+    # Display (RViz) launch. Skipped whenever calibration perception is
+    # up (calibration:=true or mode=tests) -- the calibration RViz above
+    # takes over instead so we never open two RViz windows.
     show_display = IfCondition(PythonExpression([
         "'", LaunchConfiguration("calibration"), "' == 'false' and ",
         "'", LaunchConfiguration("mode"), "' != 'tests'",
@@ -412,25 +411,47 @@ def generate_launch_description():
         condition=show_display,
     )
 
-    # Calibration dashboard.
-    # Activated when calibration:=true (any mode) OR when mode=tests
-    # with calibration:=false (the standard test workflow). The
-    # `camera_calibration_only` arg restricts the dashboard UI to just
-    # the camera-localization group when calibration:=true.
-    show_dashboard = IfCondition(PythonExpression([
+    # AprilTag detector for calibration.
+    # Started when calibration:=true (any mode) OR when mode=tests (the
+    # markers are physically mounted for the accuracy/repeatability tests).
+    # The calibration GUI is launched separately in a second terminal
+    # (`ros2 launch volcaniarm_calibration calibration_gui.launch.py`) and
+    # consumes the base->ee TF this detector publishes.
+    run_calibration_perception = IfCondition(PythonExpression([
         "'", LaunchConfiguration("calibration"), "' == 'true' or ",
         "'", LaunchConfiguration("mode"), "' == 'tests'",
     ]))
-    calibration_dashboard = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(volcaniarm_calibration_share, "launch", "dashboard.launch.py")
-        ),
-        launch_arguments=[
-            ("tag_size", LaunchConfiguration("tag_size")),
-            ("camera_calibration_only", LaunchConfiguration("calibration")),
-            ("marker_world_rpy", LaunchConfiguration("marker_world_rpy")),
+    apriltag_config = os.path.join(
+        volcaniarm_calibration_share, "config", "apriltag_params.yaml")
+    # Coerce tag_size to a real float; the apriltag `size` param is numeric.
+    tag_size = PythonExpression(
+        ['float("', LaunchConfiguration("tag_size"), '")'])
+    apriltag_node = Node(
+        package="apriltag_ros",
+        executable="apriltag_node",
+        name="apriltag",
+        parameters=[apriltag_config, {
+            "size": tag_size,
+            "use_sim_time": LaunchConfiguration("use_sim_time"),
+        }],
+        remappings=[
+            ("image_rect", "/camera/color/image_raw"),
+            ("camera_info", "/camera/color/camera_info"),
         ],
-        condition=show_dashboard,
+        output="screen",
+        condition=run_calibration_perception,
+    )
+    # Calibration RViz (marker overlays). Comes up with the robot so the
+    # calibration GUI (terminal 2) is just the rqt dashboard.
+    calibration_rviz_config = os.path.join(
+        volcaniarm_calibration_share, "rviz", "calibration_dashboard.rviz")
+    calibration_rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2_calibration",
+        arguments=["-d", calibration_rviz_config],
+        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        condition=run_calibration_perception,
     )
 
     weed_targeting_launch = IncludeLaunchDescription(
@@ -497,6 +518,7 @@ def generate_launch_description():
             rl_inactive_spawner,
             weed_targeting_launch,
             realsense_camera,
-            calibration_dashboard,
+            apriltag_node,
+            calibration_rviz,
         ]
     )

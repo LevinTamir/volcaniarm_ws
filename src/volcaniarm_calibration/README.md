@@ -11,28 +11,34 @@ on the end effector. Each run records the camera-resolved
 state, side by side, so the analysis notebooks can compute pose
 error metrics.
 
-## Tests
+Calibration is real-hardware only. The simulated arm is never
+calibrated, so the sim calibration flow was removed.
 
-| Combo entry          | What it does                                              |
+## Tests (left sidebar)
+
+| Step                 | What it does                                              |
 |----------------------|-----------------------------------------------------------|
+| Camera Localization  | Measure the camera pose relative to the arm base.         |
 | `static_accuracy`    | Single goal × N iterations, returns to initial each time. |
-| `repeatability`      | Same as accuracy. Differs in how the data is interpreted. |
+| `repeatability`      | Same goal, gated on a tag-confirmed home between visits.  |
 | `workspace_coverage` | Sweeps a list of goals once each across the envelope.     |
 
 ## Run it
 
-```bash
-# Sim (Gazebo + dashboard + RViz)
-ros2 launch volcaniarm_bringup sim_bringup.launch.py calibration:=true
+Two terminals, MoveIt-Setup-Assistant style:
 
-# Real hardware
-ros2 launch volcaniarm_bringup real_bringup.launch.py calibration:=true
+```bash
+# Terminal 1: robot + camera + AprilTag detector + RViz + TF
+ros2 launch volcaniarm_bringup real_bringup.launch.py mode:=tests calibration:=true
+
+# Terminal 2: calibration GUI
+ros2 launch volcaniarm_calibration calibration_gui.launch.py
 ```
 
-The rqt dashboard opens automatically. Pick a test, set the initial
-and goal pose(s), click **Start Run**. At each goal the arm settles
-and waits — adjust the camera (real hardware) until both markers are
-visible, then click **Continue**.
+Pick a step in the left sidebar, set the initial and goal pose(s),
+click **Start Run**. At each goal the arm settles and waits: adjust
+the camera until both markers are visible, then click **Continue**
+(or leave auto-continue on to advance automatically).
 
 Buttons:
 - **Move to initial** parks the arm at the typed initial pose
@@ -53,8 +59,3 @@ data/<test_name>/<YYYY-MM-DD>/<HH-MM-SS>/
   fk_poses.csv          analytical FK at each visited goal
 ```
 
-## Headless
-
-`ros2 run volcaniarm_calibration accuracy_test` runs the same flow
-without the dashboard, auto-clicking Continue at every gate. Configure
-via [`config/accuracy_test_params.yaml`](config/accuracy_test_params.yaml).

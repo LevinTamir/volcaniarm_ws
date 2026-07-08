@@ -1,22 +1,26 @@
 """Qt widget for the calibration dashboard.
 
-Hands-off (auto-continue) and operator-gated flows for real-hardware
-calibration:
+MoveIt-Setup-Assistant-style layout: a left sidebar picks a step (Start,
+Camera Localization, or one of the accuracy/repeatability/workspace tests)
+and the right panel swaps to that step's controls. A shared run-control
+bar (Start / Continue / Reset / Cancel, detection + status + log + result
+banner) stays visible beneath every page.
 
-  1. Operator picks the test type, fills in initial and goal pose
-     (workspace y, z metres), iteration count, and (for repeatability)
-     the home-confirm gate parameters.
-  2. Click Start Run. The arm moves to the initial pose, captures a
-     baseline reading of the apriltag base->ee transform, then begins
-     the iteration loop.
-  3. At each iteration the arm moves to the goal, settles, and the
-     runner waits for a freshly progressed apriltag TF stamp before
-     capturing. Auto-continue advances on the next fresh detection;
-     unchecking it falls back to a manual Continue click. Cancel
-     aborts the whole run.
-  4. Repeatability tests additionally gate each return-to-home on the
-     detected vs URDF Y-Z segment length agreeing within tolerance for
-     the configured number of consecutive fresh frames.
+Workflow (real hardware only):
+  1. Terminal 1: bring up the robot with the AprilTag detector
+     (`real_bringup.launch.py mode:=tests calibration:=true`).
+  2. Terminal 2: open this GUI
+     (`calibration_gui.launch.py`).
+  3. Pick a step in the sidebar, fill in the poses / iteration count, and
+     click Start Run. The arm moves to the initial pose, captures a
+     baseline reading of the apriltag base->ee transform, then begins the
+     iteration loop. At each goal the arm settles and the runner waits for
+     a freshly progressed apriltag TF stamp before capturing. Auto-continue
+     advances on the next fresh detection; unchecking it falls back to a
+     manual Continue click. Cancel aborts the whole run.
+  4. Repeatability additionally gates each return-to-home on the detected
+     vs URDF Y-Z segment length agreeing within tolerance for the
+     configured number of consecutive fresh frames.
 
 UI is built programmatically (no .ui file) for simplicity.
 """
@@ -24,7 +28,6 @@ UI is built programmatically (no .ui file) for simplicity.
 from __future__ import annotations
 
 import html
-import math
 import re
 import shutil
 import subprocess
@@ -33,22 +36,15 @@ from pathlib import Path
 import threading
 from typing import Optional
 
-import yaml
-
 from ament_index_python.packages import get_package_share_directory
-from apriltag_msgs.msg import AprilTagDetectionArray
-from geometry_msgs.msg import TransformStamped
-from tf2_ros import StaticTransformBroadcaster
 
-EE_TAG_ID = 20
-BASE_TAG_ID = 5
-
-from python_qt_binding.QtCore import Signal, Slot, QObject, QTimer
+from python_qt_binding.QtCore import Signal, Slot, QObject, QTimer, Qt
+from python_qt_binding.QtGui import QPixmap
 from python_qt_binding.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QMessageBox,
-    QSpinBox, QPushButton, QLabel,
-    QPlainTextEdit, QProgressBar, QTextEdit,
+    QCheckBox, QDoubleSpinBox, QFrame, QMessageBox,
+    QSpinBox, QPushButton, QLabel, QListWidget, QListWidgetItem,
+    QStackedWidget, QPlainTextEdit, QProgressBar, QTextEdit,
 )
 
 
@@ -92,27 +88,29 @@ class _RunnerBridge(QObject):
 
 class CalibrationDashboardWidget(QWidget):
 
+    # Sidebar rows / stacked-page indices. The three test pages map to a
+    # TEST_REGISTRY key; Start and Camera pages have no test.
+    _PAGE_START = 0
+    _PAGE_CAMERA = 1
+    _PAGE_STATIC = 2
+    _PAGE_REPEAT = 3
+    _PAGE_WORKSPACE = 4
+    _PAGE_TEST_NAME = {
+        _PAGE_STATIC: 'static_accuracy',
+        _PAGE_REPEAT: 'repeatability',
+        _PAGE_WORKSPACE: 'workspace_coverage',
+    }
+    _NAV_LABELS = (
+        'Start', 'Camera Localization',
+        'Static Accuracy', 'Repeatability', 'Workspace Coverage',
+    )
+
     def __init__(self, node):
         super().__init__()
         self.setObjectName('CalibrationDashboardWidget')
-        self.setWindowTitle('Volcaniarm Calibration Dashboard')
+        self.setWindowTitle('Volcaniarm Calibration')
 
         self._node = node
-        # Dashboard-scope flag set by the launch when calibration:=true.
-        # When True, the widget hides the test-runner controls and only
-        # exposes the "Camera localization" group. The launch passes the
-        # value as a PythonExpression-evaluated string ('True'/'False'),
-        # so handle either str or bool here.
-        try:
-            if not node.has_parameter('camera_calibration_only'):
-                node.declare_parameter('camera_calibration_only', False)
-            raw = node.get_parameter('camera_calibration_only').value
-            if isinstance(raw, str):
-                self._camera_calibration_only = raw.strip().lower() == 'true'
-            else:
-                self._camera_calibration_only = bool(raw)
-        except Exception:
-            self._camera_calibration_only = False
 
         # Operator override for the EE marker world-orientation prior
         # used by the EE-sweep calibration solver. Format: 'r,p,y' in
@@ -161,6 +159,12 @@ class CalibrationDashboardWidget(QWidget):
         self._last_run_dir: Optional[Path] = None
         self._last_test_name: Optional[str] = None
 
+        # Per-test-page input widgets, keyed by test name. Each entry is a
+        # dict of the widgets that page owns (initial_y/z, goal_y/z or
+        # goals_edit, iterations, home_*). Shared capture settings
+        # (settle/fresh/auto) live once in the run panel instead.
+        self._pages_fields: dict = {}
+
         # Camera-localization runner: derives camera-in-base from one
         # AprilTag detection and writes a YAML record. Composes with
         # the test runner -- shares its TF buffer and _stop_event so a
@@ -173,19 +177,6 @@ class CalibrationDashboardWidget(QWidget):
             lambda status, path, reason: self._bridge.camera_calib_finished.emit(
                 status, str(path) if path else '', reason))
 
-        # Live preview: broadcast the just-solved pose as camera_link_calibrated
-        # so the operator sees current (URDF camera_link) vs candidate in RViz
-        # before saving. Re-broadcast on each solve.
-        self._calib_tf_broadcaster = StaticTransformBroadcaster(self._runner.node)
-
-        # Preflight: track which AprilTag IDs the camera currently sees, to
-        # catch a (mode, calibration) / camera-placement mismatch before a run.
-        self._visible_tag_ids: set = set()
-        self._visible_tags_t: float = 0.0
-        self._got_detections: bool = False
-        self._runner.node.create_subscription(
-            AprilTagDetectionArray, '/detections', self._on_detections, 10)
-
         self._build_ui()
         self._wire_signals()
         self._defaults_from_fk_in_background()
@@ -193,13 +184,95 @@ class CalibrationDashboardWidget(QWidget):
     # -- UI assembly ----------------------------------------------
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        root = QHBoxLayout(self)
 
+        self._nav = self._build_sidebar()
+        root.addWidget(self._nav)
+
+        right = QVBoxLayout()
+        self._pages = QStackedWidget()
+        self._pages.addWidget(self._build_start_page())
+        self._pages.addWidget(self._build_camera_page())
+        self._pages.addWidget(self._build_test_page(
+            'static_accuracy', with_iterations=True,
+            with_home_gate=False, goal_mode='single'))
+        self._pages.addWidget(self._build_test_page(
+            'repeatability', with_iterations=True,
+            with_home_gate=True, goal_mode='single'))
+        self._pages.addWidget(self._build_test_page(
+            'workspace_coverage', with_iterations=False,
+            with_home_gate=False, goal_mode='list'))
+        right.addWidget(self._pages, stretch=1)
+        right.addWidget(self._build_run_panel())
+        root.addLayout(right, stretch=1)
+
+    def _build_sidebar(self) -> QListWidget:
+        nav = QListWidget()
+        nav.setObjectName('CalibrationNav')
+        nav.setFixedWidth(190)
+        for label in self._NAV_LABELS:
+            QListWidgetItem(label, nav)
+        nav.setCurrentRow(self._PAGE_START)
+        nav.setStyleSheet(
+            'QListWidget { font-size: 13px; }'
+            'QListWidget::item { padding: 10px 8px; }'
+            'QListWidget::item:selected { background: #4a90d9; color: white; }')
+        return nav
+
+    def _build_start_page(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        title = QLabel('Volcaniarm Calibration')
+        title.setStyleSheet('font-size: 18px; font-weight: bold;')
+        v.addWidget(title)
+
+        pixmap = self._load_logo_pixmap()
+        image = QLabel()
+        image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if pixmap is not None:
+            image.setPixmap(pixmap)
+        else:
+            image.setText('(robot image unavailable)')
+            image.setStyleSheet('color: gray;')
+        v.addWidget(image)
+
+        instructions = QLabel(
+            '<p>Calibrate the real Volcaniarm against AprilTag ground truth.</p>'
+            '<p><b>Launch order</b></p>'
+            '<ol>'
+            '<li>Terminal 1 - robot + camera + AprilTag detector + RViz:<br>'
+            '<code>ros2 launch volcaniarm_bringup real_bringup.launch.py '
+            'mode:=tests calibration:=true</code></li>'
+            '<li>Terminal 2 - this GUI:<br>'
+            '<code>ros2 launch volcaniarm_calibration calibration_gui.launch.py</code>'
+            '</li>'
+            '</ol>'
+            '<p><b>Steps (left sidebar)</b></p>'
+            '<ul>'
+            '<li><b>Camera Localization</b> - measure where the camera '
+            'sits relative to the arm base before running tests.</li>'
+            '<li><b>Static Accuracy</b> - one goal, N cycles, returning '
+            'to the initial pose each visit; reports the per-visit error '
+            'distribution.</li>'
+            '<li><b>Repeatability</b> - one goal, N cycles, gated on a '
+            'tag-confirmed home between iterations (ISO 9283 RP_yz).</li>'
+            '<li><b>Workspace Coverage</b> - sweep a list of goals once '
+            'each across the envelope.</li>'
+            '</ul>')
+        instructions.setWordWrap(True)
+        instructions.setTextFormat(Qt.TextFormat.RichText)
+        v.addWidget(instructions)
+        v.addStretch(1)
+        return page
+
+    def _build_camera_page(self) -> QWidget:
         # Camera localization: measure where the camera is relative to
         # the arm base, using one detection of the base AprilTag. No
         # arm motion, no TF publish (the URDF chain remains the source
         # of truth). Operator uses this to compare measured-vs-URDF
         # before / after re-mounting the camera.
+        page = QWidget()
+        v = QVBoxLayout(page)
         align_box = QGroupBox('Camera localization')
         align_outer = QVBoxLayout(align_box)
         # URDF-detected mode (camera on stand vs camera on robot).
@@ -216,149 +289,159 @@ class CalibrationDashboardWidget(QWidget):
             'Sweeps the arm through the EE poses in calibration_poses.yaml '
             'and solves for the camera pose. Mode is auto-detected from '
             'the URDF: parent of camera_link is world (stand) or '
-            'camera_mount_rev_link (on-robot). Solving does NOT save -- '
-            'review the preview, then "Save & apply".')
+            'camera_mount_rev_link (on-robot).')
         align_outer.addWidget(self._calibrate_btn)
-        # Save gate: a solve only previews (camera_link_calibrated TF + overlay);
-        # the operator reviews residuals + delta vs the applied pose here, then
-        # explicitly saves. Nothing is written to camera_pose.yaml on solve.
-        self._calib_review = QLabel('')
-        self._calib_review.setWordWrap(True)
-        self._calib_review.setStyleSheet('color: gray;')
-        align_outer.addWidget(self._calib_review)
-        self._save_apply_btn = QPushButton('Save & apply')
-        self._save_apply_btn.setEnabled(False)
-        self._save_apply_btn.setToolTip(
-            'Write the previewed calibration to camera_pose.yaml and append it '
-            'to camera_pose_history.yaml. Takes effect on the next launch.')
-        align_outer.addWidget(self._save_apply_btn)
-        layout.addWidget(align_box)
+        v.addWidget(align_box)
+        v.addStretch(1)
+        return page
 
-        cfg_box = QGroupBox('Test configuration')
-        cfg_form = QFormLayout(cfg_box)
-        self._test_combo = QComboBox()
-        for name in TEST_REGISTRY.keys():
-            self._test_combo.addItem(name)
-        cfg_form.addRow('test type', self._test_combo)
-        self._iterations = QSpinBox()
-        self._iterations.setRange(1, 100)
-        self._iterations.setValue(3)
-        cfg_form.addRow('iterations', self._iterations)
+    def _build_test_page(self, test_name: str, *, with_iterations: bool,
+                         with_home_gate: bool, goal_mode: str) -> QWidget:
+        """Build one accuracy/repeatability/workspace page.
+
+        Each page owns its own pose/goal/iterations/home widgets (a Qt
+        widget can only live in one layout, so they can't be shared across
+        pages). The shared capture settings (settle/fresh/auto) live in the
+        run panel instead. Widget references are stashed in
+        ``self._pages_fields[test_name]`` for the run/reset/seed paths.
+        """
+        page = QWidget()
+        v = QVBoxLayout(page)
+        fields: dict = {}
+
+        if with_iterations:
+            cfg_box = QGroupBox('Test configuration')
+            cfg_form = QFormLayout(cfg_box)
+            iterations = QSpinBox()
+            iterations.setRange(1, 100)
+            iterations.setValue(3)
+            cfg_form.addRow('iterations', iterations)
+            fields['iterations'] = iterations
+            v.addWidget(cfg_box)
+
+        if with_home_gate:
+            # Home-confirm gate: the runner gates each return-to-home on
+            # the detected vs URDF Y-Z segment length agreeing within
+            # tolerance for `hold` consecutive fresh frames.
+            home_box = QGroupBox('Home-confirm gate')
+            home_form = QFormLayout(home_box)
+            home_tol = QDoubleSpinBox()
+            home_tol.setRange(1.0, 100.0)
+            home_tol.setSingleStep(1.0)
+            home_tol.setDecimals(1)
+            home_tol.setSuffix(' mm')
+            home_tol.setValue(20.0)
+            home_form.addRow('Y-Z segment tol', home_tol)
+            home_hold = QSpinBox()
+            home_hold.setRange(1, 30)
+            home_hold.setValue(5)
+            home_form.addRow('hold (consecutive fresh frames)', home_hold)
+            home_timeout = QDoubleSpinBox()
+            home_timeout.setRange(1.0, 60.0)
+            home_timeout.setSingleStep(1.0)
+            home_timeout.setDecimals(1)
+            home_timeout.setSuffix(' s')
+            home_timeout.setValue(10.0)
+            home_form.addRow('timeout', home_timeout)
+            fields['home_tol_mm'] = home_tol
+            fields['home_hold_frames'] = home_hold
+            fields['home_timeout_s'] = home_timeout
+            v.addWidget(home_box)
+
+        # Initial pose (defaults to the workspace (y, z) of theta=(0,0)
+        # once the FK service responds; until then a sentinel value).
+        # Each row has a small button to snap that axis back to home FK.
+        initial_box = QGroupBox('Initial pose (workspace, metres)')
+        initial_outer = QVBoxLayout(initial_box)
+        initial_form = QFormLayout()
+        initial_y = self._make_pose_spinbox(_HOME_FALLBACK[0], lo=-0.4, hi=0.4)
+        iy_home = self._make_home_btn()
+        iy_home.clicked.connect(
+            lambda _=False, sb=initial_y: sb.setValue(self._home_fk_y))
+        initial_form.addRow('y', self._row_with_home_btn(initial_y, iy_home))
+        initial_z = self._make_pose_spinbox(_HOME_FALLBACK[1], lo=0.1, hi=0.9)
+        iz_home = self._make_home_btn()
+        iz_home.clicked.connect(
+            lambda _=False, sb=initial_z: sb.setValue(self._home_fk_z))
+        initial_form.addRow('z', self._row_with_home_btn(initial_z, iz_home))
+        initial_outer.addLayout(initial_form)
+        # Move-to-initial: send the arm to the typed initial pose without
+        # starting a run, so the operator can confirm it's reachable + safe.
+        move_btn = QPushButton('Move to initial')
+        move_btn.clicked.connect(
+            lambda _=False, y=initial_y, z=initial_z:
+                self._runner.goto(y.value(), z.value()))
+        initial_outer.addWidget(move_btn)
+        fields['initial_y'] = initial_y
+        fields['initial_z'] = initial_z
+        v.addWidget(initial_box)
+
+        if goal_mode == 'single':
+            goal_box = QGroupBox('Goal pose (workspace, metres)')
+            goal_form = QFormLayout(goal_box)
+            goal_y = self._make_pose_spinbox(_HOME_FALLBACK[0], lo=-0.4, hi=0.4)
+            goal_form.addRow('y', goal_y)
+            goal_z = self._make_pose_spinbox(_HOME_FALLBACK[1], lo=0.1, hi=0.9)
+            goal_form.addRow('z', goal_z)
+            fields['goal_y'] = goal_y
+            fields['goal_z'] = goal_z
+            v.addWidget(goal_box)
+        else:
+            goals_box = QGroupBox(
+                'Goals list (workspace, metres) - one "y, z" per line')
+            goals_outer = QVBoxLayout(goals_box)
+            goals_edit = QPlainTextEdit()
+            goals_edit.setPlaceholderText(
+                '0.0, 0.5\n0.1, 0.5\n-0.1, 0.5\n0.0, 0.6')
+            goals_edit.setMaximumBlockCount(200)
+            goals_outer.addWidget(goals_edit)
+            fields['goals_edit'] = goals_edit
+            v.addWidget(goals_box)
+
+        v.addStretch(1)
+        self._pages_fields[test_name] = fields
+        return page
+
+    def _build_run_panel(self) -> QWidget:
+        """Shared run controls that stay visible under every page."""
+        panel = QWidget()
+        v = QVBoxLayout(panel)
+
+        # Common capture settings apply to whichever test is active.
+        cap_box = QGroupBox('Common capture settings')
+        cap_form = QFormLayout(cap_box)
         self._settle_time = QDoubleSpinBox()
         self._settle_time.setRange(0.0, 10.0)
         self._settle_time.setSingleStep(0.5)
         self._settle_time.setDecimals(1)
         self._settle_time.setValue(2.0)
-        cfg_form.addRow('settle time (s)', self._settle_time)
+        cap_form.addRow('settle time (s)', self._settle_time)
         self._fresh_window = QDoubleSpinBox()
         self._fresh_window.setRange(0.1, 2.0)
         self._fresh_window.setSingleStep(0.1)
         self._fresh_window.setDecimals(2)
         self._fresh_window.setValue(0.5)
-        cfg_form.addRow('detection fresh window (s)', self._fresh_window)
+        cap_form.addRow('detection fresh window (s)', self._fresh_window)
         # Auto-continue: when checked, the runner auto-advances at each
         # Continue gate once detection has been continuously fresh for
-        # `fresh-hold` seconds. Cancel still aborts immediately. Hold
-        # time provides hysteresis against single-frame fresh blips.
+        # `fresh-hold` seconds. Cancel still aborts immediately.
         self._auto_continue = QCheckBox('auto-continue when detection fresh')
         self._auto_continue.setChecked(True)
-        cfg_form.addRow(self._auto_continue)
+        cap_form.addRow(self._auto_continue)
         self._auto_hold = QDoubleSpinBox()
         self._auto_hold.setRange(0.2, 5.0)
         self._auto_hold.setSingleStep(0.1)
         self._auto_hold.setDecimals(2)
         self._auto_hold.setValue(1.0)
-        cfg_form.addRow('auto-continue fresh-hold (s)', self._auto_hold)
-        layout.addWidget(cfg_box)
-
-        # Home-confirm gate: only meaningful for tests that opt in via
-        # `verify_home_with_tag` (currently the repeatability test).
-        # Toggles visibility on test-type change so the operator only
-        # sees the controls when they apply.
-        self._home_box = QGroupBox('Home-confirm gate (repeatability)')
-        home_form = QFormLayout(self._home_box)
-        self._home_tol_mm = QDoubleSpinBox()
-        self._home_tol_mm.setRange(1.0, 100.0)
-        self._home_tol_mm.setSingleStep(1.0)
-        self._home_tol_mm.setDecimals(1)
-        self._home_tol_mm.setSuffix(' mm')
-        self._home_tol_mm.setValue(20.0)
-        home_form.addRow('Y-Z segment tol', self._home_tol_mm)
-        self._home_hold_frames = QSpinBox()
-        self._home_hold_frames.setRange(1, 30)
-        self._home_hold_frames.setValue(5)
-        home_form.addRow('hold (consecutive fresh frames)', self._home_hold_frames)
-        self._home_timeout_s = QDoubleSpinBox()
-        self._home_timeout_s.setRange(1.0, 60.0)
-        self._home_timeout_s.setSingleStep(1.0)
-        self._home_timeout_s.setDecimals(1)
-        self._home_timeout_s.setSuffix(' s')
-        self._home_timeout_s.setValue(10.0)
-        home_form.addRow('timeout', self._home_timeout_s)
-        layout.addWidget(self._home_box)
-        # Default invisible; _on_test_changed flips it for repeatability.
-        self._home_box.setVisible(False)
-
-        # Initial pose (defaults to the workspace (y, z) of theta=(0,0)
-        # once the FK service responds; until then a sentinel value).
-        # Each row has a small button to snap that axis back to home FK
-        # so the operator can quickly recover after experimenting.
-        initial_box = QGroupBox('Initial pose (workspace, metres)')
-        initial_outer = QVBoxLayout(initial_box)
-        initial_form = QFormLayout()
-        self._initial_y = self._make_pose_spinbox(_HOME_FALLBACK[0],
-                                                  lo=-0.4, hi=0.4)
-        self._initial_y_home_btn = self._make_home_btn()
-        initial_form.addRow('y', self._row_with_home_btn(
-            self._initial_y, self._initial_y_home_btn))
-        self._initial_z = self._make_pose_spinbox(_HOME_FALLBACK[1],
-                                                  lo=0.1, hi=0.9)
-        self._initial_z_home_btn = self._make_home_btn()
-        initial_form.addRow('z', self._row_with_home_btn(
-            self._initial_z, self._initial_z_home_btn))
-        initial_outer.addLayout(initial_form)
-        # Move-to-initial button: send the arm to the currently typed
-        # initial pose without starting a run, so the operator can
-        # confirm the pose is reachable + safe before launching the test.
-        self._move_initial_btn = QPushButton('Move to initial')
-        initial_outer.addWidget(self._move_initial_btn)
-        layout.addWidget(initial_box)
-
-        # Goal input: single-pose for accuracy/repeatability, free-form
-        # multi-pose list for workspace coverage. Both kept in the
-        # layout simultaneously; the test combo toggles which is
-        # visible (cleaner than a QStackedWidget for two simple forms).
-        self._goal_box = QGroupBox('Goal pose (workspace, metres)')
-        goal_form = QFormLayout(self._goal_box)
-        self._goal_y = self._make_pose_spinbox(_HOME_FALLBACK[0],
-                                               lo=-0.4, hi=0.4)
-        goal_form.addRow('y', self._goal_y)
-        self._goal_z = self._make_pose_spinbox(_HOME_FALLBACK[1],
-                                               lo=0.1, hi=0.9)
-        goal_form.addRow('z', self._goal_z)
-        layout.addWidget(self._goal_box)
-
-        self._goals_box = QGroupBox(
-            'Goals list (workspace, metres) - one "y, z" per line')
-        goals_outer = QVBoxLayout(self._goals_box)
-        self._goals_edit = QPlainTextEdit()
-        self._goals_edit.setPlaceholderText(
-            '0.0, 0.5\n0.1, 0.5\n-0.1, 0.5\n0.0, 0.6')
-        self._goals_edit.setMaximumBlockCount(200)
-        goals_outer.addWidget(self._goals_edit)
-        layout.addWidget(self._goals_box)
-        # Default invisible; toggled by _on_test_changed once we know
-        # which test the user picked.
-        self._goals_box.setVisible(False)
+        cap_form.addRow('auto-continue fresh-hold (s)', self._auto_hold)
+        v.addWidget(cap_box)
 
         btn_row = QHBoxLayout()
         self._start_btn = QPushButton('Start Run')
         self._continue_btn = QPushButton('Continue')
         self._continue_btn.setEnabled(False)
         # Reset = abort current run (stop in place) then drive arm back
-        # to the typed initial pose. Distinct from Cancel which only
-        # stops; useful when an iteration is going somewhere unexpected
-        # and the operator wants the arm safely re-parked.
+        # to the typed initial pose. Distinct from Cancel which only stops.
         self._reset_btn = QPushButton('Reset')
         # Cancel = emergency stop. Arm halts wherever it is.
         self._cancel_btn = QPushButton('Cancel')
@@ -366,19 +449,19 @@ class CalibrationDashboardWidget(QWidget):
         btn_row.addWidget(self._continue_btn)
         btn_row.addWidget(self._reset_btn)
         btn_row.addWidget(self._cancel_btn)
-        layout.addLayout(btn_row)
+        v.addLayout(btn_row)
 
         self._detection_label = QLabel('detection: idle')
-        layout.addWidget(self._detection_label)
+        v.addWidget(self._detection_label)
 
         self._status_label = QLabel('idle')
         self._status_label.setStyleSheet('font-weight: bold;')
-        layout.addWidget(self._status_label)
+        v.addWidget(self._status_label)
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
-        layout.addWidget(self._progress)
+        v.addWidget(self._progress)
 
         # QTextEdit (rich text) instead of QPlainTextEdit so each line
         # can be coloured by severity. Maximum block count keeps the
@@ -386,35 +469,14 @@ class CalibrationDashboardWidget(QWidget):
         self._log = QTextEdit()
         self._log.setReadOnly(True)
         self._log.document().setMaximumBlockCount(1000)
-        layout.addWidget(self._log)
+        v.addWidget(self._log)
 
         # Post-run banner: shown after every finalize so the operator
-        # can triage the result (Keep / Delete / Open notebook) without
-        # leaving the GUI. Hidden during a run.
+        # can triage the result (Keep / Delete / Open notebook).
         self._banner = self._build_banner()
-        layout.addWidget(self._banner)
+        v.addWidget(self._banner)
         self._banner.setVisible(False)
-
-        # Calibration-only mode: hide the test-runner widgets so the
-        # operator only sees the "Camera localization" group. The
-        # dashboard launch sets the `camera_calibration_only` parameter
-        # to true when the bringup was started with calibration:=true.
-        if self._camera_calibration_only:
-            self.setWindowTitle(
-                'Volcaniarm Camera Calibration')
-            for widget in (
-                cfg_box, self._home_box, initial_box,
-                self._goal_box, self._goals_box,
-            ):
-                widget.setVisible(False)
-            # The Run / Continue / Reset / Cancel button row applies to
-            # the test runner; in calibration-only mode only Cancel is
-            # meaningful (it also cancels the camera calibration).
-            self._start_btn.setVisible(False)
-            self._continue_btn.setVisible(False)
-            self._reset_btn.setVisible(False)
-            self._detection_label.setVisible(False)
-            self._progress.setVisible(False)
+        return panel
 
     def _build_banner(self) -> QFrame:
         frame = QFrame()
@@ -466,14 +528,39 @@ class CalibrationDashboardWidget(QWidget):
         row.addWidget(home_btn)
         return row
 
+    def _logo_image_path(self) -> Optional[Path]:
+        """Resolve the start-page robot image (share dir, then source tree)."""
+        candidates: list = []
+        try:
+            share = Path(get_package_share_directory('volcaniarm_calibration'))
+            candidates.append(share / 'resource' / 'volcaniarm_urdf_img.jpeg')
+        except Exception:
+            pass
+        # Source-tree fallback: the widget lives at
+        # <pkg>/volcaniarm_calibration/rqt/this_file.py; parents[2] is the
+        # package root, where a resource/ dir holds the image.
+        pkg_root = Path(__file__).resolve().parents[2]
+        candidates.append(pkg_root / 'resource' / 'volcaniarm_urdf_img.jpeg')
+        for path in candidates:
+            if path.exists():
+                return path
+        return None
+
+    def _load_logo_pixmap(self) -> Optional[QPixmap]:
+        path = self._logo_image_path()
+        if path is None:
+            return None
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            return None
+        return pixmap.scaledToWidth(360, Qt.TransformationMode.SmoothTransformation)
+
     def _wire_signals(self):
         self._start_btn.clicked.connect(self._on_start_clicked)
         self._continue_btn.clicked.connect(self._on_continue_clicked)
         self._reset_btn.clicked.connect(self._on_reset_clicked)
         self._cancel_btn.clicked.connect(self._on_cancel_clicked)
-        self._move_initial_btn.clicked.connect(self._on_move_initial_clicked)
         self._calibrate_btn.clicked.connect(self._on_calibrate_clicked)
-        self._save_apply_btn.clicked.connect(self._on_save_apply_clicked)
         # Refresh the alignment status label periodically so it picks
         # up new result.yaml files written between dashboard sessions.
         self._align_timer = QTimer(self)
@@ -481,15 +568,9 @@ class CalibrationDashboardWidget(QWidget):
         self._align_timer.timeout.connect(self._refresh_alignment_state)
         self._align_timer.start()
         self._refresh_alignment_state()
-        self._initial_y_home_btn.clicked.connect(
-            lambda: self._initial_y.setValue(self._home_fk_y))
-        self._initial_z_home_btn.clicked.connect(
-            lambda: self._initial_z.setValue(self._home_fk_z))
-        self._test_combo.currentTextChanged.connect(self._on_test_changed)
-        # Make sure the initial test selection has the right input
-        # group visible (defaults to whichever the combo lands on after
-        # restore_settings).
-        self._on_test_changed(self._test_combo.currentText())
+        # Sidebar navigation: swap the stacked page and reset run state.
+        self._nav.currentRowChanged.connect(self._pages.setCurrentIndex)
+        self._nav.currentRowChanged.connect(self._on_page_changed)
         self._bridge.status.connect(self._on_status)
         self._bridge.progress.connect(self._on_progress)
         self._bridge.finished.connect(self._on_finished)
@@ -499,28 +580,25 @@ class CalibrationDashboardWidget(QWidget):
         self._bridge.camera_calib_finished.connect(
             self._on_camera_calib_finished)
 
-    @Slot(str)
-    def _on_test_changed(self, name: str):
-        is_workspace = (name == 'workspace_coverage')
-        is_repeatability = (name == 'repeatability')
-        self._goals_box.setVisible(is_workspace)
-        self._goal_box.setVisible(not is_workspace)
-        # Home-confirm controls only apply to tests that gate on tag-
-        # confirmed home (repeatability). Hide them otherwise so the
-        # operator isn't presented with knobs that have no effect.
-        self._home_box.setVisible(is_repeatability)
-        # Workspace coverage visits each goal exactly once -- the
-        # iterations spinbox doesn't apply. Disable it and pin to 1
-        # so the operator isn't misled by a value the runner ignores.
-        self._iterations.setEnabled(not is_workspace)
-        if is_workspace:
-            self._iterations.setValue(1)
-        # Switching test type implies the operator is starting fresh:
-        # cancel anything still running and put the dashboard back
-        # into "ready to start" state. cancel() is safe when nothing
-        # is running -- it just sets the events.
-        self._runner.cancel()
-        self._reset_ui_state(status='idle')
+    # -- page / test helpers --------------------------------------
+
+    def _current_test_name(self) -> Optional[str]:
+        return self._PAGE_TEST_NAME.get(self._nav.currentRow())
+
+    def _active_fields(self) -> Optional[dict]:
+        name = self._current_test_name()
+        return self._pages_fields.get(name) if name else None
+
+    @Slot(int)
+    def _on_page_changed(self, row: int):
+        # Landing on a test page implies the operator is starting fresh:
+        # cancel anything still running and reset the run state. Navigating
+        # to Start / Camera does NOT cancel, so peeking at another page
+        # can't silently abort an active run. cancel() is a no-op when
+        # nothing is running.
+        if self._PAGE_TEST_NAME.get(row) is not None:
+            self._runner.cancel()
+            self._reset_ui_state(status='idle')
 
     def _log_msg(self, msg: str):
         """Append a status line to the log box, coloured by severity.
@@ -544,7 +622,7 @@ class CalibrationDashboardWidget(QWidget):
     def _reset_ui_state(self, status: str = 'idle'):
         """Clear progress / detection / button state so the dashboard
         is ready for a fresh run. Called from finished, reset, cancel,
-        and test-switch paths."""
+        and page-switch paths."""
         self._start_btn.setEnabled(True)
         self._continue_btn.setEnabled(False)
         self._progress.setValue(0)
@@ -576,32 +654,39 @@ class CalibrationDashboardWidget(QWidget):
         # spinboxes.
         self._home_fk_y = y
         self._home_fk_z = z
-        # Only overwrite spinboxes if the user (or restored settings)
-        # hasn't already changed them away from the fallback. Without
-        # this a late FK reply would clobber a value the operator just
-        # typed.
-        for sb, fallback_v in (
-            (self._initial_y, _HOME_FALLBACK[0]),
-            (self._goal_y, _HOME_FALLBACK[0]),
-        ):
-            if abs(sb.value() - fallback_v) < 1e-9:
-                sb.setValue(y)
-        for sb, fallback_v in (
-            (self._initial_z, _HOME_FALLBACK[1]),
-            (self._goal_z, _HOME_FALLBACK[1]),
-        ):
-            if abs(sb.value() - fallback_v) < 1e-9:
-                sb.setValue(z)
+        # Only overwrite spinboxes still sitting at the fallback sentinel
+        # so a late FK reply can't clobber a value the operator (or a
+        # restored setting) already typed. Every per-page initial/goal
+        # spinbox is seeded, not just one page's.
+        for fields in self._pages_fields.values():
+            y_boxes = [fields['initial_y']]
+            z_boxes = [fields['initial_z']]
+            if 'goal_y' in fields:
+                y_boxes.append(fields['goal_y'])
+            if 'goal_z' in fields:
+                z_boxes.append(fields['goal_z'])
+            for sb in y_boxes:
+                if abs(sb.value() - _HOME_FALLBACK[0]) < 1e-9:
+                    sb.setValue(y)
+            for sb in z_boxes:
+                if abs(sb.value() - _HOME_FALLBACK[1]) < 1e-9:
+                    sb.setValue(z)
 
     # -- button slots --------------------------------------------
 
     @Slot()
     def _on_start_clicked(self):
-        test_name = self._test_combo.currentText()
+        test_name = self._current_test_name()
+        if test_name is None:
+            self._log_msg('select a test in the sidebar first')
+            self._status_label.setText('select a test page to start a run')
+            return
+        fields = self._pages_fields[test_name]
         cls = TEST_REGISTRY[test_name]
         if test_name == 'workspace_coverage':
             try:
-                goals = self._parse_goals_text(self._goals_edit.toPlainText())
+                goals = self._parse_goals_text(
+                    fields['goals_edit'].toPlainText())
             except ValueError as exc:
                 self._log_msg(f'goals parse error: {exc}')
                 self._status_label.setText(f'cannot start: {exc}')
@@ -611,15 +696,14 @@ class CalibrationDashboardWidget(QWidget):
                 self._status_label.setText('cannot start: empty goals list')
                 return
         else:
-            goals = [(self._goal_y.value(), self._goal_z.value())]
+            goals = [(fields['goal_y'].value(), fields['goal_z'].value())]
+        num_cycles = fields['iterations'].value() if 'iterations' in fields else 1
         # Test classes still take a `targets` list (kept for backward
-        # compat with iter_visits and any existing test subclasses);
-        # the new runner reads `request.goals` directly so the targets
-        # field is mostly bookkeeping now.
+        # compat with iter_visits); the runner reads `request.goals`.
         try:
             test = cls(
                 targets=goals,
-                num_cycles=self._iterations.value(),
+                num_cycles=num_cycles,
                 settle_time=self._settle_time.value(),
                 return_home_between_targets=True,
             )
@@ -627,15 +711,22 @@ class CalibrationDashboardWidget(QWidget):
             self._log_msg(f'cannot start: {exc}')
             self._status_label.setText(f'cannot start: {exc}')
             return
+        # Home-confirm params only exist on the repeatability page; the
+        # RunRequest dataclass supplies sensible defaults otherwise.
+        home_kwargs = {}
+        if 'home_tol_mm' in fields:
+            home_kwargs = dict(
+                home_tol_m=fields['home_tol_mm'].value() / 1000.0,
+                home_hold_frames=fields['home_hold_frames'].value(),
+                home_timeout_s=fields['home_timeout_s'].value(),
+            )
         request = RunRequest(
             test=test,
             output_root=Path(DEFAULT_OUTPUT_DIR).expanduser(),
-            initial_pose=(self._initial_y.value(), self._initial_z.value()),
+            initial_pose=(fields['initial_y'].value(), fields['initial_z'].value()),
             goals=tuple(goals),
             detection_max_age_s=self._fresh_window.value(),
-            home_tol_m=self._home_tol_mm.value() / 1000.0,
-            home_hold_frames=self._home_hold_frames.value(),
-            home_timeout_s=self._home_timeout_s.value(),
+            **home_kwargs,
         )
         if self._runner.request_run(request):
             self._start_btn.setEnabled(False)
@@ -696,12 +787,13 @@ class CalibrationDashboardWidget(QWidget):
 
     @Slot()
     def _on_reset_clicked(self):
-        self._runner.reset_to(self._initial_y.value(), self._initial_z.value())
+        fields = self._active_fields()
+        if fields is None:
+            self._log_msg('select a test page to reset the arm to its initial')
+            return
+        self._runner.reset_to(fields['initial_y'].value(),
+                              fields['initial_z'].value())
         self._reset_ui_state(status='resetting: returning arm to initial')
-
-    @Slot()
-    def _on_move_initial_clicked(self):
-        self._runner.goto(self._initial_y.value(), self._initial_z.value())
 
     # -- camera localization -------------------------------------
 
@@ -767,48 +859,9 @@ class CalibrationDashboardWidget(QWidget):
             '~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'
             'config/camera_pose.yaml').expanduser()
 
-    def _on_detections(self, msg: AprilTagDetectionArray):
-        self._visible_tag_ids = {int(d.id) for d in msg.detections}
-        self._visible_tags_t = time.monotonic()
-        self._got_detections = True
-
-    def _preflight_ok(self) -> bool:
-        """Refuse to calibrate if the visible tag set contradicts the detected
-        camera placement. Non-blocking if no detections are arriving (e.g. the
-        topic isn't wired) -- we only enforce when we actually see tags."""
-        if not self._got_detections or (time.monotonic() - self._visible_tags_t) > 2.0:
-            self._log_msg('preflight: no fresh /detections -- skipping tag-set check')
-            return True
-        ids = self._visible_tag_ids
-        mode = self._cam_runner.detect_mode()
-        # Hard refuse ONLY on a clear camera-placement contradiction: the base
-        # tag is only mounted in tests/stand mode, so seeing it while the URDF
-        # says on-robot means the camera is actually on the stand (wrong arg).
-        if mode == MODE_ON_ROBOT and BASE_TAG_ID in ids:
-            self._log_msg(
-                f'preflight FAILED: base tag (id {BASE_TAG_ID}) visible in '
-                'on-robot/work mode -- the camera is probably on the stand '
-                '(relaunch with mode:=tests).')
-            return False
-        # Soft warnings: a tag not being in frame yet is fine -- the EE tag is
-        # brought into view during the sweep, not at the home pose.
-        if EE_TAG_ID not in ids:
-            self._log_msg(
-                f'preflight: EE tag (id {EE_TAG_ID}) not visible at the current '
-                f'pose (seen: {sorted(ids) or "none"}) -- it will be acquired '
-                'during the sweep; continuing.')
-        if mode == MODE_STAND and BASE_TAG_ID not in ids:
-            self._log_msg(
-                f'preflight: base tag (id {BASE_TAG_ID}) not visible -- stand '
-                'cross-check unavailable; continuing.')
-        return True
-
     @Slot()
     def _on_calibrate_clicked(self):
         if self._cam_runner.is_busy():
-            return
-        if not self._preflight_ok():
-            self._status_label.setText('preflight failed -- see log')
             return
         if self._cam_runner.request():
             self._log_msg('camera localization: starting')
@@ -817,13 +870,15 @@ class CalibrationDashboardWidget(QWidget):
     @Slot(str, str, str)
     def _on_camera_calib_finished(self, status: str, result_path: str,
                                   reason: str):
-        """Solve finished. The save gate means a solve only PREVIEWS the
-        candidate (residuals + delta + camera_link_calibrated TF + overlay);
-        nothing is written until the operator clicks 'Save & apply'."""
+        """Slot for CameraCalibrationRunner.finished_cb.
+
+        Just logs the outcome and refreshes the alignment status; no
+        TF publisher to start (the URDF chain stays the source of
+        truth).
+        """
         if status == 'completed':
-            self._log_msg(f'camera localization solved (audit: {result_path})')
-            self._present_candidate()
-            self._status_label.setText('camera localization solved -- review & save')
+            self._log_msg(f'camera localization saved: {result_path}')
+            self._status_label.setText('camera localization completed')
         elif status == 'canceled':
             self._log_msg('camera localization canceled')
             self._status_label.setText('camera localization canceled')
@@ -832,90 +887,6 @@ class CalibrationDashboardWidget(QWidget):
                     else 'camera localization failed')
             self._log_msg(text)
             self._status_label.setText(text)
-        self._refresh_alignment_state()
-
-    def _present_candidate(self):
-        """Populate the review label + enable Save from the solved candidate."""
-        r = getattr(self._cam_runner, 'last_result', None)
-        if not r:
-            return
-        solved, res = r['solved'], r['residuals']
-        rms_mm, max_mm = res['rms_m'] * 1e3, res['max_m'] * 1e3
-        delta_txt = ''
-        cur = self._read_camera_pose_yaml()
-        if cur and cur.get('xyz') and cur.get('rpy'):
-            dt = math.sqrt(sum((a - b) ** 2
-                               for a, b in zip(solved['xyz'], cur['xyz']))) * 1e3
-            drot = max(abs(a - b)
-                       for a, b in zip(solved['rpy'], cur['rpy'])) * 180.0 / math.pi
-            delta_txt = f'  |  Δ vs applied: {dt:.1f} mm, {drot:.2f}°'
-        prev_rms = self._last_history_rms()
-        warn, color = '', 'black'
-        if prev_rms is not None and res['rms_m'] > prev_rms:
-            warn = f'  ⚠ worse than last saved ({prev_rms * 1e3:.1f} mm)'
-            color = '#b36b00'
-        rail = r.get('rail_decomposition')
-        rail_txt = ''
-        if rail:
-            rail_txt = (
-                f"\nrail: set camera_mount_x:={rail['camera_mount_x_suggested']:.4f} "
-                f"(off-axis mount tol {rail['off_axis_tolerance_m'] * 1e3:.1f} mm)")
-        self._calib_review.setStyleSheet(f'color: {color};')
-        self._calib_review.setText(
-            f"candidate [{r['mode']}]: RMS {rms_mm:.1f} mm, max {max_mm:.1f} mm, "
-            f"{r['samples_used']} poses{delta_txt}{warn}{rail_txt}")
-        self._save_apply_btn.setEnabled(True)
-        self._broadcast_calibrated_preview(r)
-
-    def _read_camera_pose_yaml(self) -> Optional[dict]:
-        p = self._camera_pose_config_path()
-        if not p.exists():
-            return None
-        try:
-            return yaml.safe_load(p.read_text()) or None
-        except Exception:
-            return None
-
-    def _last_history_rms(self) -> Optional[float]:
-        p = self._camera_pose_config_path().parent / 'camera_pose_history.yaml'
-        try:
-            hist = yaml.safe_load(p.read_text()) if p.exists() else None
-            if hist:
-                return float(hist[-1].get('rms_m'))
-        except Exception:
-            pass
-        return None
-
-    def _broadcast_calibrated_preview(self, r: dict):
-        """Broadcast parent_frame -> camera_link_calibrated for the candidate."""
-        try:
-            solved = r['solved']
-            t = TransformStamped()
-            t.header.stamp = self._runner.node.get_clock().now().to_msg()
-            t.header.frame_id = solved['parent_frame']
-            t.child_frame_id = 'camera_link_calibrated'
-            t.transform.translation.x = float(solved['xyz'][0])
-            t.transform.translation.y = float(solved['xyz'][1])
-            t.transform.translation.z = float(solved['xyz'][2])
-            q = solved['quat']
-            t.transform.rotation.x = float(q[0])
-            t.transform.rotation.y = float(q[1])
-            t.transform.rotation.z = float(q[2])
-            t.transform.rotation.w = float(q[3])
-            self._calib_tf_broadcaster.sendTransform(t)
-            self._log_msg('preview: broadcasting camera_link_calibrated TF')
-        except Exception as exc:
-            self._log_msg(f'preview TF failed: {exc}')
-
-    @Slot()
-    def _on_save_apply_clicked(self):
-        path = self._cam_runner.apply_last_result()
-        if path is None:
-            self._log_msg('nothing to save -- run a calibration first')
-            return
-        self._log_msg(f'camera pose saved & applied: {path} (effective next launch)')
-        self._status_label.setText('camera pose saved (relaunch to apply)')
-        self._save_apply_btn.setEnabled(False)
         self._refresh_alignment_state()
 
     # -- runner-side slots ---------------------------------------
@@ -988,7 +959,7 @@ class CalibrationDashboardWidget(QWidget):
 
     def _show_banner(self, run_dir: str, status: str):
         self._last_run_dir = Path(run_dir) if run_dir else None
-        self._last_test_name = self._test_combo.currentText()
+        self._last_test_name = self._current_test_name()
         colour, label = {
             'completed': ('#2e9c4a', 'COMPLETED'),
             'canceled':  ('#c79a3a', 'CANCELED'),
@@ -1075,39 +1046,37 @@ class CalibrationDashboardWidget(QWidget):
         self._runner.shutdown()
 
     def save_settings(self, plugin_settings):
-        plugin_settings.set_value('test_type', self._test_combo.currentText())
-        plugin_settings.set_value('initial_y', self._initial_y.value())
-        plugin_settings.set_value('initial_z', self._initial_z.value())
-        plugin_settings.set_value('goal_y', self._goal_y.value())
-        plugin_settings.set_value('goal_z', self._goal_z.value())
-        plugin_settings.set_value('iterations', self._iterations.value())
+        plugin_settings.set_value('active_page', self._nav.currentRow())
         plugin_settings.set_value('settle_time', self._settle_time.value())
         plugin_settings.set_value('fresh_window', self._fresh_window.value())
         plugin_settings.set_value('auto_continue', self._auto_continue.isChecked())
         plugin_settings.set_value('auto_hold', self._auto_hold.value())
-        plugin_settings.set_value('home_tol_mm', self._home_tol_mm.value())
-        plugin_settings.set_value('home_hold_frames', self._home_hold_frames.value())
-        plugin_settings.set_value('home_timeout_s', self._home_timeout_s.value())
-        plugin_settings.set_value('goals_text', self._goals_edit.toPlainText())
+        for test_name, fields in self._pages_fields.items():
+            for key, widget in fields.items():
+                if key == 'goals_edit':
+                    plugin_settings.set_value(
+                        f'{test_name}/{key}', widget.toPlainText())
+                else:
+                    plugin_settings.set_value(
+                        f'{test_name}/{key}', widget.value())
 
     def restore_settings(self, plugin_settings):
-        v = plugin_settings.value('test_type')
-        if v is not None:
-            idx = self._test_combo.findText(v)
-            if idx >= 0:
-                self._test_combo.setCurrentIndex(idx)
+        for test_name, fields in self._pages_fields.items():
+            for key, widget in fields.items():
+                v = plugin_settings.value(f'{test_name}/{key}')
+                if v is None:
+                    continue
+                if key == 'goals_edit':
+                    widget.setPlainText(str(v))
+                else:
+                    try:
+                        widget.setValue(type(widget.value())(v))
+                    except (TypeError, ValueError):
+                        pass
         for key, widget in (
-            ('initial_y', self._initial_y),
-            ('initial_z', self._initial_z),
-            ('goal_y', self._goal_y),
-            ('goal_z', self._goal_z),
-            ('iterations', self._iterations),
             ('settle_time', self._settle_time),
             ('fresh_window', self._fresh_window),
             ('auto_hold', self._auto_hold),
-            ('home_tol_mm', self._home_tol_mm),
-            ('home_hold_frames', self._home_hold_frames),
-            ('home_timeout_s', self._home_timeout_s),
         ):
             v = plugin_settings.value(key)
             if v is not None:
@@ -1118,6 +1087,11 @@ class CalibrationDashboardWidget(QWidget):
         v = plugin_settings.value('auto_continue')
         if v is not None:
             self._auto_continue.setChecked(str(v).lower() in ('1', 'true'))
-        gt = plugin_settings.value('goals_text')
-        if gt is not None:
-            self._goals_edit.setPlainText(str(gt))
+        ap = plugin_settings.value('active_page')
+        if ap is not None:
+            try:
+                row = int(ap)
+                if 0 <= row < self._nav.count():
+                    self._nav.setCurrentRow(row)
+            except (TypeError, ValueError):
+                pass

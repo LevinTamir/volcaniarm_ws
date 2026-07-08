@@ -86,44 +86,14 @@ def generate_launch_description():
         description="Use simulation time",
     )
 
-    # Physical configuration of the camera. Decoupled from `calibration`:
-    #   work  -> camera mounted on the robot (URDF parent: camera_mount_rev_link)
-    #   tests -> camera on a stand in front of the robot (URDF parent: world)
-    mode_arg = DeclareLaunchArgument(
-        "mode",
-        default_value="work",
-        choices=["work", "tests"],
-        description="Physical camera configuration. 'work' mounts the "
-                    "camera on the robot (default); 'tests' puts the "
-                    "camera on a stand in front of the robot for "
-                    "accuracy/repeatability tests.",
-    )
-
-    # The (mode, calibration) tuple covers four configurations:
-    #   mode=work, calibration=false   regular sim, no markers, no dashboard
-    #   mode=work, calibration=true    on-robot camera, EE marker, calibrate camera_joint
-    #   mode=tests, calibration=false  stand camera, both markers, full test runner
-    #   mode=tests, calibration=true   stand camera, EE marker, calibrate calibration_camera_joint
-    calibration_arg = DeclareLaunchArgument(
-        "calibration",
-        default_value="false",
-        choices=["true", "false"],
-        description="Open the calibration dashboard with only the camera-"
-                    "pose calibration UI exposed.",
-    )
-
-    # Default world depends on (mode, calibration). Tests-mode runs use
-    # a stripped-down world without lab clutter so the apriltags are
-    # unobstructed; work-mode keeps the full lab world.
+    # Calibration is real-hardware only now; sim always runs the camera on
+    # the robot (work configuration). The calibration GUI + AprilTag
+    # detector live in real_bringup + calibration_gui.launch.py.
     world_name_arg = DeclareLaunchArgument(
         "world_name",
-        default_value=PythonExpression([
-            "'calibration' if '",
-            LaunchConfiguration("mode"),
-            "' == 'tests' else 'lab'",
-        ]),
+        default_value="lab",
         description="Gazebo world name (without .sdf extension); "
-                    "defaults to 'calibration' when mode:=tests, else 'lab'",
+                    "defaults to the full lab world.",
     )
 
     camera_mount_x_arg = DeclareLaunchArgument(
@@ -182,14 +152,6 @@ def generate_launch_description():
         description="Launch MoveIt move_group + MotionPlanning RViz",
     )
 
-    marker_world_rpy_arg = DeclareLaunchArgument(
-        "marker_world_rpy",
-        default_value="",
-        description="Override marker world-orientation prior used by "
-                    "the EE-sweep calibration. Format 'r,p,y' (rad), "
-                    "or empty to read from URDF at run start.",
-    )
-
     _cam_defaults = _camera_xacro_defaults()
     cal_cam_x_arg = DeclareLaunchArgument(
         "calibration_camera_x", default_value=_cam_defaults['calibration_camera_x'])
@@ -239,10 +201,10 @@ def generate_launch_description():
 
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controllers")
-    volcaniarm_calibration_share = get_package_share_directory("volcaniarm_calibration")
 
-    # Gazebo launch — passes `mode`, `calibration`, and the full camera
-    # xacro arg surface through so the URDF emits the right joints.
+    # Gazebo launch - sim always runs work configuration (camera on the
+    # robot, no markers). Passes the camera xacro arg surface through so
+    # the URDF emits the right joints.
     gazebo_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -252,8 +214,7 @@ def generate_launch_description():
         launch_arguments=[
             ("use_sim_time", LaunchConfiguration("use_sim_time")),
             ("world_name", LaunchConfiguration("world_name")),
-            ("mode", LaunchConfiguration("mode")),
-            ("calibration", LaunchConfiguration("calibration")),
+            ("mode", "work"),
             ("camera_mount_x", LaunchConfiguration("camera_mount_x")),
             ("camera_mount_pitch", LaunchConfiguration("camera_mount_pitch")),
             ("controller", LaunchConfiguration("controller")),
@@ -329,11 +290,9 @@ def generate_launch_description():
         condition=is_all,
     )
 
-    # Display (RViz). Skipped when the calibration dashboard is up, or when
-    # moveit:=true (the MoveIt MotionPlanning RViz replaces the plain display).
+    # Display (RViz). Skipped when moveit:=true (the MoveIt MotionPlanning
+    # RViz replaces the plain display).
     show_display = IfCondition(PythonExpression([
-        "'", LaunchConfiguration("calibration"), "' == 'false' and ",
-        "'", LaunchConfiguration("mode"), "' != 'tests' and ",
         "'", LaunchConfiguration("moveit"), "' == 'false'",
     ]))
     display_launch = IncludeLaunchDescription(
@@ -349,31 +308,6 @@ def generate_launch_description():
             ("controller", LaunchConfiguration("controller")),
         ],
         condition=show_display,
-    )
-
-    # Calibration dashboard activated when calibration:=true (any mode)
-    # OR when mode=tests with calibration:=false (the standard test
-    # workflow). The `camera_calibration_only` arg restricts the dashboard
-    # to just the camera-localization group when calibration:=true.
-    show_dashboard = IfCondition(PythonExpression([
-        "'", LaunchConfiguration("calibration"), "' == 'true' or ",
-        "'", LaunchConfiguration("mode"), "' == 'tests'",
-    ]))
-    calibration_dashboard = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_calibration_share,
-                "launch",
-                "dashboard.launch.py",
-            )
-        ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
-            ("tag_size", LaunchConfiguration("tag_size")),
-            ("camera_calibration_only", LaunchConfiguration("calibration")),
-            ("marker_world_rpy", LaunchConfiguration("marker_world_rpy")),
-        ],
-        condition=show_dashboard,
     )
 
     # Weed-targeting behavior (formerly volcaniarm_motion/motion_planning_node,
@@ -413,10 +347,6 @@ def generate_launch_description():
     return LaunchDescription(
         [
             use_sim_time_arg,
-            # mode_arg / calibration_arg must come before world_name_arg
-            # since world_name_arg's default reads `mode`.
-            mode_arg,
-            calibration_arg,
             world_name_arg,
             camera_mount_x_arg,
             camera_mount_pitch_arg,
@@ -425,7 +355,6 @@ def generate_launch_description():
             tag_size_arg,
             pointcloud_arg,
             moveit_arg,
-            marker_world_rpy_arg,
             cal_cam_x_arg, cal_cam_y_arg, cal_cam_z_arg,
             cal_cam_roll_arg, cal_cam_pitch_arg, cal_cam_yaw_arg,
             cam_x_arg, cam_y_arg, cam_z_arg,
@@ -438,7 +367,6 @@ def generate_launch_description():
             rl_inactive_spawner,
             display_launch,
             weed_targeting_launch,
-            calibration_dashboard,
             move_group_launch,
             moveit_rviz_launch,
         ]

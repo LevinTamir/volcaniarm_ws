@@ -9,7 +9,6 @@ ament_python_install_package(${PROJECT_NAME})
 
 # Install Python executables
 install(PROGRAMS
-  src/accuracy_test
   src/camera_locator
   src/calibration_overlay
   DESTINATION lib/${PROJECT_NAME}
@@ -39,6 +38,10 @@ install(DIRECTORY rviz/
 )
 install(DIRECTORY notebooks/
   DESTINATION share/${PROJECT_NAME}/notebooks
+)
+# GUI resources (start-page robot image, etc.)
+install(DIRECTORY resource/
+  DESTINATION share/${PROJECT_NAME}/resource
 )
 
 ament_package()
