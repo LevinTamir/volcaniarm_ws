@@ -454,6 +454,9 @@ def generate_launch_description():
         condition=run_calibration_perception,
     )
 
+    # Weed targeting is the normal working behaviour; it's not needed when
+    # the arm is set up for accuracy/repeatability tests, so skip it in
+    # mode=tests to keep that terminal quiet.
     weed_targeting_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -461,6 +464,8 @@ def generate_launch_description():
                 "launch", "weed_targeting.launch.py")
         ),
         launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=UnlessCondition(
+            PythonExpression(["'", LaunchConfiguration("mode"), "' == 'tests'"])),
     )
 
     realsense_camera = IncludeLaunchDescription(

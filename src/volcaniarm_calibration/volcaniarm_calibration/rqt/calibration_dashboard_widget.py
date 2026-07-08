@@ -363,17 +363,30 @@ class CalibrationDashboardWidget(QWidget):
             v.addWidget(cfg_box)
 
         if with_home_gate:
-            # Home-confirm gate: the runner gates each return-to-home on
-            # the detected vs URDF Y-Z segment length agreeing within
-            # tolerance for `hold` consecutive fresh frames.
+            # Home-confirm gate: between iterations the runner checks the
+            # detected EE marker matches its URDF-predicted home within a
+            # tolerance for `hold` fresh frames. Opt-in and OFF by default:
+            # the check compares against the URDF, which carries the
+            # placeholder AprilTag-mount bias (a ~cm offset), so a tight
+            # tolerance can never pass. Enable it only after calibrating
+            # the mounts, or with the tolerance set above the known bias.
             home_box = QGroupBox('Home-confirm gate')
-            home_form = QFormLayout(home_box)
+            home_outer = QVBoxLayout(home_box)
+            verify_home = QCheckBox('verify home with AprilTag between visits')
+            verify_home.setChecked(False)
+            verify_home.setToolTip(
+                'Off by default: the check compares the detected tool to the '
+                'URDF prediction, which still carries the placeholder tag-mount '
+                'bias, so it fails until the mounts are calibrated (or the '
+                'tolerance is set above the bias).')
+            home_outer.addWidget(verify_home)
+            home_form = QFormLayout()
             home_tol = QDoubleSpinBox()
-            home_tol.setRange(1.0, 100.0)
-            home_tol.setSingleStep(1.0)
+            home_tol.setRange(1.0, 200.0)
+            home_tol.setSingleStep(5.0)
             home_tol.setDecimals(1)
             home_tol.setSuffix(' mm')
-            home_tol.setValue(20.0)
+            home_tol.setValue(80.0)
             home_form.addRow('Y-Z segment tol', home_tol)
             home_hold = QSpinBox()
             home_hold.setRange(1, 30)
@@ -386,6 +399,13 @@ class CalibrationDashboardWidget(QWidget):
             home_timeout.setSuffix(' s')
             home_timeout.setValue(10.0)
             home_form.addRow('timeout', home_timeout)
+            # Grey the params out until the gate is enabled.
+            params_holder = QWidget()
+            params_holder.setLayout(home_form)
+            params_holder.setEnabled(False)
+            home_outer.addWidget(params_holder)
+            verify_home.toggled.connect(params_holder.setEnabled)
+            fields['verify_home'] = verify_home
             fields['home_tol_mm'] = home_tol
             fields['home_hold_frames'] = home_hold
             fields['home_timeout_s'] = home_timeout
@@ -861,12 +881,16 @@ class CalibrationDashboardWidget(QWidget):
         num_cycles = fields['iterations'].value() if 'iterations' in fields else 1
         # Test classes still take a `targets` list (kept for backward
         # compat with iter_visits); the runner reads `request.goals`.
+        extra = {}
+        if 'verify_home' in fields:  # repeatability page: opt-in home gate
+            extra['verify_home_with_tag'] = fields['verify_home'].isChecked()
         try:
             test = cls(
                 targets=goals,
                 num_cycles=num_cycles,
                 settle_time=fields['settle_time'].value(),
                 return_home_between_targets=True,
+                **extra,
             )
         except ValueError as exc:
             self._log_msg(f'cannot start: {exc}')
