@@ -1,0 +1,1 @@
+run_id,phase,cycle,target_idx,sample_idx,t_ros_ns,theta_right,theta_left,x,y,z,qx,qy,qz,qw,det_base_y,det_base_z,det_ee_y,det_ee_z,urdf_base_y,urdf_base_z,urdf_ee_y,urdf_ee_z,d_detected,d_urdf,d_error

@@ -1,4 +1,3 @@
-# Generated calibration runs go here. Keep folder structure, ignore contents.
-*
-!.gitignore
-!.gitkeep
+# Calibration/test run data is tracked (the raw measurements are the
+# thesis record; graphs are reproducible from these plus the notebooks).
+# Nothing here is ignored anymore; drop a run folder and commit it.
