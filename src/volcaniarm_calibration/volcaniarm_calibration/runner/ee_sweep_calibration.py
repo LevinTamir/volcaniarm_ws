@@ -428,6 +428,104 @@ def solve_with_marker_orientation_prior(
     }
 
 
+def solve_level_camera(
+    R_optical_marker_list: List[np.ndarray],
+    t_optical_marker_list: List[np.ndarray],
+    p_world_truth_list: List[np.ndarray],
+    R_camera_link_optical: np.ndarray,
+    p_camera_link_optical: np.ndarray,
+    *,
+    heading_yaw_rad: float = math.pi,
+    mad_threshold: float = 3.0,
+) -> dict:
+    """Camera-pose recovery for a level stand camera of known heading.
+
+    For the fixed stand the camera is level (roll = pitch = 0) and faces a
+    known world direction (default -X, i.e. yaw = pi). That pins the camera
+    orientation entirely, so we don't touch the AprilTag *orientation* at
+    all -- which is exactly the noisy/ambiguous quantity that breaks the
+    marker-prior solve. We solve only the camera *position* from where the
+    tag is seen vs where FK says it is:
+
+        p_world_camera_optical_i = p_world_tag_truth_i
+                                   - R_world_optical @ t_optical_marker_i
+
+    and take the robust (per-axis median + MAD) aggregate over poses.
+
+    The recovered marker world-orientation is returned as a diagnostic only
+    (so a flipped / mismounted tag is visible), never used in the answer.
+
+    Assumes the camera's URDF parent is `world` (stand mode).
+    """
+    n = len(R_optical_marker_list)
+    if n < 1:
+        raise ValueError('need at least one pose')
+    if not (n == len(t_optical_marker_list) == len(p_world_truth_list)):
+        raise ValueError('input list lengths mismatch')
+
+    R_camera_link_optical = np.asarray(R_camera_link_optical, dtype=float).reshape(3, 3)
+    p_camera_link_optical = np.asarray(p_camera_link_optical, dtype=float).reshape(3)
+
+    # Level camera_link facing `heading_yaw_rad` about world +Z (no roll or
+    # pitch). Compose with the static camera_link->optical from the URDF so
+    # the optical convention is whatever the URDF actually uses.
+    c, s = math.cos(heading_yaw_rad), math.sin(heading_yaw_rad)
+    R_world_camera_link = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    R_world_optical = R_world_camera_link @ R_camera_link_optical
+
+    # Per-pose optical-frame position estimate, robustly aggregated.
+    estimates = np.array([
+        np.asarray(p_pt, dtype=float).reshape(3)
+        - R_world_optical @ np.asarray(t_om, dtype=float).reshape(3)
+        for t_om, p_pt in zip(t_optical_marker_list, p_world_truth_list)
+    ])
+    med = np.median(estimates, axis=0)
+    mad = np.median(np.abs(estimates - med), axis=0)
+    mad_safe = np.where(mad > 1e-9, mad, np.inf)
+    keep_mask = np.all(np.abs(estimates - med) / mad_safe <= mad_threshold, axis=1)
+    if not keep_mask.any():
+        keep_mask[:] = True
+    kept = estimates[keep_mask]
+    p_world_optical = np.median(kept, axis=0)
+
+    # Compose the camera_link pose in world.
+    R_optical_camera_link = R_camera_link_optical.T
+    p_optical_camera_link = -R_optical_camera_link @ p_camera_link_optical
+    R_world_camera_link_out = R_world_camera_link
+    p_world_camera_link = p_world_optical + R_world_optical @ p_optical_camera_link
+
+    # Diagnostic only: the marker orientation the data implies, and how
+    # consistent it is across poses (large spread => noisy tag orientation,
+    # but it does NOT affect the camera pose above).
+    marker_quats = np.array([
+        _matrix_to_quat(R_world_optical @ np.asarray(R_om, dtype=float).reshape(3, 3))
+        for R_om in R_optical_marker_list
+    ])
+    q_marker_mean = _quat_mean(marker_quats)
+    marker_dev = np.array([_angle_between_quats_rad(q, q_marker_mean)
+                           for q in marker_quats])
+    marker_spread_deg = float(math.degrees(marker_dev.max())) if n else 0.0
+
+    residuals = kept - p_world_optical
+    norms = np.linalg.norm(residuals, axis=1)
+    return {
+        'R_parent_camera_link': R_world_camera_link_out,
+        't_parent_camera_link': p_world_camera_link,
+        'R_parent_optical': R_world_optical,
+        't_parent_optical': p_world_optical,
+        'recovered_marker_world_rpy_deg':
+            np.degrees(_quat_to_rpy(q_marker_mean)).tolist(),
+        'marker_orientation_spread_deg': marker_spread_deg,
+        'rotation_variance_deg': marker_spread_deg,  # kept for status log parity
+        'per_pose_t_parent_optical': estimates,
+        'rms_residual_m': float(np.sqrt(np.mean(norms ** 2))) if len(norms) else 0.0,
+        'std_residual_m': float(np.std(norms)) if len(norms) else 0.0,
+        'max_residual_m': float(np.max(norms)) if len(norms) else 0.0,
+        'kept_indices': [int(i) for i in np.where(keep_mask)[0]],
+        'rejected_indices': [int(i) for i in np.where(~keep_mask)[0]],
+    }
+
+
 # ------------------------------------------------------------------ #
 # Runner class
 # ------------------------------------------------------------------ #
@@ -599,31 +697,33 @@ class EESweepCameraCalibrationRunner:
                 tf_parent_world.transform)
             R_parent_world = _quat_to_matrix(parent_world_quat)
 
-            # Resolve the marker world-orientation prior. Either an
-            # operator-supplied rpy (image-axis convention of
-            # apriltag_marker_ee in world), or a TF lookup at run start
-            # of `world -> apriltag_marker_ee` which uses the URDF
-            # placeholder camera orientation as a starting point.
-            if self._marker_world_rpy is not None:
-                r, p_, y_ = self._marker_world_rpy
-                R_world_marker_image = _quat_to_matrix(_rpy_to_quat(r, p_, y_))
-                self._emit_status(
-                    f'marker world rpy (override): '
-                    f'{[round(math.degrees(v), 2) for v in (r, p_, y_)]} deg')
-            else:
-                R_world_marker_image = self._lookup_rotation(
-                    WORLD_FRAME, EE_DETECTED_FRAME)
-                if R_world_marker_image is None:
-                    reason = (f'cannot determine marker world-orientation '
-                              f'prior: TF {WORLD_FRAME}->{EE_DETECTED_FRAME} '
-                              f'unavailable and no `marker_world_rpy` '
-                              f'override was provided')
-                    self._emit_status(f'aborting: {reason}')
-                    self._emit_finished('failed', None, reason)
-                    return
-                self._emit_status(
-                    f'marker world rpy (URDF lookup): '
-                    f'{np.degrees(_quat_to_rpy(_matrix_to_quat(R_world_marker_image))).round(2).tolist()} deg')
+            # The stand camera is level and faces a known world direction
+            # (-X), so its orientation is fixed and we solve only position
+            # from the tag *positions* (see solve_level_camera). We don't
+            # need the noisy tag orientation, so skip the marker prior.
+            # On-robot mode still uses the orientation-prior solve.
+            R_world_marker_image = None
+            if mode != MODE_STAND:
+                if self._marker_world_rpy is not None:
+                    r, p_, y_ = self._marker_world_rpy
+                    R_world_marker_image = _quat_to_matrix(_rpy_to_quat(r, p_, y_))
+                    self._emit_status(
+                        f'marker world rpy (override): '
+                        f'{[round(math.degrees(v), 2) for v in (r, p_, y_)]} deg')
+                else:
+                    R_world_marker_image = self._lookup_rotation(
+                        WORLD_FRAME, EE_DETECTED_FRAME)
+                    if R_world_marker_image is None:
+                        reason = (f'cannot determine marker world-orientation '
+                                  f'prior: TF {WORLD_FRAME}->{EE_DETECTED_FRAME} '
+                                  f'unavailable and no `marker_world_rpy` '
+                                  f'override was provided')
+                        self._emit_status(f'aborting: {reason}')
+                        self._emit_finished('failed', None, reason)
+                        return
+                    self._emit_status(
+                        f'marker world rpy (URDF lookup): '
+                        f'{np.degrees(_quat_to_rpy(_matrix_to_quat(R_world_marker_image))).round(2).tolist()} deg')
 
             # Sweep + sample.
             samples, drift = self._sweep_poses(
@@ -643,23 +743,32 @@ class EESweepCameraCalibrationRunner:
                 self._emit_finished('failed', None, reason)
                 return
 
-            # 6-DoF orientation-prior solve. Both modes use the same math
-            # (mode A passes R_parent_world=identity; mode B passes the
-            # mount->world rotation from URDF + FK). Returns both the
-            # camera_link xyz AND rpy in the parent frame; orientation is
-            # recovered from the marker prior, not held at URDF defaults.
+            # Solve for the camera pose.
+            #  - Stand mode: level camera of known heading; solve position
+            #    from the tag positions (tag orientation not used).
+            #  - On-robot mode: recover orientation from the marker prior.
             try:
-                solved = solve_with_marker_orientation_prior(
-                    [s.R_optical_marker for s in samples],
-                    [s.t_optical_marker for s in samples],
-                    [s.p_parent_truth for s in samples],
-                    R_world_marker_image=R_world_marker_image,
-                    R_parent_world=R_parent_world,
-                    R_camera_link_optical=R_camera_link_optical,
-                    p_camera_link_optical=link_to_optical_xyz,
-                )
+                if mode == MODE_STAND:
+                    solved = solve_level_camera(
+                        [s.R_optical_marker for s in samples],
+                        [s.t_optical_marker for s in samples],
+                        [s.p_parent_truth for s in samples],
+                        R_camera_link_optical=R_camera_link_optical,
+                        p_camera_link_optical=link_to_optical_xyz,
+                        heading_yaw_rad=math.pi,  # camera faces world -X
+                    )
+                else:
+                    solved = solve_with_marker_orientation_prior(
+                        [s.R_optical_marker for s in samples],
+                        [s.t_optical_marker for s in samples],
+                        [s.p_parent_truth for s in samples],
+                        R_world_marker_image=R_world_marker_image,
+                        R_parent_world=R_parent_world,
+                        R_camera_link_optical=R_camera_link_optical,
+                        p_camera_link_optical=link_to_optical_xyz,
+                    )
             except ValueError as exc:
-                reason = f'orientation-prior solve failed: {exc}'
+                reason = f'camera-pose solve failed: {exc}'
                 self._emit_status(f'aborting: {reason}')
                 self._emit_finished('failed', None, reason)
                 return
@@ -674,9 +783,20 @@ class EESweepCameraCalibrationRunner:
                 'rotation_variance_deg': solved['rotation_variance_deg'],
                 'per_pose_t_parent_optical': solved['per_pose_t_parent_optical'].tolist(),
             }
-            self._emit_status(
-                f'rotation variance across poses: '
-                f'{solved["rotation_variance_deg"]:.3f} deg')
+            if mode == MODE_STAND:
+                self._emit_status(
+                    f'position residual rms {solved["rms_residual_m"]*1000:.1f} mm, '
+                    f'max {solved["max_residual_m"]*1000:.1f} mm '
+                    f'(kept {len(solved["kept_indices"])}/{len(samples)} poses)')
+                self._emit_status(
+                    f'detected tag world rpy (diagnostic): '
+                    f'{[round(v, 1) for v in solved["recovered_marker_world_rpy_deg"]]} '
+                    f'deg, spread {solved["marker_orientation_spread_deg"]:.1f} deg '
+                    f'(not used for the camera pose)')
+            else:
+                self._emit_status(
+                    f'rotation variance across poses: '
+                    f'{solved["rotation_variance_deg"]:.3f} deg')
 
             # Park at home so the arm ends in a known state.
             self._emit_status('parking arm at home (theta=0, 0)')
