@@ -227,11 +227,18 @@ def generate_launch_description():
     # Pointcloud is on by default for parity with sim and so RViz / the
     # weed detector see depth without needing an extra arg. Disable on
     # bandwidth-constrained setups with pointcloud:=false.
+    # Pointcloud eats USB bandwidth, which can starve the color stream and
+    # make the AprilTag detector drop frames. Default it off in mode=tests
+    # (calibration/accuracy runs) so tag detection stays steady; keep it on
+    # for normal work. Override either way with pointcloud:=true/false.
     pointcloud_arg = DeclareLaunchArgument(
         "pointcloud",
-        default_value="true",
-        choices=["true", "false"],
-        description="Publish /camera/depth/color/points from the RealSense driver",
+        default_value=PythonExpression([
+            "'false' if '", LaunchConfiguration("mode"),
+            "' == 'tests' else 'true'"]),
+        description="Publish /camera/depth/color/points from the RealSense "
+                    "driver. Defaults to false in mode=tests to free USB "
+                    "bandwidth for steady AprilTag detection.",
     )
 
     # Drives both the URDF mesh scale (via the apriltag xacro) and the
