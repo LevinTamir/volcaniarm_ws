@@ -49,12 +49,14 @@ class Stats:
         )
 
     def __str__(self) -> str:
+        # Renders the stored values as-is; call ``in_mm()`` first for a
+        # mm view (the notebooks do). Scaling here too would double-convert.
         return (
-            f'n={self.n}  mean={self.mean*1000:+.3f} mm  '
-            f'std={self.std*1000:.3f} mm  '
-            f'worst={self.worst*1000:.3f} mm  '
-            f'95% CI ±{self.ci95*1000:.3f} mm  '
-            f'median={self.median*1000:+.3f} mm')
+            f'n={self.n}  mean={self.mean:+.3f} mm  '
+            f'std={self.std:.3f} mm  '
+            f'worst={self.worst:.3f} mm  '
+            f'95% CI ±{self.ci95:.3f} mm  '
+            f'median={self.median:+.3f} mm')
 
 
 def summary(values: Sequence[float]) -> Stats:
