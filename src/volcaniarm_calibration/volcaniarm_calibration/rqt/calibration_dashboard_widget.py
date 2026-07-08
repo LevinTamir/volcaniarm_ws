@@ -51,9 +51,11 @@ from python_qt_binding.QtWidgets import (
 
 # Status messages matching any of these patterns (case-insensitive)
 # get logged in red. Catches IK / motion / settle failures, aborts,
-# missing services, stale detections, etc.
+# missing services, stale detections, etc. `error` is matched with word
+# boundaries so metric names like `d_error` / `d_urdf` in a normal capture
+# line don't get flagged as failures.
 _ERROR_PATTERNS = re.compile(
-    r'(fail|abort|cannot|invalid|stale|out of reach|error|empty|no goals'
+    r'(fail|abort|cannot|invalid|stale|out of reach|\berror\b|empty|no goals'
     r'|not visible|not moving)', re.IGNORECASE)
 # Successes (completions, captures, arrivals) get logged in green so
 # the operator can scan progress quickly. The match is intentionally
@@ -223,6 +225,13 @@ class CalibrationDashboardWidget(QWidget):
         # _on_page_changed rebinds them to whichever test tab is active.
         self._bind_run_widgets(self._pages_fields['static_accuracy'])
         self._apply_styles()
+
+        # Open at a comfortable size instead of the cramped default rqt
+        # gives a fresh plugin; keep a sensible floor and a log that always
+        # has room without dominating.
+        self._log.setMinimumHeight(150)
+        self.setMinimumSize(960, 720)
+        self.resize(1080, 820)
 
     def _build_sidebar(self) -> QListWidget:
         nav = QListWidget()
