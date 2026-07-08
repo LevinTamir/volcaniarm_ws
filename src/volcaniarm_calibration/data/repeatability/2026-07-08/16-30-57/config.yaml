@@ -1,0 +1,30 @@
+test_name: repeatability
+num_cycles: 10
+settle_time: 2.0
+verify_home_with_tag: true
+initial_pose:
+- 0.0
+- 0.749
+goals:
+- - 0.0
+  - 0.749
+joint_names:
+- volcaniarm_right_elbow_joint
+- volcaniarm_left_elbow_joint
+trajectory_duration: 2.0
+base_tag_frame: apriltag_marker_base
+ee_tag_frame: apriltag_marker_ee
+base_urdf_frame: apriltag_base_link
+ee_urdf_frame: apriltag_ee_link
+world_frame: world
+detection_timeout_s: 1.0
+detection_max_age_s: 0.5
+home_tol_m: 0.02
+home_hold_frames: 5
+home_timeout_s: 10.0
+run_id: repeatability/2026-07-08/16-30-57
+timestamp: '20260708_163057'
+git_sha: 5a2d2c220035cd084d26b8bfb303ab0d536e1ffc
+status: failed
+failure_reason: 'home-confirm (initial): timeout after 10.0 s (last err 67.0 mm, tol
+  20 mm)'

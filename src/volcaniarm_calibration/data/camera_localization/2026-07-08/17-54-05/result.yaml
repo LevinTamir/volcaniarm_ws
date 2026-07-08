@@ -1,0 +1,67 @@
+mode: calibration_stand
+method: ee_sweep_orientation_prior
+timestamp: '2026-07-08T17:54:05.025499'
+samples_used: 11
+solved:
+  parent_frame: world
+  child_frame: camera_link
+  xyz:
+  - 1.6158223608724667
+  - 0.17238366170908304
+  - 0.4941226065641414
+  rpy:
+  - 0.0
+  - 0.0
+  - 3.141592653589793
+  quat:
+  - 0.0
+  - 0.0
+  - 1.0
+  - 6.123233995736766e-17
+residuals:
+  rms_m: 0.3942749310266122
+  std_m: 0.1740056842143329
+  max_m: 0.6063582454169895
+  kept_indices:
+  - 0
+  - 2
+  - 3
+  - 5
+  - 7
+  - 8
+  - 9
+  - 10
+  rejected_indices:
+  - 1
+  - 4
+  - 6
+  rotation_variance_deg: 44.10962814874566
+pose_visits:
+- pose_idx: 1
+  comment: front-left
+- pose_idx: 2
+  comment: front-center, near
+- pose_idx: 3
+  comment: front-right
+- pose_idx: 4
+  comment: back-left
+- pose_idx: 5
+  comment: back-center
+- pose_idx: 6
+  comment: back-right
+- pose_idx: 7
+  comment: mid-left
+- pose_idx: 8
+  comment: mid-right
+- pose_idx: 9
+  comment: back-center, far
+- pose_idx: 10
+  comment: left-far
+- pose_idx: 11
+  comment: right-far
+frames:
+  truth_chain: world -> apriltag_ee_link
+  detection: camera_color_optical_frame -> apriltag_marker_ee
+  marker_orientation_prior: world -> apriltag_marker_ee
+  output: world -> camera_link
+r_parent_optical_drift_during_run: 0.0
