@@ -43,7 +43,7 @@ from python_qt_binding.QtCore import Signal, Slot, QObject, QTimer, Qt
 from python_qt_binding.QtGui import QPixmap
 from python_qt_binding.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QCheckBox, QDoubleSpinBox, QFrame, QMessageBox,
+    QCheckBox, QDoubleSpinBox, QFrame, QMessageBox, QSizePolicy,
     QSpinBox, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QPlainTextEdit, QProgressBar, QTextEdit,
 )
@@ -207,8 +207,13 @@ class CalibrationDashboardWidget(QWidget):
         self._pages.addWidget(self._build_test_page(
             'workspace_coverage', with_iterations=False,
             with_home_gate=False, goal_mode='list'))
-        right.addWidget(self._pages, stretch=1)
-        right.addWidget(self._build_run_panel())
+        # Keep the page compact (sized to its content) and let the run
+        # panel's log expand to fill the rest, so there's no large blank
+        # gap between a page's controls and the log at the bottom.
+        self._pages.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        right.addWidget(self._pages)
+        right.addWidget(self._build_run_panel(), stretch=1)
         root.addLayout(right, stretch=1)
 
         # The run-control widgets (Start/Continue/Reset/Cancel, capture
@@ -227,8 +232,8 @@ class CalibrationDashboardWidget(QWidget):
             QListWidgetItem(label, nav)
         nav.setCurrentRow(self._PAGE_START)
         nav.setStyleSheet(
-            'QListWidget { font-size: 13px; }'
-            'QListWidget::item { padding: 10px 8px; }'
+            'QListWidget { font-size: 15px; }'
+            'QListWidget::item { padding: 12px 10px; }'
             'QListWidget::item:selected { background: #4a90d9; color: white; }')
         return nav
 
@@ -236,7 +241,7 @@ class CalibrationDashboardWidget(QWidget):
         page = QWidget()
         v = QVBoxLayout(page)
         title = QLabel('Volcaniarm Calibration')
-        title.setStyleSheet('font-size: 18px; font-weight: bold;')
+        title.setStyleSheet('font-size: 22px; font-weight: bold;')
         v.addWidget(title)
 
         pixmap = self._load_logo_pixmap()
@@ -295,8 +300,6 @@ class CalibrationDashboardWidget(QWidget):
         self._home_status.setStyleSheet('color: gray;')
         home_outer.addWidget(self._home_status)
         v.addWidget(home_box)
-
-        v.addStretch(1)
         return page
 
     def _build_camera_page(self) -> QWidget:
@@ -333,7 +336,6 @@ class CalibrationDashboardWidget(QWidget):
         self._camera_cancel_btn.clicked.connect(self._on_cancel_clicked)
         align_outer.addWidget(self._camera_cancel_btn)
         v.addWidget(align_box)
-        v.addStretch(1)
         return page
 
     def _build_test_page(self, test_name: str, *, with_iterations: bool,
@@ -507,7 +509,6 @@ class CalibrationDashboardWidget(QWidget):
         v.addWidget(progress)
         fields['progress'] = progress
 
-        v.addStretch(1)
         self._pages_fields[test_name] = fields
         return page
 
@@ -528,7 +529,20 @@ class CalibrationDashboardWidget(QWidget):
         self._log = QTextEdit()
         self._log.setReadOnly(True)
         self._log.document().setMaximumBlockCount(1000)
-        v.addWidget(self._log)
+
+        # Log header row: a "Log" label and a compact Clear button that
+        # empties the log without affecting a run. Built after self._log
+        # exists so the Clear button can bind to it; added above the log.
+        log_header = QHBoxLayout()
+        log_header.addWidget(QLabel('Log'))
+        log_header.addStretch(1)
+        clear_btn = QPushButton('Clear')
+        clear_btn.setObjectName('compact')
+        clear_btn.setToolTip('Clear the log messages below')
+        clear_btn.clicked.connect(self._log.clear)
+        log_header.addWidget(clear_btn)
+        v.addLayout(log_header)
+        v.addWidget(self._log, stretch=1)
 
         # Post-run banner: shown after every finalize so the operator
         # can triage the result (Keep / Delete / Open notebook).
@@ -576,15 +590,21 @@ class CalibrationDashboardWidget(QWidget):
     def _make_home_btn(self) -> QPushButton:
         """Compact button used inline to snap a pose axis to the home FK."""
         btn = QPushButton('home')
+        btn.setObjectName('compact')
         btn.setToolTip('Reset this axis to the home FK value (theta=0,0)')
-        btn.setMaximumWidth(60)
+        # Maximum size policy clamps the width to the button's content
+        # sizeHint (evaluated after styling, so the label + compact padding
+        # always fit) while preventing it from expanding to fill the row.
+        btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         return btn
 
     def _row_with_home_btn(self, spinbox: QDoubleSpinBox,
                            home_btn: QPushButton) -> QHBoxLayout:
         row = QHBoxLayout()
-        row.addWidget(spinbox)
-        row.addWidget(home_btn)
+        # Spinbox takes all the slack; the home button stays at its
+        # content width so its label isn't clipped and it doesn't sprawl.
+        row.addWidget(spinbox, stretch=1)
+        row.addWidget(home_btn, stretch=0)
         return row
 
     def _logo_image_path(self) -> Optional[Path]:
@@ -612,7 +632,7 @@ class CalibrationDashboardWidget(QWidget):
         pixmap = QPixmap(str(path))
         if pixmap.isNull():
             return None
-        return pixmap.scaledToWidth(360, Qt.TransformationMode.SmoothTransformation)
+        return pixmap.scaledToWidth(460, Qt.TransformationMode.SmoothTransformation)
 
     def _apply_styles(self):
         """One cohesive stylesheet for the whole dashboard.
@@ -622,12 +642,12 @@ class CalibrationDashboardWidget(QWidget):
         Calibrate) and the Cancel (danger) buttons are keyed by objectName.
         """
         self.setStyleSheet('''
-            QWidget { font-size: 13px; }
+            QWidget { font-size: 14px; }
             QGroupBox {
-                margin-top: 10px;
+                margin-top: 12px;
                 border: 1px solid palette(mid);
                 border-radius: 6px;
-                padding: 8px 6px 6px 6px;
+                padding: 10px 8px 8px 8px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -635,25 +655,39 @@ class CalibrationDashboardWidget(QWidget):
                 padding: 0 4px;
                 font-weight: bold;
             }
+            /* Explicit border + background so plain buttons keep visible
+               button chrome (a stylesheet with border-radius alone drops
+               Qt's native rendering and the button looks like flat text). */
             QPushButton {
-                padding: 6px 12px;
-                min-height: 22px;
+                padding: 6px 14px;
+                min-height: 24px;
+                border: 1px solid palette(mid);
                 border-radius: 4px;
+                background-color: palette(button);
+            }
+            QPushButton:hover { background-color: palette(light); }
+            QPushButton:pressed { background-color: palette(mid); }
+            QPushButton:disabled { color: palette(mid); }
+            /* Compact buttons (inline "home" snaps, Clear log): tight
+               padding + no min-height so short labels aren't clipped. */
+            QPushButton#compact {
+                padding: 3px 10px;
+                min-height: 0;
             }
             QPushButton#primary {
                 background-color: #4a90d9;
                 color: white;
                 font-weight: bold;
-                border: none;
+                border: 1px solid #3a7bc0;
             }
             QPushButton#primary:hover { background-color: #3a7bc0; }
             QPushButton#primary:disabled {
-                background-color: #9bbfe0; color: #eef;
+                background-color: #9bbfe0; color: #eef; border: none;
             }
             QPushButton#danger {
                 background-color: #c0504b;
                 color: white;
-                border: none;
+                border: 1px solid #a5423d;
             }
             QPushButton#danger:hover { background-color: #a5423d; }
         ''')
@@ -1132,25 +1166,25 @@ class CalibrationDashboardWidget(QWidget):
     def _notebook_path(self) -> Optional[Path]:
         """Resolve the analysis notebook path for the current test type.
 
-        Tries the installed share dir first (production install), then
-        falls back to the source tree (developer running symlink-install
-        without re-installing notebooks). Returns None if neither
+        Prefers the source tree (the git-tracked notebook, so re-running
+        it and letting nbstripout keep it clean edits the file you'd
+        actually commit), then falls back to the installed share dir for a
+        production install with no source tree. Returns None if neither
         exists, so the Open button can disable itself.
         """
         if not self._last_test_name:
             return None
         candidates: list = []
+        # Source tree first. The widget lives at
+        # <pkg>/volcaniarm_calibration/rqt/calibration_dashboard_widget.py;
+        # the notebooks dir is two levels up under the package root.
+        candidates.append(Path(__file__).resolve().parents[2]
+                          / 'notebooks' / f'{self._last_test_name}.ipynb')
         try:
             share = Path(get_package_share_directory('volcaniarm_calibration'))
             candidates.append(share / 'notebooks' / f'{self._last_test_name}.ipynb')
         except Exception:
             pass
-        # Source-tree fallback. The widget lives at
-        # <pkg>/volcaniarm_calibration/rqt/calibration_dashboard_widget.py;
-        # the notebooks dir is two levels up under the package root.
-        src_nb = (Path(__file__).resolve().parents[2]
-                  / 'notebooks' / f'{self._last_test_name}.ipynb')
-        candidates.append(src_nb)
         for path in candidates:
             if path.exists():
                 return path
@@ -1180,6 +1214,10 @@ class CalibrationDashboardWidget(QWidget):
 
     @Slot()
     def _on_banner_open_notebook(self):
+        # Open the analysis notebook directly. Re-running it is safe for
+        # git: the repo's nbstripout filter (*.ipynb filter=nbstripout in
+        # .gitattributes) strips cell outputs / execution counts, so the
+        # regenerated graphs never show up as a working-tree change.
         path = self._notebook_path()
         if path is None:
             return
@@ -1194,7 +1232,8 @@ class CalibrationDashboardWidget(QWidget):
         self._runner.shutdown()
 
     def save_settings(self, plugin_settings):
-        plugin_settings.set_value('active_page', self._nav.currentRow())
+        # Note: the active sidebar page is intentionally NOT persisted; the
+        # GUI always opens on the Start tab (see restore_settings).
         # Persist only the input widgets in each tab's bundle; skip the
         # run-control buttons / labels / progress bar (transient state).
         for test_name, fields in self._pages_fields.items():
@@ -1224,11 +1263,7 @@ class CalibrationDashboardWidget(QWidget):
                         widget.setValue(type(widget.value())(v))
                     except (TypeError, ValueError):
                         pass
-        ap = plugin_settings.value('active_page')
-        if ap is not None:
-            try:
-                row = int(ap)
-                if 0 <= row < self._nav.count():
-                    self._nav.setCurrentRow(row)
-            except (TypeError, ValueError):
-                pass
+        # Always open on the Start tab, regardless of the last session's
+        # page. The sidebar is already built at _PAGE_START; we just make
+        # the intent explicit and don't restore any saved active page.
+        self._nav.setCurrentRow(self._PAGE_START)
