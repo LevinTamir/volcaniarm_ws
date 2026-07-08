@@ -2,9 +2,10 @@
 
 MoveIt-Setup-Assistant-style layout: a left sidebar picks a step (Start,
 Camera Localization, or one of the accuracy/repeatability/workspace tests)
-and the right panel swaps to that step's controls. A shared run-control
-bar (Start / Continue / Reset / Cancel, detection + status + log + result
-banner) stays visible beneath every page.
+and the right panel swaps to that step's controls. The Start tab only
+offers robot homing; each test tab is self-contained (its params, capture
+settings, and Start / Continue / Reset / Cancel). A shared strip beneath
+the pages holds the status line, log, and post-run result banner.
 
 Workflow (real hardware only):
   1. Terminal 1: bring up the robot with the AprilTag detector
@@ -82,6 +83,8 @@ class _RunnerBridge(QObject):
     awaiting_continue = Signal(int, int)
     detection_state = Signal(bool, float)
     home_fk_resolved = Signal(float, float)
+    # Limit-switch homing completion. (ok, message)
+    home_finished = Signal(bool, str)
     # Camera calibration completion. (status, calib_path_or_empty, reason)
     camera_calib_finished = Signal(str, str, str)
 
@@ -140,6 +143,8 @@ class CalibrationDashboardWidget(QWidget):
         self._runner.finished_cb = lambda p, s: self._bridge.finished.emit(str(p), s)
         self._runner.awaiting_continue_cb = self._bridge.awaiting_continue.emit
         self._runner.detection_state_cb = self._bridge.detection_state.emit
+        self._runner.home_finished_cb = (
+            lambda ok, msg: self._bridge.home_finished.emit(bool(ok), msg))
 
         # Cached home (theta=0,0) FK in workspace (y, z); populated
         # asynchronously from the FK service. Used both to seed default
@@ -206,6 +211,14 @@ class CalibrationDashboardWidget(QWidget):
         right.addWidget(self._build_run_panel())
         root.addLayout(right, stretch=1)
 
+        # The run-control widgets (Start/Continue/Reset/Cancel, capture
+        # settings, detection, progress) now live per test tab. Bind the
+        # self._* names used by the runner-callback slots to a default tab
+        # so a stray callback before the first tab switch is harmless;
+        # _on_page_changed rebinds them to whichever test tab is active.
+        self._bind_run_widgets(self._pages_fields['static_accuracy'])
+        self._apply_styles()
+
     def _build_sidebar(self) -> QListWidget:
         nav = QListWidget()
         nav.setObjectName('CalibrationNav')
@@ -262,6 +275,27 @@ class CalibrationDashboardWidget(QWidget):
         instructions.setWordWrap(True)
         instructions.setTextFormat(Qt.TextFormat.RichText)
         v.addWidget(instructions)
+
+        # Robot homing: the only action on the Start tab. Triggers the
+        # limit-switch homing service on volcaniarm_hardware (the arm
+        # moves; the seek takes up to ~30 s). Needed when the robot was
+        # booted with auto_home:=false. The GUI can't read whether the
+        # arm is already homed, so the operator decides; this just offers
+        # the button and reports the outcome of the last call.
+        home_box = QGroupBox('Robot homing')
+        home_outer = QVBoxLayout(home_box)
+        self._home_btn = QPushButton('Home robot')
+        self._home_btn.setObjectName('primary')
+        self._home_btn.setToolTip(
+            'Run limit-switch homing (volcaniarm_hardware/home). The arm '
+            'seeks its limit switches and re-zeros; takes up to ~30 s. '
+            'Use this if the robot booted with auto_home:=false.')
+        home_outer.addWidget(self._home_btn)
+        self._home_status = QLabel('not homed this session')
+        self._home_status.setStyleSheet('color: gray;')
+        home_outer.addWidget(self._home_status)
+        v.addWidget(home_box)
+
         v.addStretch(1)
         return page
 
@@ -285,12 +319,19 @@ class CalibrationDashboardWidget(QWidget):
         self._align_status.setStyleSheet('color: gray;')
         align_outer.addWidget(self._align_status)
         self._calibrate_btn = QPushButton('Calibrate camera')
+        self._calibrate_btn.setObjectName('primary')
         self._calibrate_btn.setToolTip(
             'Sweeps the arm through the EE poses in calibration_poses.yaml '
             'and solves for the camera pose. Mode is auto-detected from '
             'the URDF: parent of camera_link is world (stand) or '
             'camera_mount_rev_link (on-robot).')
         align_outer.addWidget(self._calibrate_btn)
+        # Cancel aborts an in-flight EE-sweep (the run controls no longer
+        # live in a shared bar, so the camera tab needs its own Cancel).
+        self._camera_cancel_btn = QPushButton('Cancel')
+        self._camera_cancel_btn.setObjectName('danger')
+        self._camera_cancel_btn.clicked.connect(self._on_cancel_clicked)
+        align_outer.addWidget(self._camera_cancel_btn)
         v.addWidget(align_box)
         v.addStretch(1)
         return page
@@ -398,70 +439,88 @@ class CalibrationDashboardWidget(QWidget):
             fields['goals_edit'] = goals_edit
             v.addWidget(goals_box)
 
+        # Capture settings + run controls live on the tab itself so each
+        # test is self-contained. The widgets are per-tab instances (a Qt
+        # widget can only sit in one layout); the runner-callback slots
+        # reach the active tab's set via _bind_run_widgets on tab switch.
+        cap_box = QGroupBox('Capture settings')
+        cap_form = QFormLayout(cap_box)
+        settle_time = QDoubleSpinBox()
+        settle_time.setRange(0.0, 10.0)
+        settle_time.setSingleStep(0.5)
+        settle_time.setDecimals(1)
+        settle_time.setValue(2.0)
+        cap_form.addRow('settle time (s)', settle_time)
+        fresh_window = QDoubleSpinBox()
+        fresh_window.setRange(0.1, 2.0)
+        fresh_window.setSingleStep(0.1)
+        fresh_window.setDecimals(2)
+        fresh_window.setValue(0.5)
+        cap_form.addRow('detection fresh window (s)', fresh_window)
+        # Auto-continue: when checked, the runner auto-advances at each
+        # Continue gate once detection has been continuously fresh for
+        # `fresh-hold` seconds. Cancel still aborts immediately.
+        auto_continue = QCheckBox('auto-continue when detection fresh')
+        auto_continue.setChecked(True)
+        cap_form.addRow(auto_continue)
+        auto_hold = QDoubleSpinBox()
+        auto_hold.setRange(0.2, 5.0)
+        auto_hold.setSingleStep(0.1)
+        auto_hold.setDecimals(2)
+        auto_hold.setValue(1.0)
+        cap_form.addRow('auto-continue fresh-hold (s)', auto_hold)
+        fields['settle_time'] = settle_time
+        fields['fresh_window'] = fresh_window
+        fields['auto_continue'] = auto_continue
+        fields['auto_hold'] = auto_hold
+        v.addWidget(cap_box)
+
+        btn_row = QHBoxLayout()
+        start_btn = QPushButton('Start Run')
+        start_btn.setObjectName('primary')
+        start_btn.clicked.connect(self._on_start_clicked)
+        continue_btn = QPushButton('Continue')
+        continue_btn.setEnabled(False)
+        continue_btn.clicked.connect(self._on_continue_clicked)
+        # Reset = abort current run (stop in place) then drive arm back
+        # to the typed initial pose. Distinct from Cancel which only stops.
+        reset_btn = QPushButton('Reset')
+        reset_btn.clicked.connect(self._on_reset_clicked)
+        # Cancel = emergency stop. Arm halts wherever it is.
+        cancel_btn = QPushButton('Cancel')
+        cancel_btn.setObjectName('danger')
+        cancel_btn.clicked.connect(self._on_cancel_clicked)
+        for b in (start_btn, continue_btn, reset_btn, cancel_btn):
+            btn_row.addWidget(b)
+        v.addLayout(btn_row)
+        fields['start_btn'] = start_btn
+        fields['continue_btn'] = continue_btn
+        fields['reset_btn'] = reset_btn
+        fields['cancel_btn'] = cancel_btn
+
+        detection_label = QLabel('detection: idle')
+        v.addWidget(detection_label)
+        fields['detection_label'] = detection_label
+        progress = QProgressBar()
+        progress.setRange(0, 1)
+        progress.setValue(0)
+        v.addWidget(progress)
+        fields['progress'] = progress
+
         v.addStretch(1)
         self._pages_fields[test_name] = fields
         return page
 
     def _build_run_panel(self) -> QWidget:
-        """Shared run controls that stay visible under every page."""
+        """Shared feedback strip beneath the stacked pages: status line,
+        log, and the post-run banner. The run controls + capture settings
+        + progress/detection live per test tab instead."""
         panel = QWidget()
         v = QVBoxLayout(panel)
-
-        # Common capture settings apply to whichever test is active.
-        cap_box = QGroupBox('Common capture settings')
-        cap_form = QFormLayout(cap_box)
-        self._settle_time = QDoubleSpinBox()
-        self._settle_time.setRange(0.0, 10.0)
-        self._settle_time.setSingleStep(0.5)
-        self._settle_time.setDecimals(1)
-        self._settle_time.setValue(2.0)
-        cap_form.addRow('settle time (s)', self._settle_time)
-        self._fresh_window = QDoubleSpinBox()
-        self._fresh_window.setRange(0.1, 2.0)
-        self._fresh_window.setSingleStep(0.1)
-        self._fresh_window.setDecimals(2)
-        self._fresh_window.setValue(0.5)
-        cap_form.addRow('detection fresh window (s)', self._fresh_window)
-        # Auto-continue: when checked, the runner auto-advances at each
-        # Continue gate once detection has been continuously fresh for
-        # `fresh-hold` seconds. Cancel still aborts immediately.
-        self._auto_continue = QCheckBox('auto-continue when detection fresh')
-        self._auto_continue.setChecked(True)
-        cap_form.addRow(self._auto_continue)
-        self._auto_hold = QDoubleSpinBox()
-        self._auto_hold.setRange(0.2, 5.0)
-        self._auto_hold.setSingleStep(0.1)
-        self._auto_hold.setDecimals(2)
-        self._auto_hold.setValue(1.0)
-        cap_form.addRow('auto-continue fresh-hold (s)', self._auto_hold)
-        v.addWidget(cap_box)
-
-        btn_row = QHBoxLayout()
-        self._start_btn = QPushButton('Start Run')
-        self._continue_btn = QPushButton('Continue')
-        self._continue_btn.setEnabled(False)
-        # Reset = abort current run (stop in place) then drive arm back
-        # to the typed initial pose. Distinct from Cancel which only stops.
-        self._reset_btn = QPushButton('Reset')
-        # Cancel = emergency stop. Arm halts wherever it is.
-        self._cancel_btn = QPushButton('Cancel')
-        btn_row.addWidget(self._start_btn)
-        btn_row.addWidget(self._continue_btn)
-        btn_row.addWidget(self._reset_btn)
-        btn_row.addWidget(self._cancel_btn)
-        v.addLayout(btn_row)
-
-        self._detection_label = QLabel('detection: idle')
-        v.addWidget(self._detection_label)
 
         self._status_label = QLabel('idle')
         self._status_label.setStyleSheet('font-weight: bold;')
         v.addWidget(self._status_label)
-
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 1)
-        self._progress.setValue(0)
-        v.addWidget(self._progress)
 
         # QTextEdit (rich text) instead of QPlainTextEdit so each line
         # can be coloured by severity. Maximum block count keeps the
@@ -555,11 +614,54 @@ class CalibrationDashboardWidget(QWidget):
             return None
         return pixmap.scaledToWidth(360, Qt.TransformationMode.SmoothTransformation)
 
+    def _apply_styles(self):
+        """One cohesive stylesheet for the whole dashboard.
+
+        Theme-neutral: uses palette roles for borders so it reads well in
+        both light and dark Qt themes. Primary actions (Home / Start Run /
+        Calibrate) and the Cancel (danger) buttons are keyed by objectName.
+        """
+        self.setStyleSheet('''
+            QWidget { font-size: 13px; }
+            QGroupBox {
+                margin-top: 10px;
+                border: 1px solid palette(mid);
+                border-radius: 6px;
+                padding: 8px 6px 6px 6px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+                font-weight: bold;
+            }
+            QPushButton {
+                padding: 6px 12px;
+                min-height: 22px;
+                border-radius: 4px;
+            }
+            QPushButton#primary {
+                background-color: #4a90d9;
+                color: white;
+                font-weight: bold;
+                border: none;
+            }
+            QPushButton#primary:hover { background-color: #3a7bc0; }
+            QPushButton#primary:disabled {
+                background-color: #9bbfe0; color: #eef;
+            }
+            QPushButton#danger {
+                background-color: #c0504b;
+                color: white;
+                border: none;
+            }
+            QPushButton#danger:hover { background-color: #a5423d; }
+        ''')
+
     def _wire_signals(self):
-        self._start_btn.clicked.connect(self._on_start_clicked)
-        self._continue_btn.clicked.connect(self._on_continue_clicked)
-        self._reset_btn.clicked.connect(self._on_reset_clicked)
-        self._cancel_btn.clicked.connect(self._on_cancel_clicked)
+        # Per-tab run buttons (Start/Continue/Reset/Cancel) are wired in
+        # _build_test_page. Here we wire the single-instance controls.
+        self._home_btn.clicked.connect(self._on_home_clicked)
         self._calibrate_btn.clicked.connect(self._on_calibrate_clicked)
         # Refresh the alignment status label periodically so it picks
         # up new result.yaml files written between dashboard sessions.
@@ -577,6 +679,7 @@ class CalibrationDashboardWidget(QWidget):
         self._bridge.awaiting_continue.connect(self._on_awaiting_continue)
         self._bridge.detection_state.connect(self._on_detection_state)
         self._bridge.home_fk_resolved.connect(self._on_home_fk_resolved)
+        self._bridge.home_finished.connect(self._on_home_finished)
         self._bridge.camera_calib_finished.connect(
             self._on_camera_calib_finished)
 
@@ -589,14 +692,38 @@ class CalibrationDashboardWidget(QWidget):
         name = self._current_test_name()
         return self._pages_fields.get(name) if name else None
 
+    # Run-control widget keys stored in each test tab's `fields` bundle.
+    # These are per-tab instances; _bind_run_widgets points the self._*
+    # names (used by the runner-callback slots) at the active tab's set.
+    _RUN_WIDGET_KEYS = (
+        'settle_time', 'fresh_window', 'auto_continue', 'auto_hold',
+        'start_btn', 'continue_btn', 'reset_btn', 'cancel_btn',
+        'detection_label', 'progress',
+    )
+
+    def _bind_run_widgets(self, fields: dict):
+        """Point the self._* run-control names at one test tab's widgets."""
+        self._settle_time = fields['settle_time']
+        self._fresh_window = fields['fresh_window']
+        self._auto_continue = fields['auto_continue']
+        self._auto_hold = fields['auto_hold']
+        self._start_btn = fields['start_btn']
+        self._continue_btn = fields['continue_btn']
+        self._reset_btn = fields['reset_btn']
+        self._cancel_btn = fields['cancel_btn']
+        self._detection_label = fields['detection_label']
+        self._progress = fields['progress']
+
     @Slot(int)
     def _on_page_changed(self, row: int):
         # Landing on a test page implies the operator is starting fresh:
-        # cancel anything still running and reset the run state. Navigating
-        # to Start / Camera does NOT cancel, so peeking at another page
-        # can't silently abort an active run. cancel() is a no-op when
-        # nothing is running.
-        if self._PAGE_TEST_NAME.get(row) is not None:
+        # rebind the run-control widgets to that tab, cancel anything still
+        # running, and reset the run state. Navigating to Start / Camera
+        # does NOT cancel, so peeking at another page can't silently abort
+        # an active run. cancel() is a no-op when nothing is running.
+        name = self._PAGE_TEST_NAME.get(row)
+        if name is not None:
+            self._bind_run_widgets(self._pages_fields[name])
             self._runner.cancel()
             self._reset_ui_state(status='idle')
 
@@ -704,7 +831,7 @@ class CalibrationDashboardWidget(QWidget):
             test = cls(
                 targets=goals,
                 num_cycles=num_cycles,
-                settle_time=self._settle_time.value(),
+                settle_time=fields['settle_time'].value(),
                 return_home_between_targets=True,
             )
         except ValueError as exc:
@@ -725,7 +852,7 @@ class CalibrationDashboardWidget(QWidget):
             output_root=Path(DEFAULT_OUTPUT_DIR).expanduser(),
             initial_pose=(fields['initial_y'].value(), fields['initial_z'].value()),
             goals=tuple(goals),
-            detection_max_age_s=self._fresh_window.value(),
+            detection_max_age_s=fields['fresh_window'].value(),
             **home_kwargs,
         )
         if self._runner.request_run(request):
@@ -794,6 +921,27 @@ class CalibrationDashboardWidget(QWidget):
         self._runner.reset_to(fields['initial_y'].value(),
                               fields['initial_z'].value())
         self._reset_ui_state(status='resetting: returning arm to initial')
+
+    # -- homing (Start tab) --------------------------------------
+
+    @Slot()
+    def _on_home_clicked(self):
+        if not self._runner.home():
+            return
+        self._home_btn.setEnabled(False)
+        self._home_status.setText('homing: seeking limit switches...')
+        self._home_status.setStyleSheet('color: #c79a3a;')
+
+    @Slot(bool, str)
+    def _on_home_finished(self, ok: bool, message: str):
+        self._home_btn.setEnabled(True)
+        if ok:
+            self._home_status.setText('homed')
+            self._home_status.setStyleSheet('color: #2e9c4a;')
+        else:
+            self._home_status.setText(
+                f'home failed: {message}' if message else 'home failed')
+            self._home_status.setStyleSheet('color: #d04b4b;')
 
     # -- camera localization -------------------------------------
 
@@ -1047,16 +1195,17 @@ class CalibrationDashboardWidget(QWidget):
 
     def save_settings(self, plugin_settings):
         plugin_settings.set_value('active_page', self._nav.currentRow())
-        plugin_settings.set_value('settle_time', self._settle_time.value())
-        plugin_settings.set_value('fresh_window', self._fresh_window.value())
-        plugin_settings.set_value('auto_continue', self._auto_continue.isChecked())
-        plugin_settings.set_value('auto_hold', self._auto_hold.value())
+        # Persist only the input widgets in each tab's bundle; skip the
+        # run-control buttons / labels / progress bar (transient state).
         for test_name, fields in self._pages_fields.items():
             for key, widget in fields.items():
-                if key == 'goals_edit':
+                if isinstance(widget, QCheckBox):
+                    plugin_settings.set_value(
+                        f'{test_name}/{key}', widget.isChecked())
+                elif isinstance(widget, QPlainTextEdit):
                     plugin_settings.set_value(
                         f'{test_name}/{key}', widget.toPlainText())
-                else:
+                elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
                     plugin_settings.set_value(
                         f'{test_name}/{key}', widget.value())
 
@@ -1066,27 +1215,15 @@ class CalibrationDashboardWidget(QWidget):
                 v = plugin_settings.value(f'{test_name}/{key}')
                 if v is None:
                     continue
-                if key == 'goals_edit':
+                if isinstance(widget, QCheckBox):
+                    widget.setChecked(str(v).lower() in ('1', 'true'))
+                elif isinstance(widget, QPlainTextEdit):
                     widget.setPlainText(str(v))
-                else:
+                elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
                     try:
                         widget.setValue(type(widget.value())(v))
                     except (TypeError, ValueError):
                         pass
-        for key, widget in (
-            ('settle_time', self._settle_time),
-            ('fresh_window', self._fresh_window),
-            ('auto_hold', self._auto_hold),
-        ):
-            v = plugin_settings.value(key)
-            if v is not None:
-                try:
-                    widget.setValue(type(widget.value())(v))
-                except (TypeError, ValueError):
-                    pass
-        v = plugin_settings.value('auto_continue')
-        if v is not None:
-            self._auto_continue.setChecked(str(v).lower() in ('1', 'true'))
         ap = plugin_settings.value('active_page')
         if ap is not None:
             try:

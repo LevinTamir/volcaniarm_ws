@@ -24,6 +24,7 @@ from rclpy.time import Time as RclpyTime
 
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
+from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectoryPoint
 import volcaniarm_kinematics_py as vk
 
@@ -119,9 +120,16 @@ class CalibrationRunner:
             node, FollowJointTrajectory,
             '/volcaniarm_controller/follow_joint_trajectory',
             callback_group=self._cb_group)
+        # Limit-switch homing service advertised by volcaniarm_hardware.
+        # The GUI's Start tab calls this to re-zero the arm when it was
+        # booted with auto_home:=false.
+        self._home_client = self.node.create_client(
+            Trigger, '/volcaniarm_hardware/home',
+            callback_group=self._cb_group)
 
         self._run_thread: Optional[threading.Thread] = None
         self._goto_thread: Optional[threading.Thread] = None
+        self._home_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._continue_event = threading.Event()
         # Set by internal auto-abort paths (e.g. detection lost during
@@ -141,6 +149,8 @@ class CalibrationRunner:
         self.finished_cb: Optional[FinishedCb] = None
         self.awaiting_continue_cb: Optional[AwaitingContinueCb] = None
         self.detection_state_cb: Optional[DetectionStateCb] = None
+        # Homing completion: (ok: bool, message: str).
+        self.home_finished_cb: Optional[Callable[[bool, str], None]] = None
 
     # -- public control surface ------------------------------------
 
@@ -224,12 +234,39 @@ class CalibrationRunner:
                   trajectory_duration or self._default_trajectory_duration),
             daemon=True).start()
 
+    def home(self) -> bool:
+        """Trigger limit-switch homing via the volcaniarm_hardware service.
+
+        Re-zeros the arm on its limit switches (the arm moves; the seek
+        takes up to ~30 s). Used by the dashboard's Start tab when the
+        robot was booted with auto_home:=false. Refuses while a run,
+        move, or another home is in flight. Reports via home_finished_cb.
+        """
+        if self._run_thread is not None and self._run_thread.is_alive():
+            self._emit_status('busy: cannot home while a run is in progress')
+            return False
+        if self._goto_thread is not None and self._goto_thread.is_alive():
+            self._emit_status('busy: cannot home while a move is in progress')
+            return False
+        if self._home_thread is not None and self._home_thread.is_alive():
+            self._emit_status('busy: homing already in progress')
+            return False
+        # Clear stop_event in case a prior cancel set it; the home worker
+        # honours it so Cancel aborts the wait.
+        self._stop_event.clear()
+        self._home_thread = threading.Thread(
+            target=self._home_worker, daemon=True)
+        self._home_thread.start()
+        return True
+
     def shutdown(self):
         self.cancel()
         if self._run_thread is not None:
             self._run_thread.join(timeout=5.0)
         if self._goto_thread is not None:
             self._goto_thread.join(timeout=5.0)
+        if self._home_thread is not None:
+            self._home_thread.join(timeout=5.0)
 
     # -- emit helpers ----------------------------------------------
 
@@ -498,6 +535,43 @@ class CalibrationRunner:
             args=(y, z, joint_names, duration),
             daemon=True)
         self._goto_thread.start()
+
+    def _emit_home_finished(self, ok: bool, message: str):
+        if self.home_finished_cb:
+            self.home_finished_cb(ok, message)
+
+    def _home_worker(self):
+        """Background worker for ``home``: call the Trigger service and
+        poll its future, honouring _stop_event so Cancel aborts the wait.
+        The hardware seek blocks up to ~30 s, so allow a 35 s deadline."""
+        if not self._home_client.wait_for_service(timeout_sec=5.0):
+            self._emit_status('cannot home: /volcaniarm_hardware/home unavailable')
+            self._emit_home_finished(False, 'home service unavailable')
+            return
+        self._emit_status('homing: seeking limit switches (up to ~30 s)...')
+        future = self._home_client.call_async(Trigger.Request())
+        deadline = time.monotonic() + 35.0
+        while not future.done() and time.monotonic() < deadline:
+            if self._stop_event.is_set():
+                self._emit_status('homing canceled')
+                self._emit_home_finished(False, 'canceled')
+                return
+            time.sleep(0.05)
+        if not future.done():
+            self._emit_status('homing timed out')
+            self._emit_home_finished(False, 'timed out')
+            return
+        try:
+            resp = future.result()
+        except Exception as exc:  # noqa: BLE001
+            self._emit_status(f'homing failed: {exc}')
+            self._emit_home_finished(False, str(exc))
+            return
+        if resp.success:
+            self._emit_status('homing completed')
+        else:
+            self._emit_status(f'homing failed: {resp.message}')
+        self._emit_home_finished(bool(resp.success), resp.message or '')
 
     # -- ROS plumbing ---------------------------------------------
 
