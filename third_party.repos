@@ -7,3 +7,7 @@ repositories:
     type: git
     url: git@github.com:LevinTamir/onnxruntime_vendor.git
     version: main
+  src/volcaniarm_lerobot:
+    type: git
+    url: git@github.com:LevinTamir/volcaniarm_lerobot.git
+    version: main
