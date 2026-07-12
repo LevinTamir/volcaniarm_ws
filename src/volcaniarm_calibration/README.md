@@ -16,12 +16,18 @@ calibrated, so the sim calibration flow was removed.
 
 ## Tests (left sidebar)
 
-| Step                 | What it does                                              |
-|----------------------|-----------------------------------------------------------|
-| Camera Localization  | Measure the camera pose relative to the arm base.         |
-| `static_accuracy`    | Single goal × N iterations, returns to initial each time. |
-| `repeatability`      | Same goal, gated on a tag-confirmed home between visits.  |
-| `workspace_coverage` | Sweeps a list of goals once each across the envelope.     |
+| Step                 | What it does                                              | Protocol default        |
+|----------------------|-----------------------------------------------------------|-------------------------|
+| Camera Localization  | Measure the camera pose relative to the arm base.         | before every session    |
+| `static_accuracy`    | Single goal × N iterations, returns to initial each time. | 30 cycles, 3+ runs      |
+| `repeatability`      | Same goal, gated on a tag-confirmed home between visits.  | 30 cycles, 3+ runs      |
+| `workspace_coverage` | Sweeps a goal grid N times across the envelope.           | 9 goals × 3 sweeps, 3+ runs |
+
+The full operating procedure (cycle/run counts and why, the AprilTag
+mount calibration workflow, aggregation rules) is in
+[CALIBRATION.md](CALIBRATION.md). Analysis lives in `notebooks/`
+(one per test, plus `mount_calibration.ipynb`); each notebook
+aggregates every comparable completed run automatically.
 
 ## Run it
 
