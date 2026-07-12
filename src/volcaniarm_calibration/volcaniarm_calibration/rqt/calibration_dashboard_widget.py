@@ -552,6 +552,21 @@ class CalibrationDashboardWidget(QWidget):
         fresh_window.setDecimals(2)
         fresh_window.setValue(0.5)
         cap_form.addRow('detection fresh window (s)', fresh_window)
+        # How long the capture waits after settle for a detection newer
+        # than the pre-settle one. Capped at 5 s on purpose: enough to
+        # ride out an occasional detector gap, short enough that a
+        # marginal detection setup still fails visibly instead of the
+        # run silently crawling.
+        det_timeout = QDoubleSpinBox()
+        det_timeout.setRange(0.5, 5.0)
+        det_timeout.setSingleStep(0.5)
+        det_timeout.setDecimals(1)
+        det_timeout.setValue(2.0)
+        det_timeout.setToolTip(
+            'Abort budget for a fresh detection after the arm settles. '
+            'Raise slightly for a gappy detector; if you need more than '
+            'a few seconds, fix lighting / exposure / tag angle instead.')
+        cap_form.addRow('detection timeout (s)', det_timeout)
         # Auto-continue: when checked, the runner auto-advances at each
         # Continue gate once detection has been continuously fresh for
         # `fresh-hold` seconds. Cancel still aborts immediately.
@@ -566,6 +581,7 @@ class CalibrationDashboardWidget(QWidget):
         cap_form.addRow('auto-continue fresh-hold (s)', auto_hold)
         fields['settle_time'] = settle_time
         fields['fresh_window'] = fresh_window
+        fields['det_timeout'] = det_timeout
         fields['auto_continue'] = auto_continue
         fields['auto_hold'] = auto_hold
         v.addWidget(cap_box)
@@ -1061,6 +1077,7 @@ class CalibrationDashboardWidget(QWidget):
             initial_pose=(fields['initial_y'].value(), fields['initial_z'].value()),
             goals=tuple(goals),
             detection_max_age_s=fields['fresh_window'].value(),
+            detection_timeout_s=fields['det_timeout'].value(),
             **home_kwargs,
         )
         if self._runner.request_run(request):

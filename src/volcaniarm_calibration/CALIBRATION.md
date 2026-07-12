@@ -82,10 +82,12 @@ Each test page contains, top to bottom:
   while anything is red.
 - **Capture settings**: settle time (wait after each motion before
   measuring, default 2 s), detection fresh window (maximum accepted
-  age of a detection, default 0.5 s), auto-continue and its
-  fresh-hold time (advance automatically once detection has stayed
-  fresh that long; uncheck to require a manual Continue click at
-  every goal).
+  age of a detection, default 0.5 s), detection timeout (abort budget
+  for a fresh detection after settle, default 2 s, capped at 5 s so a
+  long timeout cannot mask a marginal detection setup), auto-continue
+  and its fresh-hold time (advance automatically once detection has
+  stayed fresh that long; uncheck to require a manual Continue click
+  at every goal).
 - **Run controls**: Start Run / Continue / Reset / Cancel, the
   detection label (green "fresh" or red "not visible"), and the
   progress bar (one tick per capture).
@@ -323,9 +325,12 @@ analysis.
   node is up (`ros2 topic hz /tf` from the detector). Raise the
   detection fresh window if detections arrive but age out.
 - **Run fails with "detection lost during sampling"**: the EE tag was
-  not seen within the timeout after the arm settled at a goal,
-  usually an occlusion or an edge-on viewing angle at that pose.
-  Adjust the goal or the camera height and re-run.
+  not seen within the detection timeout after the arm settled at a
+  goal, usually an occlusion, an edge-on viewing angle, or a gappy
+  detector (check its rate with `ros2 topic hz`). Raise the detection
+  timeout spinbox a little for an occasional gap; if it takes more
+  than a few seconds, fix lighting / exposure / tag angle instead of
+  hiding it behind a longer timeout.
 - **Home-confirm keeps timing out** (repeatability): the tolerance is
   below the current mount bias. Raise the "Y-Z segment tol" spinbox
   above the mean `d_error` a static accuracy run reports, or remove

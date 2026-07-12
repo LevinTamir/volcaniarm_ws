@@ -71,10 +71,14 @@ class RunRequest:
     # consistently-oriented frame for the Y-Z projection to be the
     # same axes for detection and URDF.
     world_frame: str = 'world'
-    # Wait budget for a single TF lookup. 1 s comfortably covers normal
-    # apriltag latency at 30 Hz; a tag that is undetectable (e.g.
-    # edge-on at the current pose) fails fast instead of stalling.
-    detection_timeout_s: float = 1.0
+    # Wait budget for a fresh detection after settle (and for a single
+    # TF lookup). 2 s rides out an occasional detector gap at normal
+    # apriltag rates while still failing fast on a tag that is
+    # genuinely undetectable (e.g. edge-on at the current pose).
+    # Exposed as the "detection timeout" spinbox in the dashboard;
+    # deliberately capped low there so a long timeout can't mask a
+    # marginal detection setup.
+    detection_timeout_s: float = 2.0
     # Maximum age of the TF stamp accepted as a fresh detection. Guards
     # against the TF buffer returning a stale transform from when the
     # tag was last seen seconds ago.
