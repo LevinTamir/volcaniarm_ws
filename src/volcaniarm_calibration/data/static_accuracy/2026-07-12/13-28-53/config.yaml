@@ -1,0 +1,52 @@
+test_name: static_accuracy
+num_cycles: 30
+settle_time: 2.0
+verify_home_with_tag: false
+initial_pose:
+- 0.0
+- 0.749
+goals:
+- - 0.19999999999999996
+  - 0.5999999999999998
+joint_names:
+- volcaniarm_right_elbow_joint
+- volcaniarm_left_elbow_joint
+trajectory_duration: 2.0
+base_tag_frame: apriltag_marker_base
+ee_tag_frame: apriltag_marker_ee
+base_urdf_frame: apriltag_base_link
+ee_urdf_frame: apriltag_ee_link
+world_frame: world
+detection_timeout_s: 2.0
+detection_max_age_s: 0.5
+home_tol_m: 0.02
+home_hold_frames: 5
+home_timeout_s: 10.0
+urdf_mounts:
+  base_xyz:
+  - 0.65
+  - 0.0
+  - -0.03
+  base_quat:
+  - 0.0
+  - 0.7071067811865475
+  - 0.0
+  - 0.7071067811865476
+  ee_xyz:
+  - 0.039999999999999994
+  - 0.0
+  - 0.0
+  ee_quat:
+  - -0.31518461400453207
+  - 0.6329760335864338
+  - -0.315184614004532
+  - 0.6329760335864338
+  base_link_world_quat:
+  - 1.3267948966775328e-06
+  - 0.9999999999991198
+  - 1.6155445744311648e-15
+  - 2.1434962967122328e-21
+run_id: static_accuracy/2026-07-12/13-28-53
+timestamp: '20260712_132853'
+git_sha: 6bda1d96e28d6bd74ec10c84b5d619a674aeecb0
+status: completed
