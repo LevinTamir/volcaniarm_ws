@@ -264,6 +264,45 @@ def group_runs(runs: list,
     return buckets
 
 
+def select_comparable_runs(runs: list,
+                           allow_mount_keys: Optional[list] = None,
+                           match_goals: bool = True,
+                           verbose: bool = True) -> list:
+    """Pick the largest bucket of mutually comparable runs.
+
+    Buckets by (goals, mount version) via ``group_runs``; mount keys
+    listed in ``allow_mount_keys`` are treated as equivalent (used to
+    merge legacy git-sha keys the operator knows share the same mount
+    values). Returns the largest bucket and, when ``verbose``, prints
+    every excluded run with the reason, so a notebook's aggregation is
+    auditable.
+    """
+    if not runs:
+        return []
+    buckets = group_runs(runs, match_goals=match_goals)
+    if allow_mount_keys:
+        merged: dict = {}
+        for (gk, mk), rs in buckets.items():
+            key = (gk, 'allowed') if mk in allow_mount_keys else (gk, mk)
+            merged.setdefault(key, []).extend(rs)
+        buckets = merged
+    # Largest bucket wins; ties go to the bucket containing the most
+    # recent run (run_id embeds date/time, so max() sorts correctly).
+    chosen = max(buckets.values(),
+                 key=lambda rs: (len(rs),
+                                 max(str(r['config'].get('run_id', ''))
+                                     for r in rs)))
+    if verbose:
+        chosen_ids = {id(r) for r in chosen}
+        for run in runs:
+            if id(run) not in chosen_ids:
+                cfg = run['config']
+                print(f"excluded {cfg.get('run_id')}: "
+                      f"goals={cfg.get('goals')}, "
+                      f"mount={mount_key(cfg)}")
+    return chosen
+
+
 def tag_in_base_frame(tag: pd.DataFrame) -> pd.DataFrame:
     """Transform tag observations from `apriltag_marker_base` frame
     into `volcaniarm_base_link` frame using the URDF static apriltag
