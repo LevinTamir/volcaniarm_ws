@@ -264,6 +264,23 @@ def group_runs(runs: list,
     return buckets
 
 
+def filter_runs_by_goals(runs: list, goals, tol_m: float = 0.001) -> list:
+    """Keep only runs whose commanded goal set matches ``goals``.
+
+    Matching is on mm-rounded commanded coordinates (``goal_key``).
+    Use it to pin an analysis to one target when runs at several
+    targets live on disk, e.g. ``filter_runs_by_goals(runs, [(0.2, 0.7)])``.
+    """
+    want = frozenset(goal_key(float(y), float(z), tol_m) for y, z in goals)
+    out = []
+    for run in runs:
+        have = frozenset(goal_key(float(g[0]), float(g[1]), tol_m)
+                         for g in (run['config'].get('goals') or []))
+        if have == want:
+            out.append(run)
+    return out
+
+
 def select_comparable_runs(runs: list,
                            allow_mount_keys: Optional[list] = None,
                            match_goals: bool = True,

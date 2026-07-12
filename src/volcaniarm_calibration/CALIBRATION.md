@@ -230,6 +230,15 @@ How to run one:
    after changing package code, restart the kernel before re-running.
 3. Parameters at the top of each notebook when the default grouping
    is not what you want:
+   - `SCOPE` (static accuracy and repeatability): `'latest'` analyses
+     the single most recent run stand-alone (how good was this
+     session at its pose); `'target'` aggregates all comparable runs
+     at one target (the thesis headline mode); `'all'` pools every
+     completed run across all targets for a workspace-wide view, with
+     a per-target breakdown table so poses are never silently mixed.
+   - `TARGET`: which target `'target'` scope analyses, e.g.
+     `(0.2, 0.7)`; `None` picks the target with the most runs. The
+     setup cell prints every target found on disk with its run count.
    - `RUN_DIRS`: pin the exact list of run directories (use this for
      the final thesis figures so they are reproducible).
    - `ALLOW_MOUNT_KEYS`: merge runs recorded under different git SHAs
@@ -237,6 +246,11 @@ How to run one:
      printed in the per-run table).
    - `MIN_RUNS`: the protocol target; the notebook warns when the
      aggregate is below it.
+
+   Runs at different targets are never averaged into one statistic:
+   `'target'` scope filters to a single target, and `'all'` scope
+   always reports the per-target breakdown alongside the pooled
+   distribution.
 
 What "validated" looks like:
 
