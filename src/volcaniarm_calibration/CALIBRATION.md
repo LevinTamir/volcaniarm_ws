@@ -33,12 +33,14 @@ Two terminals:
 ```bash
 # Terminal 1: robot + camera + AprilTag detector + RViz + TF
 ros2 launch volcaniarm_bringup real_bringup.launch.py mode:=tests calibration:=true
+```
 
+```bash
 # Terminal 2: the calibration GUI
 ros2 launch volcaniarm_calibration calibration_gui.launch.py
 ```
 
-Calibration is real-hardware only; there is no sim path.
+NOTE: calibration is done on real-hardware only.
 
 ## 3. GUI tour
 
