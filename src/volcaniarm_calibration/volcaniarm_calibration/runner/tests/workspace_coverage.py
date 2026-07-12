@@ -1,14 +1,17 @@
-"""Workspace coverage test: walk a list of poses (typically the
-operating envelope) once each, without returning to the initial pose
-between visits.
+"""Workspace coverage test: sweep a list of poses (typically the
+operating envelope) without returning to the initial pose between
+visits.
 
 The arm parks at the user-chosen initial pose, captures a baseline,
 then sweeps each goal in order: move -> settle -> operator-gated
-Continue -> capture -> next goal. The run ends at the last goal.
+Continue -> capture -> next goal. Each cycle is one full sweep of the
+goal list; running several cycles gives a small cluster per grid point
+so the notebooks can map both accuracy and repeatability over the
+Y-Z plane. Multi-goal runs also feed the apriltag mount solver, which
+needs observations at several tip orientations.
 
-Use ``static_accuracy`` or ``repeatability`` when you want multiple
-samples at a single pose with returns to a known starting state. This
-test is for spatial coverage, not statistical repetition.
+Use ``static_accuracy`` or ``repeatability`` when you want a deep
+sample at a single pose with returns to a known starting state.
 """
 
 from .base import BaseTest, Target
@@ -18,11 +21,9 @@ class WorkspaceCoverageTest(BaseTest):
     name = 'workspace_coverage'
 
     def __init__(self, *args, **kwargs):
-        # Force the two semantics that distinguish this test from
-        # accuracy / repeatability, regardless of what the dashboard
-        # or headless node passes. Putting them here keeps the runner
-        # generic and avoids per-test branching in _execute.
-        kwargs['num_cycles'] = 1
+        # No doubling back within a sweep; this is what distinguishes
+        # the test from accuracy / repeatability regardless of what the
+        # dashboard passes. Keeping it here keeps the runner generic.
         kwargs['return_to_initial_between_visits'] = False
         super().__init__(*args, **kwargs)
 

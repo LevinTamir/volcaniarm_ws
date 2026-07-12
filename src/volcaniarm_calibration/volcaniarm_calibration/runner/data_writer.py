@@ -42,6 +42,10 @@ TAG_OBS_FIELDS = [
     # d_error    = d_detected - d_urdf  (signed accuracy residual)
     # NaN when the URDF chain wasn't reachable at capture time.
     'd_detected', 'd_urdf', 'd_error',
+    # world -> right_arm_tip_link rotation at capture. Feeds the
+    # apriltag mount solver (analysis/mounts.py); NaN when the lookup
+    # failed. Appended last so older CSVs stay column-compatible.
+    'tip_qx', 'tip_qy', 'tip_qz', 'tip_qw',
 ]
 
 FK_FIELDS = [

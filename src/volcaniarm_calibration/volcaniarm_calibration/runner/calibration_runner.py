@@ -319,6 +319,14 @@ class CalibrationRunner:
             'home_hold_frames': request.home_hold_frames,
             'home_timeout_s': request.home_timeout_s,
         }
+        # Record which URDF apriltag mount values this run was taken
+        # with. The analysis groups runs by these so runs recorded
+        # before/after a mount recalibration are never averaged
+        # together, and the loader no longer needs hand-mirrored xacro
+        # constants for new runs. Best effort: None if TF is not up yet.
+        mounts = self._lookup_urdf_mounts(request)
+        if mounts is not None:
+            config['urdf_mounts'] = mounts
 
         with RunWriter(request.output_root, request.test.name, config) as writer:
             self._writer = writer
@@ -573,6 +581,25 @@ class CalibrationRunner:
             self._emit_status(f'homing failed: {resp.message}')
         self._emit_home_finished(bool(resp.success), resp.message or '')
 
+    def check_reachable(self, y: float, z: float) -> Tuple[bool, str]:
+        """Cheap reachability probe for the dashboard's goal guard.
+
+        Runs the same in-process IK the run loop resolves goals with;
+        no motion, no ROS round-trip, safe to call from the Qt thread
+        on every spinbox change. Returns (ok, reason).
+        """
+        ik = self._call_ik(y, z)
+        if ik is None:
+            return False, f'unreachable: no IK solution for ({y:.3f}, {z:.3f})'
+        # URDF elbow limits are +/-3.14 rad; IK closure is the real
+        # constraint, but bound-check anyway so a wrapped branch can
+        # never slip through to the controller.
+        theta_r, theta_l = ik
+        if abs(theta_r) > 3.14 or abs(theta_l) > 3.14:
+            return False, (f'IK solution outside joint limits '
+                           f'(right={theta_r:.2f}, left={theta_l:.2f} rad)')
+        return True, ''
+
     # -- ROS plumbing ---------------------------------------------
 
     def _wait_for_clients(self, timeout_s: float = 5.0) -> bool:
@@ -707,6 +734,36 @@ class CalibrationRunner:
         except Exception as exc:
             return None, f'lookup failed: {exc}'
         return tf, ''
+
+    def _lookup_urdf_mounts(self, request: RunRequest) -> Optional[dict]:
+        """Snapshot the static URDF apriltag mount transforms for
+        config.yaml. All three are static (robot_state_publisher), so a
+        short timeout suffices; returns None when any lookup fails so a
+        half-recorded marker never masquerades as a full one."""
+        def _tf(parent, child):
+            tf = self._tf_buffer.lookup_transform(
+                parent, child, RclpyTime(),
+                timeout=RclpyDuration(seconds=2.0))
+            t = tf.transform.translation
+            r = tf.transform.rotation
+            return ([float(t.x), float(t.y), float(t.z)],
+                    [float(r.x), float(r.y), float(r.z), float(r.w)])
+        try:
+            base_xyz, base_quat = _tf(
+                'volcaniarm_base_link', request.base_urdf_frame)
+            ee_xyz, ee_quat = _tf(
+                'right_arm_tip_link', request.ee_urdf_frame)
+            _, world_quat = _tf(
+                request.world_frame, 'volcaniarm_base_link')
+        except Exception as exc:  # noqa: BLE001
+            self.node.get_logger().warn(
+                f'urdf mount snapshot unavailable: {exc}')
+            return None
+        return {
+            'base_xyz': base_xyz, 'base_quat': base_quat,
+            'ee_xyz': ee_xyz, 'ee_quat': ee_quat,
+            'base_link_world_quat': world_quat,
+        }
 
     def _lookup_origin_in_world(self, request: RunRequest,
                                 child_frame: str, wait_s: float):
@@ -974,6 +1031,15 @@ class CalibrationRunner:
             d_error = d_detected - d_urdf
         det_base_y, det_base_z, det_ee_y, det_ee_z = det_origins
         urdf_base_y, urdf_base_z, urdf_ee_y, urdf_ee_z = urdf_origins
+        # Tip orientation at capture: the mount solver needs the
+        # world->right_arm_tip_link rotation per observation. Best
+        # effort; NaN keeps the row usable for everything else.
+        tip_q = (float('nan'),) * 4
+        tip_tf, _ = self._lookup_origin_in_world(
+            request, 'right_arm_tip_link', 0.1)
+        if tip_tf is not None:
+            tq = tip_tf.transform.rotation
+            tip_q = (tq.x, tq.y, tq.z, tq.w)
         t = det.transform.translation
         r = det.transform.rotation
         stamp = RclpyTime.from_msg(det.header.stamp)
@@ -994,6 +1060,8 @@ class CalibrationRunner:
             'd_detected': d_detected,
             'd_urdf': d_urdf_val,
             'd_error': d_error,
+            'tip_qx': tip_q[0], 'tip_qy': tip_q[1],
+            'tip_qz': tip_q[2], 'tip_qw': tip_q[3],
         })
         if math.isnan(d_error):
             self._emit_status(
