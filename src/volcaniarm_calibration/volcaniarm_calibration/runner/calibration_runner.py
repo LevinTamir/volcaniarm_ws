@@ -1031,9 +1031,9 @@ class CalibrationRunner:
             d_error = d_detected - d_urdf
         det_base_y, det_base_z, det_ee_y, det_ee_z = det_origins
         urdf_base_y, urdf_base_z, urdf_ee_y, urdf_ee_z = urdf_origins
-        # Tip orientation at capture: the mount solver needs the
-        # world->right_arm_tip_link rotation per observation. Best
-        # effort; NaN keeps the row usable for everything else.
+        # Tip orientation at capture (world->right_arm_tip_link),
+        # recorded as per-row provenance for diagnostics. Best effort;
+        # NaN keeps the row usable for everything else.
         tip_q = (float('nan'),) * 4
         tip_tf, _ = self._lookup_origin_in_world(
             request, 'right_arm_tip_link', 0.1)

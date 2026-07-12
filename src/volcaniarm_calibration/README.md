@@ -23,11 +23,11 @@ calibrated, so the sim calibration flow was removed.
 | `repeatability`      | Same goal, gated on a tag-confirmed home between visits.  | 30 cycles, 3+ runs      |
 | `workspace_coverage` | Sweeps a goal grid N times across the envelope.           | 9 goals × 3 sweeps, 3+ runs |
 
-The full operating procedure (cycle/run counts and why, the AprilTag
-mount calibration workflow, aggregation rules) is in
+The full operating procedure (cycle/run counts and why, the tag
+mount bias, aggregation rules) is in
 [CALIBRATION.md](CALIBRATION.md). Analysis lives in `notebooks/`
-(one per test, plus `mount_calibration.ipynb`); each notebook
-aggregates every comparable completed run automatically.
+(one per test); each notebook aggregates every comparable completed
+run automatically.
 
 ## Run it
 

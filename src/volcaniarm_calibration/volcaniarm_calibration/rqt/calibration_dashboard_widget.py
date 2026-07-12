@@ -87,8 +87,7 @@ _PROTOCOL_NOTES = {
         'calibrated.'),
     'workspace_coverage': (
         'Protocol: 3 cycles (full sweeps) per run, 3 or more runs. '
-        'Feeds the Y-Z accuracy/repeatability maps and the apriltag '
-        'mount solver.'),
+        'Feeds the Y-Z accuracy and repeatability maps.'),
 }
 
 

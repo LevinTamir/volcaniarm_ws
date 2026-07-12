@@ -18,12 +18,6 @@ from .metrics import (
     WEEDING_ACCEPTABLE_MM,
     WEEDING_MARGINAL_MM,
 )
-from .mounts import (
-    MountSolution,
-    solve_mounts,
-    suggest_xacro,
-    tip_angle_from_thetas,
-)
 
 __all__ = [
     'load_run', 'load_runs', 'latest_run', 'list_runs', 'align_fk_to_tag',
@@ -35,6 +29,4 @@ __all__ = [
     'repeatability_iso9283', 'summary',
     'threshold_color', 'threshold_zone',
     'WEEDING_ACCEPTABLE_MM', 'WEEDING_MARGINAL_MM',
-    'MountSolution', 'solve_mounts', 'suggest_xacro',
-    'tip_angle_from_thetas',
 ]

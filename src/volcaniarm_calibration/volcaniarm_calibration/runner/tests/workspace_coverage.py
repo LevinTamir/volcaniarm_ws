@@ -7,8 +7,7 @@ then sweeps each goal in order: move -> settle -> operator-gated
 Continue -> capture -> next goal. Each cycle is one full sweep of the
 goal list; running several cycles gives a small cluster per grid point
 so the notebooks can map both accuracy and repeatability over the
-Y-Z plane. Multi-goal runs also feed the apriltag mount solver, which
-needs observations at several tip orientations.
+Y-Z plane.
 
 Use ``static_accuracy`` or ``repeatability`` when you want a deep
 sample at a single pose with returns to a known starting state.

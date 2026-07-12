@@ -3,8 +3,8 @@
 This document is the operating procedure for producing thesis-grade
 accuracy and repeatability numbers with the `volcaniarm_calibration`
 package. It covers the common setup, the per-test protocol (cycle
-counts, run counts, and their justification), the AprilTag mount
-calibration workflow, and the aggregation rules the notebooks follow.
+counts, run counts, and their justification), the tag mount bias,
+and the aggregation rules the notebooks follow.
 
 Measurement principle: an external camera observes two AprilTags, one
 on `volcaniarm_base_link` and one on `right_arm_tip_link`. The
@@ -59,10 +59,11 @@ three.
   is 4.30 (wide), at 5 runs 2.78. More runs tighten the headline
   faster than more cycles.
 - Notebook: `notebooks/static_accuracy.ipynb`.
-- Until the tag mounts are calibrated, the mean residual is the
-  fiducial mount bias and must be reported as a modelling artefact,
-  with the standard deviation quoted as the positioning precision.
-  After mount calibration the mean residual is the absolute accuracy.
+- While the URDF tag mount values remain placeholders (see "Mount
+  bias" below), the mean residual is a fiducial modelling artefact
+  and is reported as such, with the standard deviation quoted as the
+  positioning precision. Once the mount values are measured and fixed
+  in the xacro, the mean residual is the absolute accuracy.
 
 ### Repeatability
 
@@ -72,7 +73,7 @@ three.
   t-based CI; the pooled cross-session RP is reported alongside,
   clearly labelled (it additionally contains re-homing and camera
   relock effects).
-- Home-confirm gate: enable it once the mounts are calibrated and
+- Home-confirm gate: enable it once the mount bias is removed and
   drop the tolerance from the 80 mm default toward 10 mm. While the
   mounts carry the placeholder bias, the gate can only pass with the
   tolerance above that bias (whatever mean `d_error` static accuracy
@@ -98,38 +99,33 @@ three.
 
 - Produces the Y-Z accuracy map, the repeatability map, and the
   commanded-vs-attained error-vector plot, all aggregated per grid
-  point across runs. Also the input data for the mount solver.
+  point across runs.
 - This deviates deliberately from ISO 9283's five poses on a cube
   diagonal: the arm is planar, so a plane-filling grid is the
   meaningful envelope. State the deviation in the thesis.
 - Notebook: `notebooks/workspace_coverage.ipynb`.
 
-## AprilTag mount calibration
+## Mount bias
 
-The URDF mount translations in
-`volcaniarm_description/urdf/volcaniarm_apriltag.xacro` are
-placeholders; they add a constant offset to every accuracy figure.
-Calibrate them once (and after any physical bracket change):
+The URDF tag mount translations in
+`volcaniarm_description/urdf/volcaniarm_apriltag.xacro` carry
+placeholder values (the base bracket offset is an explicit TODO in
+the file); until they match the physical brackets, every accuracy
+figure contains a constant fiducial offset that has nothing to do
+with the arm. To remove it:
 
-1. Camera localization (bias in it is fine; the solver uses the
-   base-relative vector, in which a camera translation error cancels
-   exactly).
-2. One workspace-coverage run with the default grid (2 to 3 runs
-   preferred).
-3. Open `notebooks/mount_calibration.ipynb`. It solves the EE and
-   base mount corrections by linear least squares, reports the
-   condition number (pose diversity) and the residual RMS before and
-   after, cross-checks against a camera-rotation nuisance solve, and
-   prints ready-to-paste xacro origin lines. Single-goal data is
-   degenerate and the notebook refuses to print values for it.
-4. Edit the xacro, rebuild
-   (`colcon build --symlink-install --packages-select volcaniarm_description`),
-   relaunch.
-5. **Re-run camera localization.** The previous solution absorbed the
-   old EE mount error and is stale after the edit.
-6. Verify with one 30-cycle static accuracy run. Acceptance:
-   `|mean d_error| < 2 mm`. Iterate once if a few millimetres remain.
-7. Update the mirrored mount constants at the top of
+1. Measure the physical tag-center offsets relative to their parent
+   links (base tag on `volcaniarm_base_link`, EE tag on
+   `right_arm_tip_link`) and update the mount `xyz` values in the
+   xacro. Whatever mean `d_error` a static accuracy run reports is
+   the current size of the bias.
+2. Rebuild
+   (`colcon build --symlink-install --packages-select volcaniarm_description`)
+   and relaunch, then **re-run camera localization** (the previous
+   solution absorbed the old mount values and is stale).
+3. Verify with one 30-cycle static accuracy run; the mean residual
+   should drop to the few-millimetre level.
+4. Update the mirrored mount constants at the top of
    `volcaniarm_calibration/analysis/loader.py` (marked as a manual
    sync) so legacy tooling matches the URDF.
 
