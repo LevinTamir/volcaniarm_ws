@@ -1406,6 +1406,13 @@ class CalibrationDashboardWidget(QWidget):
         self._cam_runner.shutdown()
         self._runner.shutdown()
 
+    # Widget keys excluded from persistence. 'iterations' always opens
+    # at the per-test protocol default (30 / 30 / 3) on a fresh GUI so
+    # the recommended count is never silently overridden by whatever a
+    # previous session happened to use; the operator can still change
+    # it for the session.
+    _UNPERSISTED_KEYS = ('iterations',)
+
     def save_settings(self, plugin_settings):
         # Note: the active sidebar page is intentionally NOT persisted; the
         # GUI always opens on the Start tab (see restore_settings).
@@ -1413,6 +1420,8 @@ class CalibrationDashboardWidget(QWidget):
         # run-control buttons / labels / progress bar (transient state).
         for test_name, fields in self._pages_fields.items():
             for key, widget in fields.items():
+                if key in self._UNPERSISTED_KEYS:
+                    continue
                 if isinstance(widget, QCheckBox):
                     plugin_settings.set_value(
                         f'{test_name}/{key}', widget.isChecked())
@@ -1426,6 +1435,8 @@ class CalibrationDashboardWidget(QWidget):
     def restore_settings(self, plugin_settings):
         for test_name, fields in self._pages_fields.items():
             for key, widget in fields.items():
+                if key in self._UNPERSISTED_KEYS:
+                    continue
                 v = plugin_settings.value(f'{test_name}/{key}')
                 if v is None:
                     continue
