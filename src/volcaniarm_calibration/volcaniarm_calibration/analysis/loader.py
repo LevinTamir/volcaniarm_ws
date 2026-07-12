@@ -281,6 +281,12 @@ def filter_runs_by_goals(runs: list, goals, tol_m: float = 0.001) -> list:
     return out
 
 
+def filter_runs_by_cycles(runs: list, num_cycles: int) -> list:
+    """Keep only runs recorded with the given iteration count."""
+    return [r for r in runs
+            if int(r['config'].get('num_cycles') or 0) == int(num_cycles)]
+
+
 def select_comparable_runs(runs: list,
                            allow_mount_keys: Optional[list] = None,
                            match_goals: bool = True,
