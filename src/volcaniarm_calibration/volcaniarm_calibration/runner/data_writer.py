@@ -55,6 +55,40 @@ FK_FIELDS = [
 ]
 
 
+def load_resume_state(run_dir: Path, num_goals: int,
+                      num_cycles: int) -> dict:
+    """Inspect a run directory and report where a resume would pick up.
+
+    Returns ``{'next_cycle': int, 'done_visits': int, 'resumable': bool}``.
+    ``next_cycle`` is the first cycle without a full set of target
+    captures (one per goal); a run whose every cycle is complete is not
+    resumable. A cycle that was interrupted partway through a multi-goal
+    sweep is repeated in full on resume, so those goals gain an extra
+    sample; harmless for the aggregated metrics, noted in the docs.
+    """
+    per_cycle: dict = {}
+    csv_path = Path(run_dir) / 'tag_observations.csv'
+    if csv_path.exists():
+        with csv_path.open(newline='') as f:
+            for row in csv.DictReader(f):
+                if row.get('phase') != 'target':
+                    continue
+                try:
+                    c = int(float(row['cycle']))
+                except (TypeError, ValueError):
+                    continue
+                per_cycle[c] = per_cycle.get(c, 0) + 1
+    next_cycle = num_cycles + 1
+    for c in range(1, num_cycles + 1):
+        if per_cycle.get(c, 0) < num_goals:
+            next_cycle = c
+            break
+    done_visits = (next_cycle - 1) * num_goals
+    return {'next_cycle': next_cycle,
+            'done_visits': done_visits,
+            'resumable': next_cycle <= num_cycles}
+
+
 class RunWriter:
     """Owns the per-run output directory and CSV writers.
 
@@ -64,20 +98,32 @@ class RunWriter:
             rw.add_tag_observation(...)
             rw.add_fk(...)
             rw.finalize(status='completed')
+
+    Pass ``resume_dir`` to reopen an existing (failed) run instead of
+    creating a new directory: CSV rows are appended, the original
+    config.yaml (run_id, goals, mounts, git sha) is preserved, the
+    status flips back to in_progress and a resume note is recorded.
     """
 
-    def __init__(self, base_dir: Path, test_name: str, config: dict):
+    def __init__(self, base_dir: Path, test_name: str, config: dict,
+                 resume_dir: Optional[Path] = None):
         self.test_name = test_name
         self.config = dict(config)
+        self.resume_dir = Path(resume_dir) if resume_dir else None
         now = datetime.now()
         self.day = now.strftime('%Y-%m-%d')
         self.clock = now.strftime('%H-%M-%S')
         # Kept for back-compat with anything reading config.yaml's
         # `timestamp` field. Schema-stable across the layout change.
         self.timestamp = now.strftime('%Y%m%d_%H%M%S')
-        self.run_id = f'{test_name}/{self.day}/{self.clock}'
-        self.run_dir = (Path(base_dir).expanduser()
-                        / test_name / self.day / self.clock)
+        if self.resume_dir is not None:
+            self.run_dir = self.resume_dir
+            parts = self.run_dir.parts
+            self.run_id = '/'.join(parts[-3:])
+        else:
+            self.run_id = f'{test_name}/{self.day}/{self.clock}'
+            self.run_dir = (Path(base_dir).expanduser()
+                            / test_name / self.day / self.clock)
         self.status: str = 'in_progress'
         self.failure_reason: Optional[str] = None
         self._tag_file = None
@@ -86,14 +132,21 @@ class RunWriter:
         self._fk_writer = None
 
     def __enter__(self):
+        resuming = self.resume_dir is not None
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        self._tag_file = (self.run_dir / 'tag_observations.csv').open('w', newline='')
-        self._tag_writer = csv.DictWriter(self._tag_file, fieldnames=TAG_OBS_FIELDS)
-        self._tag_writer.writeheader()
-        self._fk_file = (self.run_dir / 'fk_poses.csv').open('w', newline='')
+        mode = 'a' if resuming else 'w'
+        self._tag_file = (self.run_dir / 'tag_observations.csv').open(
+            mode, newline='')
+        self._tag_writer = csv.DictWriter(self._tag_file,
+                                          fieldnames=TAG_OBS_FIELDS)
+        self._fk_file = (self.run_dir / 'fk_poses.csv').open(mode, newline='')
         self._fk_writer = csv.DictWriter(self._fk_file, fieldnames=FK_FIELDS)
-        self._fk_writer.writeheader()
-        self._write_config()
+        if resuming:
+            self._reopen_config()
+        else:
+            self._tag_writer.writeheader()
+            self._fk_writer.writeheader()
+            self._write_config()
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -140,6 +193,19 @@ class RunWriter:
         with (self.run_dir / 'config.yaml').open('w') as f:
             yaml.safe_dump(cfg, f, sort_keys=False)
 
+    def _reopen_config(self):
+        """Resume mode: keep the original config (run_id, goals, git
+        sha, mount snapshot), flip the status back to in_progress and
+        record when the resume happened."""
+        path = self.run_dir / 'config.yaml'
+        with path.open() as f:
+            cfg = yaml.safe_load(f) or {}
+        self.config = cfg
+        cfg['status'] = self.status
+        cfg.setdefault('resumes', []).append(self.timestamp)
+        with path.open('w') as f:
+            yaml.safe_dump(cfg, f, sort_keys=False)
+
     def _update_config_status(self):
         path = self.run_dir / 'config.yaml'
         if not path.exists():
@@ -149,5 +215,9 @@ class RunWriter:
         cfg['status'] = self.status
         if self.failure_reason is not None:
             cfg['failure_reason'] = self.failure_reason
+        else:
+            # A stale reason from a failed attempt that was later
+            # resumed to completion must not survive in the config.
+            cfg.pop('failure_reason', None)
         with path.open('w') as f:
             yaml.safe_dump(cfg, f, sort_keys=False)

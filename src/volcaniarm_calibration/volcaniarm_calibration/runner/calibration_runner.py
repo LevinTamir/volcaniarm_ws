@@ -72,13 +72,20 @@ class RunRequest:
     # same axes for detection and URDF.
     world_frame: str = 'world'
     # Wait budget for a fresh detection after settle (and for a single
-    # TF lookup). 2 s rides out an occasional detector gap at normal
-    # apriltag rates while still failing fast on a tag that is
+    # TF lookup). 5 s rides out real-world detector gaps (2 s proved
+    # too tight on hardware) while still failing on a tag that is
     # genuinely undetectable (e.g. edge-on at the current pose).
     # Exposed as the "detection timeout" spinbox in the dashboard;
-    # deliberately capped low there so a long timeout can't mask a
-    # marginal detection setup.
-    detection_timeout_s: float = 2.0
+    # capped there so a very long timeout can't mask a marginal
+    # detection setup.
+    detection_timeout_s: float = 5.0
+    # Resume support: when resume_dir points at an existing (failed)
+    # run directory, its CSVs are appended to instead of a new run dir
+    # being created, and the cycle loop starts at start_cycle so the
+    # already-captured cycles are kept. The dashboard's Resume button
+    # fills both from the failed run's config + data.
+    resume_dir: Optional[Path] = None
+    start_cycle: int = 1
     # Maximum age of the TF stamp accepted as a fresh detection. Guards
     # against the TF buffer returning a stale transform from when the
     # tag was last seen seconds ago.
@@ -332,7 +339,8 @@ class CalibrationRunner:
         if mounts is not None:
             config['urdf_mounts'] = mounts
 
-        with RunWriter(request.output_root, request.test.name, config) as writer:
+        with RunWriter(request.output_root, request.test.name, config,
+                       resume_dir=request.resume_dir) as writer:
             self._writer = writer
             try:
                 ok = self._execute(request, writer)
@@ -413,20 +421,31 @@ class CalibrationRunner:
         if request.test.verify_home_with_tag:
             if not self._wait_for_home_confirmed(request, label='initial'):
                 return False
-        self._capture_observations(
-            request, writer,
-            phase='home', cycle=0, target_idx=None,
-            theta_right=initial_theta_r, theta_left=initial_theta_l)
+        # The home baseline row exists from the original attempt when
+        # resuming; capture it only on a fresh run.
+        if request.start_cycle <= 1:
+            self._capture_observations(
+                request, writer,
+                phase='home', cycle=0, target_idx=None,
+                theta_right=initial_theta_r, theta_left=initial_theta_l)
 
         # Round-robin: each iteration sweeps across every goal in
         # order. Total visits = num_cycles * len(goals). Single-goal
         # tests (accuracy / repeatability) use len(goals) == 1 so the
         # loop is a straight N-iteration capture; the workspace test
-        # uses K > 1 to walk the envelope each cycle.
+        # uses K > 1 to walk the envelope each cycle. A resume starts
+        # the loop at start_cycle and counts the already-captured
+        # visits into the progress so the bar reflects the whole run.
         total_iterations = request.test.num_cycles
         total_visits = total_iterations * len(goals)
-        visit_count = 0
-        for iteration in range(1, total_iterations + 1):
+        visit_count = max(0, request.start_cycle - 1) * len(goals)
+        if request.start_cycle > 1:
+            self._emit_status(
+                f'resuming run at cycle {request.start_cycle}/'
+                f'{total_iterations}')
+            self._emit_progress(visit_count, total_visits)
+        for iteration in range(max(1, request.start_cycle),
+                               total_iterations + 1):
             if self._stop_event.is_set():
                 return False
             for goal_idx, (gy, gz) in enumerate(goals, start=1):

@@ -64,10 +64,13 @@ _SUCCESS_PATTERNS = re.compile(
     r'(\bcompleted\b|\barrived\b|\bcaptured\b|run completed)',
     re.IGNORECASE)
 
+import yaml
+
 from ..runner import (
     CalibrationRunner, CameraCalibrationRunner, RunRequest, TEST_REGISTRY,
     MODE_STAND, MODE_ON_ROBOT,
 )
+from ..runner.data_writer import load_resume_state
 # Run discovery only (list_runs + status). Analysis has no rclpy/Qt
 # dependencies, so importing it here is safe and keeps the completed-run
 # counters consistent with what the notebooks will aggregate.
@@ -553,19 +556,19 @@ class CalibrationDashboardWidget(QWidget):
         fresh_window.setValue(0.5)
         cap_form.addRow('detection fresh window (s)', fresh_window)
         # How long the capture waits after settle for a detection newer
-        # than the pre-settle one. Capped at 5 s on purpose: enough to
-        # ride out an occasional detector gap, short enough that a
-        # marginal detection setup still fails visibly instead of the
-        # run silently crawling.
+        # than the pre-settle one. Capped so a very long timeout can't
+        # mask a marginal detection setup; the default rides out the
+        # multi-second detector gaps observed on hardware.
         det_timeout = QDoubleSpinBox()
-        det_timeout.setRange(0.5, 5.0)
+        det_timeout.setRange(0.5, 15.0)
         det_timeout.setSingleStep(0.5)
         det_timeout.setDecimals(1)
-        det_timeout.setValue(2.0)
+        det_timeout.setValue(5.0)
         det_timeout.setToolTip(
             'Abort budget for a fresh detection after the arm settles. '
-            'Raise slightly for a gappy detector; if you need more than '
-            'a few seconds, fix lighting / exposure / tag angle instead.')
+            'Raise for a gappy detector; if double digits are needed, '
+            'fix lighting / exposure / tag angle instead. A run that '
+            'still aborts can be resumed from the post-run banner.')
         cap_form.addRow('detection timeout (s)', det_timeout)
         # Auto-continue: when checked, the runner auto-advances at each
         # Continue gate once detection has been continuously fresh for
@@ -676,12 +679,15 @@ class CalibrationDashboardWidget(QWidget):
         outer.addWidget(self._banner_path)
         btn_row = QHBoxLayout()
         self._banner_keep = QPushButton('Keep')
+        self._banner_resume = QPushButton('Resume run')
         self._banner_delete = QPushButton('Delete run')
         self._banner_open = QPushButton('Open notebook')
         self._banner_keep.clicked.connect(self._on_banner_keep)
+        self._banner_resume.clicked.connect(self._on_banner_resume)
         self._banner_delete.clicked.connect(self._on_banner_delete)
         self._banner_open.clicked.connect(self._on_banner_open_notebook)
         btn_row.addWidget(self._banner_keep)
+        btn_row.addWidget(self._banner_resume)
         btn_row.addWidget(self._banner_delete)
         btn_row.addWidget(self._banner_open)
         outer.addLayout(btn_row)
@@ -1331,6 +1337,78 @@ class CalibrationDashboardWidget(QWidget):
         self._refresh_run_counts()
         self._show_banner(run_dir, status)
 
+    def _resume_info(self, run_dir: Optional[Path]):
+        """(config, resume_state) for a failed run dir, or None when the
+        run cannot be resumed (missing config, unknown test, or all
+        cycles already captured)."""
+        if run_dir is None or not (Path(run_dir) / 'config.yaml').exists():
+            return None
+        try:
+            with (Path(run_dir) / 'config.yaml').open() as f:
+                cfg = yaml.safe_load(f) or {}
+            goals = [tuple(g) for g in (cfg.get('goals') or [])]
+            num_cycles = int(cfg.get('num_cycles') or 0)
+            if cfg.get('test_name') not in TEST_REGISTRY or not goals \
+                    or num_cycles < 1:
+                return None
+            state = load_resume_state(run_dir, len(goals), num_cycles)
+            if not state['resumable']:
+                return None
+            return cfg, state
+        except Exception:  # noqa: BLE001
+            return None
+
+    @Slot()
+    def _on_banner_resume(self):
+        info = self._resume_info(self._last_run_dir)
+        if info is None:
+            self._log_msg('cannot resume: run is not resumable')
+            return
+        cfg, state = info
+        test_name = cfg['test_name']
+        goals = [tuple(g) for g in cfg['goals']]
+        num_cycles = int(cfg['num_cycles'])
+        cls = TEST_REGISTRY[test_name]
+        extra = {}
+        if cfg.get('verify_home_with_tag'):
+            extra['verify_home_with_tag'] = True
+        try:
+            test = cls(
+                targets=goals,
+                num_cycles=num_cycles,
+                settle_time=float(cfg.get('settle_time', 2.0)),
+                return_home_between_targets=True,
+                **extra,
+            )
+        except ValueError as exc:
+            self._log_msg(f'cannot resume: {exc}')
+            return
+        # Everything comes from the failed run's config, not the page
+        # widgets, so the resumed cycles are captured under identical
+        # conditions to the originals.
+        request = RunRequest(
+            test=test,
+            output_root=Path(DEFAULT_OUTPUT_DIR).expanduser(),
+            initial_pose=tuple(cfg.get('initial_pose', (0.0, 0.5))),
+            goals=tuple(goals),
+            detection_max_age_s=float(cfg.get('detection_max_age_s', 0.5)),
+            detection_timeout_s=float(cfg.get('detection_timeout_s', 5.0)),
+            home_tol_m=float(cfg.get('home_tol_m', 0.02)),
+            home_hold_frames=int(cfg.get('home_hold_frames', 5)),
+            home_timeout_s=float(cfg.get('home_timeout_s', 10.0)),
+            resume_dir=Path(self._last_run_dir),
+            start_cycle=state['next_cycle'],
+        )
+        if self._runner.request_run(request):
+            self._banner.setVisible(False)
+            self._start_btn.setEnabled(False)
+            self._continue_btn.setEnabled(False)
+            self._progress.setRange(0, num_cycles * len(goals))
+            self._progress.setValue(state['done_visits'])
+            self._log_msg(
+                f"resuming {cfg.get('run_id')} from cycle "
+                f"{state['next_cycle']}/{num_cycles}")
+
     def _show_banner(self, run_dir: str, status: str):
         self._last_run_dir = Path(run_dir) if run_dir else None
         self._last_test_name = self._current_test_name()
@@ -1349,6 +1427,13 @@ class CalibrationDashboardWidget(QWidget):
             self._banner_path.setText('(no run directory)')
         self._banner_delete.setEnabled(self._last_run_dir is not None
                                        and self._last_run_dir.exists())
+        resumable = (status == 'failed'
+                     and self._resume_info(self._last_run_dir) is not None)
+        self._banner_resume.setEnabled(resumable)
+        self._banner_resume.setToolTip(
+            'Continue this run from its first incomplete cycle, appending '
+            'to the same data files.' if resumable else
+            'Only failed runs with remaining cycles can be resumed.')
         self._banner_open.setEnabled(self._notebook_path() is not None)
         self._banner_open.setToolTip(
             '' if self._notebook_path() is not None

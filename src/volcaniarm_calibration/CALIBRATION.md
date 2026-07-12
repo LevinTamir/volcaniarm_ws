@@ -83,7 +83,7 @@ Each test page contains, top to bottom:
 - **Capture settings**: settle time (wait after each motion before
   measuring, default 2 s), detection fresh window (maximum accepted
   age of a detection, default 0.5 s), detection timeout (abort budget
-  for a fresh detection after settle, default 2 s, capped at 5 s so a
+  for a fresh detection after settle, default 5 s, capped at 15 s so a
   long timeout cannot mask a marginal detection setup), auto-continue
   and its fresh-hold time (advance automatically once detection has
   stayed fresh that long; uncheck to require a manual Continue click
@@ -102,9 +102,16 @@ Button semantics:
 - **Cancel**: emergency stop; the arm halts in place.
 
 After every run a banner shows COMPLETED / CANCELED / FAILED with the
-run directory and three actions: **Keep**, **Delete run** (removes
-the directory, for aborted or junk runs), and **Open notebook**
-(opens the matching analysis notebook).
+run directory and four actions: **Keep**, **Resume run** (failed runs
+only: continues the same run from its first incomplete cycle,
+appending to the same data files under the original settings, so the
+already-captured cycles are not lost), **Delete run** (removes the
+directory, for aborted or junk runs), and **Open notebook** (opens
+the matching analysis notebook). A resumed run that finishes counts
+as one completed run of the full cycle count; config.yaml records
+the resume timestamps. For a multi-goal sweep, an interrupted cycle
+is repeated in full on resume, so its already-captured goals gain an
+extra sample; harmless for the aggregated metrics.
 
 ## 4. Session checklist (before any test)
 
@@ -345,9 +352,10 @@ analysis.
 - **Run fails with "detection lost during sampling"**: the EE tag was
   not seen within the detection timeout after the arm settled at a
   goal, usually an occlusion, an edge-on viewing angle, or a gappy
-  detector (check its rate with `ros2 topic hz`). Raise the detection
-  timeout spinbox a little for an occasional gap; if it takes more
-  than a few seconds, fix lighting / exposure / tag angle instead of
+  detector (check its rate with `ros2 topic hz`). Click **Resume
+  run** on the banner to keep the captured cycles and finish the run.
+  Raise the detection timeout spinbox for a gappy detector; if double
+  digits are needed, fix lighting / exposure / tag angle instead of
   hiding it behind a longer timeout.
 - **Home-confirm keeps timing out** (repeatability): the tolerance is
   below the current mount bias. Raise the "Y-Z segment tol" spinbox
