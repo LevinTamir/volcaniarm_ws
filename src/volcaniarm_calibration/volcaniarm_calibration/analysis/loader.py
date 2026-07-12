@@ -30,8 +30,9 @@ DEFAULT_DATA_ROOT = (
 # Mirrored from src/volcaniarm_description/urdf/volcaniarm_apriltag.xacro.
 # UPDATE THESE IF THE XACRO CHANGES -- they're the bridge that turns
 # tag observations into thesis-quotable residuals in volcaniarm_base_link
-# frame. Keeping them in sync with the URDF is a manual step until we
-# wire up automated extraction from /tf_static at run time.
+# frame. Runs recorded after the multi-run redesign carry the live
+# mount transforms in config['urdf_mounts']; prefer those. These
+# constants remain as the fallback for legacy runs.
 #
 # Chain (volcaniarm_base_link -> apriltag_base_link):
 #   apriltag_base_mount_joint: xyz=(0.65, 0.0, -0.03), rpy=(0, 0, 0)
@@ -135,6 +136,132 @@ def load_run(run_dir: Path) -> dict:
     tag = pd.read_csv(run_dir / 'tag_observations.csv')
     fk = pd.read_csv(run_dir / 'fk_poses.csv')
     return {'config': config, 'tag': tag, 'fk': fk, 'run_dir': run_dir}
+
+
+def load_runs(test_name: str,
+              data_root: Optional[Path] = None,
+              status: Optional[str] = 'completed',
+              run_dirs: Optional[list] = None) -> list:
+    """Load several runs of one test as a list of ``load_run`` dicts.
+
+    By default discovers all runs of ``test_name`` (oldest-first) and
+    keeps only those with the given ``status`` ('completed'; pass None
+    to keep everything). Pass ``run_dirs`` to pin an explicit run set
+    instead, e.g. the exact runs quoted in the thesis.
+    """
+    if run_dirs is not None:
+        dirs = [Path(d) for d in run_dirs]
+    else:
+        dirs = list_runs(test_name, data_root)
+        if status is not None:
+            dirs = [d for d in dirs if _safe_status(d) == status]
+    return [load_run(d) for d in dirs]
+
+
+def goal_key(y: float, z: float, tol_m: float = 0.001) -> tuple:
+    """Rounded matching key for a commanded goal, default 1 mm bins.
+
+    Goals are matched across runs on COMMANDED coordinates from
+    config.yaml, never on detected positions, so hand-typed goals that
+    agree to the millimetre land in the same bucket.
+    """
+    return (round(y / tol_m), round(z / tol_m))
+
+
+def mount_key(config: dict) -> str:
+    """Marker for which URDF apriltag mount values produced a run.
+
+    Aggregating runs recorded with different mount values would mix
+    two different systematic biases, so notebooks group on this key
+    and refuse to pool across it unless explicitly allowed.
+
+    New runs record the live mount transforms in config['urdf_mounts']
+    (written by the runner from /tf_static); the key is the rounded
+    mount translations. Legacy runs fall back to the git sha, which is
+    coarser but never merges two mount versions by accident.
+    """
+    mounts = config.get('urdf_mounts')
+    if isinstance(mounts, dict):
+        parts = []
+        for name in ('base_xyz', 'ee_xyz'):
+            xyz = mounts.get(name)
+            if xyz is None:
+                break
+            parts.append(','.join(f'{float(v):.4f}' for v in xyz))
+        else:
+            return 'mounts:' + ';'.join(parts)
+    sha = config.get('git_sha') or 'unknown'
+    return 'legacy-' + str(sha)[:7]
+
+
+def concat_runs(runs: list, phase: str = 'target') -> pd.DataFrame:
+    """Stack the tag observations of several runs into one DataFrame.
+
+    Filters to ``phase`` rows and adds per-row provenance columns:
+    ``run_id``, ``run_dir``, ``git_sha``, ``mount_key``, plus the
+    commanded ``goal_y`` / ``goal_z`` (from config['goals'], indexed by
+    ``target_idx``) and their mm-rounded ``goal_key_y`` / ``goal_key_z``.
+    Legacy CSVs missing newer columns (tip_q*) get NaN there.
+    """
+    frames = []
+    for run in runs:
+        cfg = run['config']
+        tag = run['tag']
+        df = tag[tag['phase'] == phase].copy()
+        if df.empty:
+            continue
+        goals = cfg.get('goals') or []
+        df['target_idx'] = df['target_idx'].astype(int)
+
+        def _goal(idx, axis):
+            i = idx - 1
+            if 0 <= i < len(goals):
+                return float(goals[i][axis])
+            return np.nan
+
+        df['goal_y'] = df['target_idx'].map(lambda i: _goal(i, 0))
+        df['goal_z'] = df['target_idx'].map(lambda i: _goal(i, 1))
+        keys = [goal_key(y, z) if not (np.isnan(y) or np.isnan(z))
+                else (np.nan, np.nan)
+                for y, z in zip(df['goal_y'], df['goal_z'])]
+        df['goal_key_y'] = [k[0] for k in keys]
+        df['goal_key_z'] = [k[1] for k in keys]
+        df['run_id'] = cfg.get('run_id', str(run['run_dir']))
+        df['run_dir'] = str(run['run_dir'])
+        df['git_sha'] = cfg.get('git_sha')
+        df['mount_key'] = mount_key(cfg)
+        for col in ('tip_qx', 'tip_qy', 'tip_qz', 'tip_qw'):
+            if col not in df.columns:
+                df[col] = np.nan
+        frames.append(df)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+def group_runs(runs: list,
+               match_goals: bool = True,
+               match_mounts: bool = True) -> dict:
+    """Bucket runs so only comparable runs are aggregated together.
+
+    Key is ``(goals_key, mount)`` where ``goals_key`` is the frozenset
+    of mm-rounded commanded goals (or None when ``match_goals`` is
+    False) and ``mount`` is ``mount_key(config)`` (or None when
+    ``match_mounts`` is False). Notebooks pick one bucket, aggregate
+    it, and print what was excluded and why.
+    """
+    buckets: dict = {}
+    for run in runs:
+        cfg = run['config']
+        if match_goals:
+            goals = cfg.get('goals') or []
+            goals_key = frozenset(goal_key(float(g[0]), float(g[1]))
+                                  for g in goals)
+        else:
+            goals_key = None
+        mount = mount_key(cfg) if match_mounts else None
+        buckets.setdefault((goals_key, mount), []).append(run)
+    return buckets
 
 
 def tag_in_base_frame(tag: pd.DataFrame) -> pd.DataFrame:
