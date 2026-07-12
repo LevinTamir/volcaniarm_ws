@@ -68,6 +68,28 @@ from ..runner import (
     CalibrationRunner, CameraCalibrationRunner, RunRequest, TEST_REGISTRY,
     MODE_STAND, MODE_ON_ROBOT,
 )
+# Run discovery only (list_runs + status). Analysis has no rclpy/Qt
+# dependencies, so importing it here is safe and keeps the completed-run
+# counters consistent with what the notebooks will aggregate.
+from ..analysis import loader as _analysis_loader
+
+# Per-test protocol guidance shown on each page. ISO 9283 specifies 30
+# cycles per pose; the across-run averaging happens in the notebooks.
+_PROTOCOL_NOTES = {
+    'static_accuracy': (
+        'Protocol: 30 cycles per run (ISO 9283), 3 or more independent '
+        'runs with re-homing between them. The notebook averages across '
+        'runs.'),
+    'repeatability': (
+        'Protocol: 30 cycles per run (ISO 9283 RP is defined over a '
+        '30-point cluster), 3 or more independent runs with re-homing '
+        'between them. Enable the home gate once the tag mounts are '
+        'calibrated.'),
+    'workspace_coverage': (
+        'Protocol: 3 cycles (full sweeps) per run, 3 or more runs. '
+        'Feeds the Y-Z accuracy/repeatability maps and the apriltag '
+        'mount solver.'),
+}
 
 
 DEFAULT_OUTPUT_DIR = '~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/data'
@@ -202,13 +224,17 @@ class CalibrationDashboardWidget(QWidget):
         self._pages.addWidget(self._build_camera_page())
         self._pages.addWidget(self._build_test_page(
             'static_accuracy', with_iterations=True,
-            with_home_gate=False, goal_mode='single'))
+            with_home_gate=False, goal_mode='single',
+            iterations_default=30))
         self._pages.addWidget(self._build_test_page(
             'repeatability', with_iterations=True,
-            with_home_gate=True, goal_mode='single'))
+            with_home_gate=True, goal_mode='single',
+            iterations_default=30))
         self._pages.addWidget(self._build_test_page(
-            'workspace_coverage', with_iterations=False,
-            with_home_gate=False, goal_mode='list'))
+            'workspace_coverage', with_iterations=True,
+            with_home_gate=False, goal_mode='list',
+            iterations_default=3,
+            iterations_label='cycles (full sweeps)'))
         # Keep the page compact (sized to its content) and let the run
         # panel's log expand to fill the rest, so there's no large blank
         # gap between a page's controls and the log at the bottom.
@@ -348,7 +374,9 @@ class CalibrationDashboardWidget(QWidget):
         return page
 
     def _build_test_page(self, test_name: str, *, with_iterations: bool,
-                         with_home_gate: bool, goal_mode: str) -> QWidget:
+                         with_home_gate: bool, goal_mode: str,
+                         iterations_default: int = 3,
+                         iterations_label: str = 'iterations') -> QWidget:
         """Build one accuracy/repeatability/workspace page.
 
         Each page owns its own pose/goal/iterations/home widgets (a Qt
@@ -361,13 +389,25 @@ class CalibrationDashboardWidget(QWidget):
         v = QVBoxLayout(page)
         fields: dict = {}
 
+        # Protocol note + saved-run counter. Plain labels: intentionally
+        # NOT persisted (save/restore only touches input widget types).
+        note = _PROTOCOL_NOTES.get(test_name)
+        if note:
+            note_label = QLabel(note)
+            note_label.setWordWrap(True)
+            note_label.setStyleSheet('color: gray;')
+            v.addWidget(note_label)
+        runs_label = QLabel('completed runs saved: ?')
+        v.addWidget(runs_label)
+        fields['runs_label'] = runs_label
+
         if with_iterations:
             cfg_box = QGroupBox('Test configuration')
             cfg_form = QFormLayout(cfg_box)
             iterations = QSpinBox()
             iterations.setRange(1, 100)
-            iterations.setValue(3)
-            cfg_form.addRow('iterations', iterations)
+            iterations.setValue(iterations_default)
+            cfg_form.addRow(iterations_label, iterations)
             fields['iterations'] = iterations
             v.addWidget(cfg_box)
 
@@ -469,6 +509,31 @@ class CalibrationDashboardWidget(QWidget):
             goals_outer.addWidget(goals_edit)
             fields['goals_edit'] = goals_edit
             v.addWidget(goals_box)
+
+        # Reachability guard: every pose edit re-checks IK (in-process,
+        # cheap) after a short debounce, and Start refuses to launch a
+        # run with an unreachable pose. Catches typos before the arm
+        # moves instead of aborting mid-run.
+        reach_label = QLabel('reachability: checking...')
+        reach_label.setWordWrap(True)
+        v.addWidget(reach_label)
+        fields['reach_label'] = reach_label
+        reach_timer = QTimer(self)
+        reach_timer.setSingleShot(True)
+        reach_timer.setInterval(250)
+        reach_timer.timeout.connect(
+            lambda tn=test_name: self._refresh_reachability(tn))
+        fields['reach_timer'] = reach_timer
+        pose_boxes = [initial_y, initial_z]
+        if goal_mode == 'single':
+            pose_boxes += [fields['goal_y'], fields['goal_z']]
+        for sb in pose_boxes:
+            sb.valueChanged.connect(
+                lambda _=0.0, t=reach_timer: t.start())
+        if goal_mode != 'single':
+            fields['goals_edit'].textChanged.connect(
+                lambda t=reach_timer: t.start())
+        reach_timer.start()
 
         # Capture settings + run controls live on the tab itself so each
         # test is self-contained. The widgets are per-tab instances (a Qt
@@ -789,6 +854,74 @@ class CalibrationDashboardWidget(QWidget):
             self._bind_run_widgets(self._pages_fields[name])
             self._runner.cancel()
             self._reset_ui_state(status='idle')
+            self._refresh_run_counts()
+            self._refresh_reachability(name)
+
+    # -- reachability guard / run counters -------------------------
+
+    def _reachability_problems(self, test_name: str) -> list:
+        """Collect human-readable reachability problems for a page.
+
+        Checks the initial pose and every goal via the runner's
+        in-process IK. Returns an empty list when everything is
+        reachable; goal-text parse errors are reported as problems too
+        so the guard covers the workspace multi-goal editor.
+        """
+        fields = self._pages_fields[test_name]
+        problems: list = []
+        iy, iz = fields['initial_y'].value(), fields['initial_z'].value()
+        ok, reason = self._runner.check_reachable(iy, iz)
+        if not ok:
+            problems.append(f'initial pose ({iy:.3f}, {iz:.3f}): {reason}')
+        if 'goals_edit' in fields:
+            try:
+                goals = self._parse_goals_text(
+                    fields['goals_edit'].toPlainText())
+            except ValueError as exc:
+                problems.append(f'goals list: {exc}')
+                return problems
+            for idx, (gy, gz) in enumerate(goals, start=1):
+                ok, reason = self._runner.check_reachable(gy, gz)
+                if not ok:
+                    problems.append(
+                        f'goal {idx} ({gy:.3f}, {gz:.3f}): {reason}')
+        else:
+            gy, gz = fields['goal_y'].value(), fields['goal_z'].value()
+            ok, reason = self._runner.check_reachable(gy, gz)
+            if not ok:
+                problems.append(f'goal ({gy:.3f}, {gz:.3f}): {reason}')
+        return problems
+
+    def _refresh_reachability(self, test_name: str):
+        fields = self._pages_fields.get(test_name)
+        if fields is None or 'reach_label' not in fields:
+            return
+        label = fields['reach_label']
+        problems = self._reachability_problems(test_name)
+        if not problems:
+            label.setText('reachability: all poses reachable')
+            label.setStyleSheet('color: #2e9c4a;')
+        else:
+            shown = problems[:3]
+            if len(problems) > len(shown):
+                shown.append(f'... and {len(problems) - len(shown)} more')
+            label.setText('reachability: ' + '; '.join(shown))
+            label.setStyleSheet('color: #d04b4b;')
+
+    def _refresh_run_counts(self):
+        """Update every test page's completed-run counter from disk."""
+        root = Path(DEFAULT_OUTPUT_DIR).expanduser()
+        for test_name, fields in self._pages_fields.items():
+            label = fields.get('runs_label')
+            if label is None:
+                continue
+            try:
+                runs = _analysis_loader.list_runs(test_name, root)
+                n = sum(1 for r in runs
+                        if _analysis_loader._safe_status(r) == 'completed')  # noqa: SLF001
+                label.setText(f'completed runs saved: {n}')
+            except Exception as exc:  # noqa: BLE001
+                label.setText(f'completed runs saved: ? ({exc})')
 
     def _log_msg(self, msg: str):
         """Append a status line to the log box, coloured by severity.
@@ -887,6 +1020,15 @@ class CalibrationDashboardWidget(QWidget):
                 return
         else:
             goals = [(fields['goal_y'].value(), fields['goal_z'].value())]
+        # Reachability guard: refuse to start rather than letting the
+        # runner abort after the arm already started moving.
+        problems = self._reachability_problems(test_name)
+        if problems:
+            for p in problems:
+                self._log_msg(f'cannot start: {p}')
+            self._status_label.setText('cannot start: unreachable pose(s)')
+            self._refresh_reachability(test_name)
+            return
         num_cycles = fields['iterations'].value() if 'iterations' in fields else 1
         # Test classes still take a `targets` list (kept for backward
         # compat with iter_visits); the runner reads `request.goals`.
@@ -1170,6 +1312,7 @@ class CalibrationDashboardWidget(QWidget):
         self._auto_continue_fresh_since = None
         self._log_msg(f'output: {run_dir}')
         self._reset_ui_state(status=f'run {status}')
+        self._refresh_run_counts()
         self._show_banner(run_dir, status)
 
     def _show_banner(self, run_dir: str, status: str):
