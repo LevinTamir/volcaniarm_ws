@@ -25,9 +25,11 @@ calibrated, so the sim calibration flow was removed.
 
 The full operating procedure (cycle/run counts and why, the tag
 mount bias, aggregation rules) is in
-[CALIBRATION.md](CALIBRATION.md). Analysis lives in `notebooks/`
-(one per test); each notebook aggregates every comparable completed
-run automatically.
+[CALIBRATION.md](CALIBRATION.md). Analysis lives in `notebooks/`:
+two per test, a per-run report (quick visual check of the run you
+just recorded) and an aggregate report (multi-run statistics for the
+thesis). Every figure is auto-exported to `notebooks/figures/` as
+PNG + PDF.
 
 ## Run it
 

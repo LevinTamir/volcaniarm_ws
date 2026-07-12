@@ -208,58 +208,62 @@ working plane; feeds the per-point maps.
 
 ## 6. Validating the results (notebooks)
 
-Each test has one notebook in `notebooks/`:
+Each test has TWO notebooks in `notebooks/`: a **per-run report** for
+the quick visual check right after recording, and an **aggregate
+report** with the in-depth statistics for the thesis.
 
-| Notebook                   | Produces                                              |
-|----------------------------|-------------------------------------------------------|
-| `static_accuracy.ipynb`    | per-run table, across-run mean +/- t-CI, per-run box plot, per-axis residual plot |
-| `repeatability.ipynb`      | per-run RP table, within-run RP headline +/- t-CI, cluster scatters, per-axis deviation plot |
-| `workspace_coverage.ipynb` | coverage table, accuracy map, error-vector map, repeatability map, worst-point tables |
+| Notebook | When to open | Produces |
+|---|---|---|
+| `static_accuracy.ipynb` | right after a run (the GUI's Open-notebook button) | residual-per-cycle trend, per-axis trend, residual-vector scatter, one stats line |
+| `static_accuracy_aggregate.ipynb` | after 3+ runs | per-run table, across-run mean +/- t-CI, weeding verdicts, box/violin/histogram/ECDF/Q-Q, convergence, sessions trend, per-pose breakdown |
+| `repeatability.ipynb` | right after a run | cluster with RP circle, drift check, per-axis trend, one stats line |
+| `repeatability_aggregate.ipynb` | after 3+ runs | per-run RP table, within-run RP +/- t-CI, pooled RP, cluster panels, RP bars, distance histogram, drift, sessions trend, per-pose breakdown |
+| `workspace_coverage.ipynb` | right after a sweep | per-point table, accuracy map, error-vector map |
+| `workspace_coverage_aggregate.ipynb` | after 3+ sweeps | coverage table, accuracy/RP/spread maps, error vectors, axis profiles, ranked points, worst-point tables |
 
-How to run one:
+Every figure is exported automatically to
+`notebooks/figures/<notebook>/<figure>.png` (300 dpi) and `.pdf`
+(vector), with stable filenames, ready to place in the thesis
+experiments section. Re-running a notebook refreshes the files.
 
-1. Open the notebook (the post-run banner's **Open notebook** button,
-   or directly in VS Code) and run all cells. No parameters are
-   needed for the default behaviour: the notebook finds every
-   completed run of its test on disk, groups the comparable ones
-   (same goals, same mount version), aggregates the largest group,
-   and **prints every excluded run with the reason**. Read that
-   exclusion list every time; it is what makes the aggregation
-   auditable.
-2. The kernel imports `volcaniarm_calibration` through a `.pth` file;
-   after changing package code, restart the kernel before re-running.
-3. Parameters at the top of each notebook when the default grouping
-   is not what you want:
-   - `SCOPE` (static accuracy and repeatability): `'latest'` analyses
-     the single most recent run stand-alone (how good was this
-     session at its pose); `'target'` aggregates all comparable runs
-     at one target (the thesis headline mode); `'all'` pools every
-     completed run across all targets for a workspace-wide view, with
-     a per-target breakdown table so poses are never silently mixed.
-   - `TARGET`: which target `'target'` scope analyses, e.g.
-     `(0.2, 0.7)`; `None` picks the target with the most runs. The
-     setup cell prints every target found on disk with its run count.
-   - `RUN_DIRS`: pin the exact list of run directories (use this for
-     the final thesis figures so they are reproducible).
-   - `ALLOW_MOUNT_KEYS`: merge runs recorded under different git SHAs
-     that you know share the same physical mounts (each run's key is
-     printed in the per-run table).
-   - `MIN_RUNS`: the protocol target; the notebook warns when the
-     aggregate is below it.
+The kernel imports `volcaniarm_calibration` through a `.pth` file;
+after changing package code, restart the kernel before re-running.
 
-   Runs at different targets are never averaged into one statistic:
-   `'target'` scope filters to a single target, and `'all'` scope
-   always reports the per-target breakdown alongside the pooled
-   distribution.
+**Per-run notebooks** take one parameter: `RUN_DIR` (path to a run
+directory; `None` analyses the latest completed run, which is the one
+you just recorded). They are deliberately simple: trends and a stats
+line, no statistics machinery.
+
+**Aggregate notebooks** find every completed run of their test on
+disk, print a targets-on-disk overview and every excluded run with
+the reason (that exclusion list is what makes the aggregation
+auditable), then aggregate. Parameters:
+
+- `GROUP`: `'pose'` (default) aggregates all comparable runs at one
+  pose, which is the thesis headline mode; `'all'` pools every run
+  across poses for a workspace-wide view, always accompanied by the
+  per-pose breakdown so poses are never silently mixed into one
+  statistic.
+- `POSE`: which pose `'pose'` mode analyses, e.g. `(0.2, 0.6)`;
+  `None` picks the pose with the most runs.
+- `MATCH_CYCLES`: e.g. `30` to aggregate only 30-cycle runs; `None`
+  includes all (the per-run table shows each run's cycle count, and
+  mixing counts is statistically fine for the mean-of-means
+  headline).
+- `RUN_DIRS`: pin the exact run list (use for the final thesis
+  figures so they are reproducible).
+- `ALLOW_MOUNT_KEYS`: merge runs recorded under different git SHAs
+  known to share the same physical mounts.
+- `MIN_RUNS`: the protocol target; a warning prints below it.
 
 What "validated" looks like:
 
-- The run count in the header line matches what you recorded, and
-  nothing unexpected appears in the exclusion list.
+- The run count in the header matches what you recorded, and nothing
+  unexpected appears in the exclusion list.
 - Static accuracy: per-run means agree within a few millimetres of
-  each other (a single outlier run means something moved that
-  session; investigate or drop it via `RUN_DIRS` and say so). Quote
-  the across-run mean +/- t-CI, and the pooled std as the precision.
+  each other (an outlier run means something moved that session;
+  investigate or drop it via `RUN_DIRS` and say so). Quote the
+  across-run mean +/- t-CI, and the pooled std as the precision.
 - Repeatability: quote the mean within-run RP +/- t-CI as the ISO
   number; the pooled cross-session RP goes alongside, labelled as
   such. Compare against the ~10 mm weeding tolerance.
