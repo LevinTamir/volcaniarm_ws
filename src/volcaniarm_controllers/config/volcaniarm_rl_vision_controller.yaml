@@ -50,8 +50,24 @@ volcaniarm_rl_vision_controller:
     # per joint) to enforce mechanical / safety limits independent
     # of what the policy outputs. Recommended on real hardware.
     # Order matches `joints` above: [left_elbow, right_elbow].
-    joint_position_min: [-1.0, -1.0]
-    joint_position_max: [1.0, 1.0]
+    #
+    # MUST NOT be tighter than the range the policy was trained in, or the
+    # controller silently refuses valid actions and the arm cannot reach
+    # targets it was trained to reach. Training bounds the elbows at
+    # +-1.3089969 rad via the `elbow_pos_in_range` reward term, and the
+    # reachable-workspace numbers in scripts/check_workspace.py assume that.
+    #
+    # The previous +-1.0 cost roughly half the reachable Y span at canopy
+    # height (y in [-0.219,+0.159] -> [-0.098,+0.108] in the 0.125-0.150 m
+    # band), which showed up as the arm failing to reach weeds toward the
+    # outer edges in Y.
+    #
+    # NOTE for real hardware: +-1.0 was originally chosen as a conservative
+    # guard. This is still a safety clamp, just aligned to the trained
+    # envelope — confirm the arm's true mechanical limits before running this
+    # on the physical robot.
+    joint_position_min: [-1.3089969, -1.3089969]
+    joint_position_max: [1.3089969, 1.3089969]
 
     # EMA smoothing on raw policy outputs. 1.0 = no smoothing.
     # Lower values damp the high-frequency demands that exceed the
