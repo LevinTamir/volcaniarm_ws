@@ -51,23 +51,27 @@ volcaniarm_rl_vision_controller:
     # of what the policy outputs. Recommended on real hardware.
     # Order matches `joints` above: [left_elbow, right_elbow].
     #
-    # MUST NOT be tighter than the range the policy was trained in, or the
-    # controller silently refuses valid actions and the arm cannot reach
-    # targets it was trained to reach. Training bounds the elbows at
-    # +-1.3089969 rad via the `elbow_pos_in_range` reward term, and the
-    # reachable-workspace numbers in scripts/check_workspace.py assume that.
+    # !!! SIM-TO-SIM SETTING — TIGHTEN BEFORE REAL HARDWARE !!!
     #
-    # The previous +-1.0 cost roughly half the reachable Y span at canopy
-    # height (y in [-0.219,+0.159] -> [-0.098,+0.108] in the 0.125-0.150 m
-    # band), which showed up as the arm failing to reach weeds toward the
-    # outer edges in Y.
+    # Currently set to the URDF's mechanical joint limits (+-3.14 rad), i.e.
+    # the controller imposes no restriction of its own and the URDF
+    # command_interface bounds are the only backstop. That is deliberate while
+    # validating against Isaac Sim, where an over-travel costs nothing.
     #
-    # NOTE for real hardware: +-1.0 was originally chosen as a conservative
-    # guard. This is still a safety clamp, just aligned to the trained
-    # envelope — confirm the arm's true mechanical limits before running this
-    # on the physical robot.
-    joint_position_min: [-1.3089969, -1.3089969]
-    joint_position_max: [1.3089969, 1.3089969]
+    # History: this was +-1.0 as a conservative real-hardware guard, but that
+    # is TIGHTER than the range the policy trained in (+-1.3089969 rad, set by
+    # the `elbow_pos_in_range` reward term). The controller was silently
+    # refusing valid actions, costing roughly half the reachable Y span at
+    # canopy height — y in [-0.219,+0.159] collapsed to [-0.098,+0.108] in the
+    # 0.125-0.150 m band — which is why the arm failed to reach weeds toward
+    # the outer edges in Y.
+    #
+    # For the physical robot, use +-1.3089969 (the trained envelope) at most,
+    # and only after confirming the arm's true mechanical limits. A clamp
+    # tighter than training breaks reachability; a clamp wider than training
+    # lets the policy command poses it has never seen.
+    joint_position_min: [-3.14, -3.14]
+    joint_position_max: [3.14, 3.14]
 
     # EMA smoothing on raw policy outputs. 1.0 = no smoothing.
     # Lower values damp the high-frequency demands that exceed the
