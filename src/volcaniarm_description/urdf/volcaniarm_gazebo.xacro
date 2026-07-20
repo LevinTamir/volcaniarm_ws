@@ -18,7 +18,7 @@
         <parameters>$(find volcaniarm_controllers)/config/volcaniarm_rl_controller.yaml</parameters>
       </xacro:if>
       <xacro:if value="${_ctrl == 'vision_policy'}">
-        <parameters>$(find volcaniarm_controller)/config/volcaniarm_rl_vision_controller.yaml</parameters>
+        <parameters>$(find volcaniarm_controllers)/config/volcaniarm_rl_vision_controller.yaml</parameters>
       </xacro:if>
     </plugin>
   </gazebo>
