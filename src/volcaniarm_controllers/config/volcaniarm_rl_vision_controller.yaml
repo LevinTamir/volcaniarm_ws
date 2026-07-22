@@ -33,11 +33,11 @@ volcaniarm_rl_vision_controller:
     # `camera/color/image_raw` (CAM_RGB_TOPIC in scripts/add_ros2_graph.py).
     image_topic: /camera/color/image_raw
 
-    # Resolution the bundled ONNX expects — must match
-    # IMG_W/IMG_H in reach_vision_env_cfg.py. The controller resizes
-    # the raw camera frame to (image_width × image_height) before
-    # inference, so this stays fixed even if the camera publishes a
-    # different native resolution.
+    # Resolution the bundled ONNX expects — must match CAM_H/CAM_W in
+    # the isaaclab AME contract (reach_vision_ame/contract.py). The
+    # controller resizes the raw camera frame to (image_width ×
+    # image_height) before inference, so this stays fixed even if the
+    # camera publishes a different native resolution.
     image_width: 96
     image_height: 96
 

@@ -5,7 +5,7 @@
   <version>0.0.0</version>
   <description>MoveIt configuration for the Volcaniarm five-bar: phantom Y-Z planning chain + joint_state_transformer (closed-loop IK via volcaniarm_kinematics).</description>
   <maintainer email="tamirlvn@gmail.com">Tamir Levin</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>

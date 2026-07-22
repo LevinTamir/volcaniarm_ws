@@ -31,7 +31,6 @@ __pycache__/
 
 # Third-party packages imported via vcstool (see third_party.repos)
 /src/apriltag_ros/
-/src/easy_handeye2/
 /src/onnxruntime_vendor/
 
 # Per-physical-setup state written by the calibration dashboard's
