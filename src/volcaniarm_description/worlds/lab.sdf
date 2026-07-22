@@ -126,12 +126,15 @@
     <!-- Room shell: back wall 0.5 m behind the arm plus two side walls.
          Open-fronted and open-topped like the Isaac lab — the walls exist
          to give the camera a realistic background, not to seal a volume.
-         Interior bounds: x in [-0.5, 3.0], y in [-2.0, 2.0], height 2.6. -->
+         NOTE: the Gazebo robot faces -X (mirrored vs the Isaac stage, where
+         the converted USD faces +X), so the whole room is rotated 180°
+         relative to build_lab.py: back wall on +X, interior x in
+         [-3.0, 0.5], y in [-2.0, 2.0], height 2.6. -->
     <model name="room_shell">
       <static>true</static>
       <link name="link">
         <visual name="back_wall">
-          <pose>-0.55 0 1.3 0 0 0</pose>
+          <pose>0.55 0 1.3 0 0 0</pose>
           <geometry>
             <box>
               <size>0.1 4.2 2.6</size>
@@ -144,7 +147,7 @@
           </material>
         </visual>
         <visual name="left_wall">
-          <pose>1.25 2.05 1.3 0 0 0</pose>
+          <pose>-1.25 2.05 1.3 0 0 0</pose>
           <geometry>
             <box>
               <size>3.5 0.1 2.6</size>
@@ -157,7 +160,7 @@
           </material>
         </visual>
         <visual name="right_wall">
-          <pose>1.25 -2.05 1.3 0 0 0</pose>
+          <pose>-1.25 -2.05 1.3 0 0 0</pose>
           <geometry>
             <box>
               <size>3.5 0.1 2.6</size>
@@ -178,10 +181,12 @@
          the origin). Scale 0.115/73.352 = 0.0015678 brings it to the
          0.115 m contract height; the visual pose offsets by half the
          scaled XY footprint so the model pose is where the weed stands.
-         Pose matches Isaac's WEED_XY (0.071, 0.10), base on the mat top. -->
+         Pose is Isaac's WEED_XY (0.071, 0.10) rotated 180° with the room
+         (Gazebo robot faces -X): 7.1 cm in front of the arm, 10 cm to its
+         left, base on the mat top. -->
     <model name="weed_target">
       <static>true</static>
-      <pose>0.071 0.10 0.006 0 0 0</pose>
+      <pose>-0.071 -0.10 0.006 0 0 0</pose>
       <link name="link">
         <visual name="weed_visual">
           <pose>-0.054327 -0.049507 0 0 0 0</pose>
