@@ -215,7 +215,10 @@ def generate_launch_description():
         "pointcloud",
         default_value="true",
         choices=["true", "false"],
-        description="Bridge the depth pointcloud topic from Gazebo",
+        description="Compose /camera/depth/color/points (XYZRGB) from the "
+                    "color + aligned-depth images via the shared "
+                    "depth_image_proc pipeline (same code path as real "
+                    "hardware, regardless of sim backend)",
     )
 
     moveit_arg = DeclareLaunchArgument(
@@ -268,6 +271,19 @@ def generate_launch_description():
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controllers")
     volcaniarm_calibration_share = get_package_share_directory("volcaniarm_calibration")
+    volcaniarm_bringup_share = get_package_share_directory("volcaniarm_bringup")
+
+    # Shared colored-pointcloud composer — the single pipeline that turns
+    # color + aligned depth into /camera/depth/color/points on every
+    # backend (Gazebo, Isaac, and real hardware via real_bringup).
+    camera_pointcloud_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_bringup_share, "launch", "camera_pointcloud.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=IfCondition(LaunchConfiguration("pointcloud")),
+    )
 
     # Gazebo launch — passes `mode`, `calibration`, and the full camera
     # xacro arg surface through so the URDF emits the right joints.
@@ -584,6 +600,7 @@ def generate_launch_description():
             gazebo_launch,
             isaac_launch,
             isaac_gui_proc,
+            camera_pointcloud_launch,
             *gazebo_controller_actions,
             gazebo_ready_waiter,
             display_after_gazebo,
