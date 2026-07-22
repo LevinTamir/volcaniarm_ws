@@ -5,10 +5,21 @@ from pathlib import Path
 import yaml
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+    TimerAction,
+)
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import (
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
@@ -16,6 +27,14 @@ from ament_index_python.packages import get_package_share_directory
 _CAMERA_POSE_CONFIG = (
     Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'
          'config/camera_pose.yaml').expanduser())
+
+# Seconds between the sim's first data message and opening RViz (both
+# backends: /isaac_joint_states for Isaac, /joint_states for Gazebo). The
+# first message proves the sim is playing, but it can still be loading
+# assets / compiling shaders for a moment — opening RViz into that just
+# shows a stuttering scene. Bump if RViz still comes up before the sim
+# feels responsive on a slower machine.
+RVIZ_SETTLE_SEC = 1
 
 
 def _camera_xacro_defaults() -> dict:
@@ -113,7 +132,31 @@ def generate_launch_description():
         default_value="gazebo",
         choices=["gazebo", "isaac"],
         description="Simulator backend: 'gazebo' (auto-launches Gazebo) or 'isaac' "
-                    "(expects Isaac Sim already running with the ROS2 bridge and the scene loaded)",
+                    "(auto-launches the Isaac Sim GUI with the lab stage unless "
+                    "isaac_gui:=false, in which case Isaac Sim must already be "
+                    "running with the ROS2 bridge and the scene loaded)",
+    )
+
+    # Isaac Sim GUI autostart. Ctrl-C on this launch also closes Isaac Sim
+    # (which takes ~1 min to boot) — pass isaac_gui:=false while iterating
+    # on the ROS side to keep a running Isaac Sim alive across relaunches.
+    isaac_gui_arg = DeclareLaunchArgument(
+        "isaac_gui",
+        default_value="true",
+        choices=["true", "false"],
+        description="With sim:=isaac, start the Isaac Sim app with the lab "
+                    "stage playing. false = attach to an already-running Isaac Sim.",
+    )
+    isaac_path_arg = DeclareLaunchArgument(
+        "isaac_path",
+        default_value=os.path.expanduser("~/isaac/isaac-sim"),
+        description="Isaac Sim install directory (contains isaac-sim.sh)",
+    )
+    isaac_open_script_arg = DeclareLaunchArgument(
+        "isaac_open_script",
+        default_value=os.path.expanduser(
+            "~/projects/volcaniarm_isaaclab/scripts/open_lab_gui.py"),
+        description="Kit --exec script that opens the lab USD and presses Play",
     )
 
     # Controller mode:
@@ -142,7 +185,10 @@ def generate_launch_description():
         "pointcloud",
         default_value="true",
         choices=["true", "false"],
-        description="Bridge the depth pointcloud topic from Gazebo",
+        description="Compose /camera/depth/color/points (XYZRGB) from the "
+                    "color + aligned-depth images via the shared "
+                    "depth_image_proc pipeline (same code path as real "
+                    "hardware, regardless of sim backend)",
     )
 
     moveit_arg = DeclareLaunchArgument(
@@ -184,23 +230,21 @@ def generate_launch_description():
     is_isaac = IfCondition(
         PythonExpression(["'", LaunchConfiguration("sim"), "' == 'isaac'"])
     )
-    is_traj_active = IfCondition(
-        PythonExpression(
-            ["'", LaunchConfiguration("controller"), "' in ('traj', 'all')"]
-        )
-    )
-    is_policy_only = IfCondition(
-        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'policy'"])
-    )
-    is_vision_policy_only = IfCondition(
-        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'vision_policy'"])
-    )
-    is_all = IfCondition(
-        PythonExpression(["'", LaunchConfiguration("controller"), "' == 'all'"])
-    )
-
     volcaniarm_description_share = get_package_share_directory("volcaniarm_description")
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controllers")
+    volcaniarm_bringup_share = get_package_share_directory("volcaniarm_bringup")
+
+    # Shared colored-pointcloud composer — the single pipeline that turns
+    # color + aligned depth into /camera/depth/color/points on every
+    # backend (Gazebo, Isaac, and real hardware via real_bringup).
+    camera_pointcloud_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_bringup_share, "launch", "camera_pointcloud.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=IfCondition(LaunchConfiguration("pointcloud")),
+    )
 
     # Gazebo launch - sim always runs work configuration (camera on the
     # robot, no markers). Passes the camera xacro arg surface through so
@@ -248,66 +292,217 @@ def generate_launch_description():
         condition=is_isaac,
     )
 
-    controller_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(volcaniarm_controller_share, "launch", "controller.launch.py")
-        ),
-        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=is_traj_active,
-    )
-
-    rl_controller_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(volcaniarm_controller_share, "launch", "rl_controller.launch.py")
-        ),
-        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=is_policy_only,
-    )
-
-    # Vision policy sub-launch (JSB + vision policy active). Included
-    # only for `vision_policy`.
-    rl_vision_controller_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_controller_share, "launch", "rl_vision_controller.launch.py"
-            )
-        ),
-        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=is_vision_policy_only,
-    )
-
-    # For `all`: load the policy controller inactive so it can be claimed later.
-    rl_inactive_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "volcaniarm_rl_controller",
-            "--controller-manager", "/controller_manager",
-            "--inactive",
+    # Isaac Sim GUI itself — Gazebo-parity autostart. The --exec script
+    # opens the volcaniarm lab USD and presses Play, which brings up the
+    # ROS2 bridge topics (/isaac_joint_states, /joint_commands, camera).
+    # The ros2_control TopicBasedSystem above just idles until those
+    # topics appear (~1 min boot), so start order doesn't matter.
+    isaac_gui_proc = ExecuteProcess(
+        cmd=[
+            PathJoinSubstitution([LaunchConfiguration("isaac_path"), "isaac-sim.sh"]),
+            "--/isaac/startup/create_new_stage=false",
+            "--exec", LaunchConfiguration("isaac_open_script"),
         ],
-        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        name="isaac_sim",
         output="screen",
-        condition=is_all,
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration("sim"), "' == 'isaac' and ",
+            "'", LaunchConfiguration("isaac_gui"), "' == 'true'",
+        ])),
     )
+
+    # Controller spawners. Everything below needs the controller_manager's
+    # update loop to actually be running, and with use_sim_time:=true that
+    # loop is driven by /clock — which Isaac only publishes once loaded and
+    # playing. Spawning against a frozen clock times out the activate call
+    # and strands the controller `inactive`. So these actions are built by
+    # a factory: instantiated once for the gazebo path (immediate — Gazebo
+    # publishes /clock within seconds) and once for the isaac path, where
+    # they run only after the readiness waiter below sees real bridge data.
+    def _controller_actions(gate):
+        # gate: extra condition term ANDed onto each action's own condition.
+        def cond(expr):
+            return IfCondition(PythonExpression(expr + [" and ", *gate]))
+
+        return [
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(
+                        volcaniarm_controller_share, "launch", "controller.launch.py")
+                ),
+                launch_arguments=[
+                    ("use_sim_time", LaunchConfiguration("use_sim_time"))],
+                condition=cond(
+                    ["'", LaunchConfiguration("controller"), "' in ('traj', 'all')"]),
+            ),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(
+                        volcaniarm_controller_share, "launch", "rl_controller.launch.py")
+                ),
+                launch_arguments=[
+                    ("use_sim_time", LaunchConfiguration("use_sim_time"))],
+                condition=cond(
+                    ["'", LaunchConfiguration("controller"), "' == 'policy'"]),
+            ),
+            # Vision policy sub-launch (JSB + vision policy active).
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(
+                        volcaniarm_controller_share,
+                        "launch", "rl_vision_controller.launch.py")
+                ),
+                launch_arguments=[
+                    ("use_sim_time", LaunchConfiguration("use_sim_time"))],
+                condition=cond(
+                    ["'", LaunchConfiguration("controller"), "' == 'vision_policy'"]),
+            ),
+            # For `all`: load the policy controller inactive so it can be
+            # claimed later.
+            Node(
+                package="controller_manager",
+                executable="spawner",
+                arguments=[
+                    "volcaniarm_rl_controller",
+                    "--controller-manager", "/controller_manager",
+                    "--inactive",
+                ],
+                parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
+                output="screen",
+                condition=cond(
+                    ["'", LaunchConfiguration("controller"), "' == 'all'"]),
+            ),
+        ]
+
+    gazebo_controller_actions = _controller_actions(
+        ["'", LaunchConfiguration("sim"), "' == 'gazebo'"])
+    # The isaac set carries no sim== term — it is only ever fired from the
+    # isaac-only waiter's exit handler below.
+    isaac_controller_actions = _controller_actions(["True"])
 
     # Display (RViz). Skipped when moveit:=true (the MoveIt MotionPlanning
-    # RViz replaces the plain display).
-    show_display = IfCondition(PythonExpression([
+    # RViz replaces the plain display). This branch's sim always runs the
+    # work configuration, so there are no calibration/tests clauses here.
+    _show_display_expr = [
         "'", LaunchConfiguration("moveit"), "' == 'false'",
-    ]))
-    display_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_description_share,
-                "launch",
-                "display.launch.py",
-            )
-        ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
-            ("controller", LaunchConfiguration("controller")),
+    ]
+    # Either RViz flavor wants the sim publishing before it opens, so the
+    # readiness waiters below run for the plain display OR the MoveIt one.
+    _wants_rviz_expr = [
+        "(", *_show_display_expr,
+        ") or '", LaunchConfiguration("moveit"), "' == 'true'",
+    ]
+
+    # MoveIt MotionPlanning RViz — instantiated per readiness handler below
+    # (one for each sim backend) so it opens against live sim data with the
+    # same settle delay as the plain display.
+    volcaniarm_moveit_share = get_package_share_directory("volcaniarm_moveit_config")
+
+    def _moveit_rviz_include():
+        return IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(volcaniarm_moveit_share, "launch", "moveit_rviz.launch.py")
+            ),
+            launch_arguments=[
+                ("use_sim_time", LaunchConfiguration("use_sim_time"))],
+            condition=IfCondition(LaunchConfiguration("moveit")),
+        )
+    _display_source = PythonLaunchDescriptionSource(
+        os.path.join(
+            volcaniarm_description_share,
+            "launch",
+            "display.launch.py",
+        )
+    )
+    _display_args = [
+        ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ("controller", LaunchConfiguration("controller")),
+    ]
+    # Gazebo boots in seconds, but the same sim-first-then-RViz order as
+    # the isaac path still applies: wait for the first real /joint_states
+    # message (broadcaster active → controllers spawned → Gazebo running),
+    # then open RViz after the shared settle delay.
+    gazebo_ready_waiter = ExecuteProcess(
+        cmd=[
+            "bash", "-c",
+            "echo '[sim_bringup] waiting for Gazebo to publish /joint_states...'; "
+            "until timeout 5 ros2 topic echo /joint_states --once >/dev/null 2>&1; "
+            "do :; done; "
+            "echo '[sim_bringup] Gazebo is publishing — "
+            "RViz in {}s'".format(RVIZ_SETTLE_SEC),
         ],
-        condition=show_display,
+        name="gazebo_ready_waiter",
+        output="screen",
+        condition=IfCondition(PythonExpression(
+            ["(", *_wants_rviz_expr, ") and '",
+             LaunchConfiguration("sim"), "' == 'gazebo'"]
+        )),
+    )
+    display_after_gazebo = RegisterEventHandler(
+        OnProcessExit(
+            target_action=gazebo_ready_waiter,
+            on_exit=[TimerAction(
+                period=float(RVIZ_SETTLE_SEC),
+                actions=[
+                    IncludeLaunchDescription(
+                        _display_source,
+                        launch_arguments=_display_args,
+                        condition=IfCondition(
+                            PythonExpression(_show_display_expr)),
+                    ),
+                    _moveit_rviz_include(),
+                ],
+            )],
+        )
+    )
+    # Isaac Sim takes ~1 min to boot. Anything that needs a *live* sim —
+    # controller spawners (their activate call needs the /clock-driven
+    # controller_manager update loop to be running) and RViz (needs TF) —
+    # is gated on the bridge actually *delivering data*: a throwaway
+    # waiter blocks until a /isaac_joint_states message arrives, and the
+    # gated actions fire on its exit. (`ros2 topic list` is NOT a valid
+    # readiness signal here — the ros2_control TopicBasedSystem subscribes
+    # to /isaac_joint_states at startup, which already makes the name
+    # appear in the graph.) With isaac_gui:=false against an already-
+    # running Isaac the first message lands within one cycle, so this
+    # degrades to a no-delay start.
+    isaac_ready_waiter = ExecuteProcess(
+        cmd=[
+            "bash", "-c",
+            "echo '[sim_bringup] waiting for Isaac Sim to publish /isaac_joint_states...'; "
+            "until timeout 5 ros2 topic echo /isaac_joint_states --once >/dev/null 2>&1; "
+            "do :; done; "
+            "echo '[sim_bringup] Isaac Sim bridge is publishing — "
+            "spawning controllers, RViz in {}s'".format(RVIZ_SETTLE_SEC),
+        ],
+        name="isaac_ready_waiter",
+        output="screen",
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration("sim"), "' == 'isaac'"])),
+    )
+    isaac_gated_actions = RegisterEventHandler(
+        OnProcessExit(
+            target_action=isaac_ready_waiter,
+            on_exit=[
+                *isaac_controller_actions,
+                # Extra settle margin: first bridge message ≠ Isaac fully
+                # responsive (asset loading / shader compile can still be
+                # in flight). RViz is pure display, so err on the side of
+                # opening late rather than against a stuttering sim.
+                TimerAction(
+                    period=float(RVIZ_SETTLE_SEC),
+                    actions=[
+                        IncludeLaunchDescription(
+                            _display_source,
+                            launch_arguments=_display_args,
+                            condition=IfCondition(
+                                PythonExpression(_show_display_expr)),
+                        ),
+                        _moveit_rviz_include(),
+                    ],
+                ),
+            ],
+        )
     )
 
     # Weed-targeting behavior (formerly volcaniarm_motion/motion_planning_node,
@@ -325,23 +520,17 @@ def generate_launch_description():
         ],
     )
 
-    # MoveIt (opt-in): move_group + MotionPlanning RViz, reusing the running
-    # robot_state_publisher, JTC and passive broadcaster.
-    is_moveit = IfCondition(LaunchConfiguration("moveit"))
-    volcaniarm_moveit_share = get_package_share_directory("volcaniarm_moveit_config")
+    # MoveIt (opt-in): move_group, reusing the running robot_state_publisher,
+    # JTC and passive broadcaster. The MotionPlanning RViz is NOT started
+    # here — it fires from the per-backend readiness handlers above, after
+    # the sim publishes real data plus the shared settle delay, same as the
+    # plain display.
     move_group_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(volcaniarm_moveit_share, "launch", "move_group.launch.py")
         ),
         launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=is_moveit,
-    )
-    moveit_rviz_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(volcaniarm_moveit_share, "launch", "moveit_rviz.launch.py")
-        ),
-        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=is_moveit,
+        condition=IfCondition(LaunchConfiguration("moveit")),
     )
 
     return LaunchDescription(
@@ -351,6 +540,9 @@ def generate_launch_description():
             camera_mount_x_arg,
             camera_mount_pitch_arg,
             sim_arg,
+            isaac_gui_arg,
+            isaac_path_arg,
+            isaac_open_script_arg,
             controller_arg,
             tag_size_arg,
             pointcloud_arg,
@@ -361,13 +553,14 @@ def generate_launch_description():
             cam_roll_arg, cam_pitch_arg, cam_yaw_arg,
             gazebo_launch,
             isaac_launch,
-            controller_launch,
-            rl_controller_launch,
-            rl_vision_controller_launch,
-            rl_inactive_spawner,
-            display_launch,
+            isaac_gui_proc,
+            camera_pointcloud_launch,
+            *gazebo_controller_actions,
+            gazebo_ready_waiter,
+            display_after_gazebo,
+            isaac_ready_waiter,
+            isaac_gated_actions,
             weed_targeting_launch,
             move_group_launch,
-            moveit_rviz_launch,
         ]
     )

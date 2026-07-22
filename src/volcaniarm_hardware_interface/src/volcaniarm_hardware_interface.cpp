@@ -1,4 +1,4 @@
-#include "volcaniarm_hardware/volcaniarm_hardware.hpp"
+#include "volcaniarm_hardware_interface/volcaniarm_hardware_interface.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -11,7 +11,7 @@
 #include "controller_manager_msgs/srv/switch_controller.hpp"
 #include "pluginlib/class_list_macros.hpp"
 
-namespace volcaniarm_hardware
+namespace volcaniarm_hardware_interface
 {
 
 namespace
@@ -158,13 +158,13 @@ VolcaniArmHardware::on_configure(const rclcpp_lifecycle::State &)
     hw_position_left_elbow_ = left_elbow_home_offset_;
     hw_position_command_left_elbow_ = left_elbow_home_offset_;
     std::cout << "[VolcaniArmHardware] Auto-home disabled. "
-              << "Call the volcaniarm_hardware/home service to home manually." << std::endl;
+              << "Call the volcaniarm_hardware_interface/home service to home manually." << std::endl;
   }
 
   // Create auxiliary node with home service
-  service_node_ = rclcpp::Node::make_shared("volcaniarm_hardware_services");
+  service_node_ = rclcpp::Node::make_shared("volcaniarm_hardware_interface_services");
   home_service_ = service_node_->create_service<std_srvs::srv::Trigger>(
-    "volcaniarm_hardware/home",
+    "volcaniarm_hardware_interface/home",
     std::bind(&VolcaniArmHardware::home_service_callback_, this,
               std::placeholders::_1, std::placeholders::_2));
 
@@ -515,8 +515,8 @@ bool VolcaniArmHardware::home_()
   }
 }
 
-}  // namespace volcaniarm_hardware
+}  // namespace volcaniarm_hardware_interface
 
 PLUGINLIB_EXPORT_CLASS(
-  volcaniarm_hardware::VolcaniArmHardware,
+  volcaniarm_hardware_interface::VolcaniArmHardware,
   hardware_interface::SystemInterface)

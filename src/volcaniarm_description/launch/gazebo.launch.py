@@ -187,15 +187,18 @@ def generate_launch_description():
             "/rgbd_camera/image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/rgbd_camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/rgbd_camera/depth_image_camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
-            "/rgbd_camera/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
         ],
         remappings=[
             ('/rgbd_camera/image', '/camera/color/image_raw'),
             ('/rgbd_camera/camera_info', '/camera/color/camera_info'),
             ('/rgbd_camera/depth_image', '/camera/aligned_depth_to_color/image_raw'),
             ('/rgbd_camera/depth_image_camera_info', '/camera/aligned_depth_to_color/camera_info'),
-            ('/rgbd_camera/points', '/camera/depth/color/points'),
         ],
+        # NOTE: Gazebo's native /rgbd_camera/points cloud is deliberately NOT
+        # bridged. /camera/depth/color/points is composed from the color +
+        # aligned-depth images by the shared depth_image_proc pipeline
+        # (volcaniarm_bringup/launch/camera_pointcloud.launch.py) so that
+        # Gazebo, Isaac, and the real RealSense all exercise the same code.
     )
 
     return LaunchDescription(

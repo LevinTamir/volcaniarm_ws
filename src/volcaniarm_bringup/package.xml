@@ -16,6 +16,8 @@
   <depend>gazebo_ros</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
+  <!-- Shared colored-pointcloud composer (camera_pointcloud.launch.py) -->
+  <depend>depth_image_proc</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

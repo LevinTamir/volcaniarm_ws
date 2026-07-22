@@ -52,6 +52,10 @@
   <xacro:property name="camera_mount_x" value="$(arg camera_mount_x)" />
   <xacro:property name="camera_mount_pitch" value="$(arg camera_mount_pitch)" />
 
+  <!-- Real-robot color palette (rgba xacro properties, inlined anonymously
+       into each visual — see materials.xacro for why not named). -->
+  <xacro:include filename="$(find volcaniarm_description)/urdf/materials.xacro" />
+
    <!-- ros2_control hardware interfaces -->
   <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_ros2_control.xacro" />
 
@@ -109,7 +113,7 @@
         <mesh filename="package://volcaniarm_description/meshes/base_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="1 0 0 1" />
+        <color rgba="${powder_red_rgba}" />
       </material>
     </visual>
     <collision>
@@ -136,7 +140,7 @@
         <mesh filename="package://volcaniarm_description/meshes/fl_table_leg_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${powder_red_rgba}" />
       </material>
     </visual>
     <collision>
@@ -166,7 +170,7 @@
         <mesh filename="package://volcaniarm_description/meshes/fl_caster_wheel_mount_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -196,7 +200,7 @@
         <mesh filename="package://volcaniarm_description/meshes/fl_caster_wheel_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -226,7 +230,7 @@
         <mesh filename="package://volcaniarm_description/meshes/fr_table_leg_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${powder_red_rgba}" />
       </material>
     </visual>
     <collision>
@@ -256,7 +260,7 @@
         <mesh filename="package://volcaniarm_description/meshes/fr_caster_wheel_mount_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -286,7 +290,7 @@
         <mesh filename="package://volcaniarm_description/meshes/fr_caster_wheel_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -316,7 +320,7 @@
         <mesh filename="package://volcaniarm_description/meshes/rl_table_leg_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${powder_red_rgba}" />
       </material>
     </visual>
     <collision>
@@ -346,7 +350,7 @@
         <mesh filename="package://volcaniarm_description/meshes/rl_caster_wheel_mount_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -376,7 +380,7 @@
         <mesh filename="package://volcaniarm_description/meshes/rl_caster_wheel_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -406,7 +410,7 @@
         <mesh filename="package://volcaniarm_description/meshes/rr_table_leg_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${powder_red_rgba}" />
       </material>
     </visual>
     <collision>
@@ -436,7 +440,7 @@
         <mesh filename="package://volcaniarm_description/meshes/rr_caster_wheel_mount_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -466,7 +470,7 @@
         <mesh filename="package://volcaniarm_description/meshes/rr_caster_wheel_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -497,7 +501,7 @@
         <mesh filename="package://volcaniarm_description/meshes/volcaniarm_base_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${steel_black_rgba}" />
       </material>
     </visual>
     <collision>
@@ -528,7 +532,7 @@
         <mesh filename="package://volcaniarm_description/meshes/volcaniarm_left_elbow_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -560,7 +564,7 @@
         <mesh filename="package://volcaniarm_description/meshes/volcaniarm_left_arm_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -594,7 +598,7 @@
         <mesh filename="package://volcaniarm_description/meshes/volcaniarm_right_elbow_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -626,7 +630,7 @@
         <mesh filename="package://volcaniarm_description/meshes/volcaniarm_right_arm_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -667,7 +671,7 @@
         <mesh filename="package://volcaniarm_description/meshes/camera_mount_linear_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="1 1 1 1" />
+        <color rgba="${powder_red_rgba}" />
       </material>
     </visual>
     <collision>
@@ -696,7 +700,7 @@
         <mesh filename="package://volcaniarm_description/meshes/camera_mount_rev_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${plastic_black_rgba}" />
       </material>
     </visual>
     <collision>
@@ -729,7 +733,7 @@
         <mesh filename="package://volcaniarm_description/meshes/camera_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="0.79216 0.81961 0.93333 1" />
+        <color rgba="${galvanized_rgba}" />
       </material>
     </visual>
     <collision>
@@ -778,7 +782,7 @@
         <sphere radius="0.008" />
       </geometry>
       <material name="tip_green">
-        <color rgba="0.0 1.0 0.0 1.0" />
+        <color rgba="${tip_green_rgba}" />
       </material>
     </visual>
     <collision>
@@ -811,7 +815,7 @@
         <sphere radius="0.008" />
       </geometry>
       <material name="closure_purple">
-        <color rgba="0.6 0.0 0.8 1.0" />
+        <color rgba="${closure_purple_rgba}" />
       </material>
     </visual>
     <collision>

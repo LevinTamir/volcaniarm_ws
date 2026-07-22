@@ -18,7 +18,7 @@
         <parameters>$(find volcaniarm_controllers)/config/volcaniarm_rl_controller.yaml</parameters>
       </xacro:if>
       <xacro:if value="${_ctrl == 'vision_policy'}">
-        <parameters>$(find volcaniarm_controller)/config/volcaniarm_rl_vision_controller.yaml</parameters>
+        <parameters>$(find volcaniarm_controllers)/config/volcaniarm_rl_vision_controller.yaml</parameters>
       </xacro:if>
     </plugin>
   </gazebo>
@@ -46,40 +46,46 @@
   <gazebo reference="camera_link">
       <sensor name="rgbd_camera" type="rgbd_camera">
           <camera>
-              <horizontal_fov>1.204</horizontal_fov>
+              <!-- RealSense D435i color-sensor geometry (the composed
+                   pointcloud inherits COLOR intrinsics since depth is
+                   aligned to color): HFOV 69° = 1.20428 rad; gz derives
+                   VFOV from the image aspect, matching the D435i's 42°
+                   spec at 16:9-ish. Clip mirrors the D435 usable depth
+                   band (MinZ ~0.195 m, 10 m rated max). Same numbers as
+                   the Isaac camera prim in
+                   volcaniarm_isaaclab/scripts/add_ros2_graph.py.
+                   (This branch renders 1280x720@10 for apriltag decode
+                   range instead of main's 848x480@15.) -->
+              <horizontal_fov>1.20428</horizontal_fov>
               <image>
                   <width>1280</width>
                   <height>720</height>
               </image>
               <clip>
-                  <near>0.3</near>
-                  <far>15</far>
+                  <near>0.195</near>
+                  <far>10</far>
               </clip>
           </camera>
           <always_on>1</always_on>
           <update_rate>10</update_rate>
           <visualize>false</visualize>
           <topic>rgbd_camera</topic>
-          <!-- All sensor outputs (image, depth, pointcloud,
-               camera_info) tagged with camera_link, matching the
-               convention gz-sim emits XYZ values in. Real hardware
-               (RealSense driver) instead emits everything tagged
-               with camera_color_optical_frame, but downstream code
-               is portable across both because:
-                 - apriltag detection is image-local; the detected
-                   marker TFs are children of whichever frame the
-                   image came in.
-                 - The calibration runner asks for the RELATIVE
-                   transform between base and ee marker TFs, which
-                   is invariant under frame relabeling.
-                 - RViz reads frame_id and renders cloud / image at
-                   that frame's TF, so as long as data convention
-                   matches the tag (link here, optical on real),
-                   visualization is correct.
-               Don't add optical_frame_id back: in this gz-sim
-               version it hijacks every sensor output, including the
-               pointcloud, which then double-rotates in RViz. -->
-          <gz_frame_id>camera_link</gz_frame_id>
+          <!-- All sensor outputs tagged with the OPTICAL frame, matching
+               what the RealSense driver and Isaac's ROS2 bridge stamp on
+               their images. This matters because /camera/depth/color/points
+               is no longer Gazebo's native cloud — it is composed from the
+               color + aligned-depth images by the shared depth_image_proc
+               pipeline (camera_pointcloud.launch.py), which back-projects
+               in the optical convention (Z forward, Y down) and inherits
+               this frame_id. Tagged with camera_link the composed cloud
+               renders tilted ~90° in RViz.
+               (The old warning about optical_frame_id double-rotating the
+               native pointcloud is obsolete: the native cloud isn't
+               bridged anymore, and this uses gz_frame_id relabeling only.)
+               AprilTag detections become children of the optical frame,
+               same as on real hardware; the calibration runner only uses
+               relative marker transforms, so it is unaffected. -->
+          <gz_frame_id>camera_color_optical_frame</gz_frame_id>
       </sensor>
   </gazebo>
 
