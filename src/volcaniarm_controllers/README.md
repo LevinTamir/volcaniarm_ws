@@ -62,9 +62,28 @@ Config: [`config/volcaniarm_rl_controller.yaml`](config/volcaniarm_rl_controller
 Model: drop the trained `policy.onnx` under [`models/`](models/) (or
 point `model_path` elsewhere via `$(find-pkg-share <pkg>)`).
 
+### `volcaniarm_controller/RLVisionPolicyController`
+
+Inference-time runtime for the vision-based policy (AME task,
+`Volcaniarm-Reach-Vision-AME-v0` in the isaaclab repo). Subscribes to an
+RGB image topic instead of a target pose: each frame is resized to the
+training resolution (96x96, `image_width`/`image_height` — must match
+`CAM_H`/`CAM_W` in the isaaclab AME `contract.py`), fed through the
+bundled encoder+actor ONNX (green-mask computation happens inside the
+bundle), and the resulting elbow targets are written like the state-based
+controller.
+
+Carries the same four safety guards as `RLPolicyController` — NaN/Inf
+rejection, per-joint clamps, EMA action smoothing — plus a stale-image
+watchdog that freezes the arm if frames stop arriving.
+
+Config: [`config/volcaniarm_rl_vision_controller.yaml`](config/volcaniarm_rl_vision_controller.yaml).
+Select with `controller:=vision_policy` (sim bringup; real support pending
+the first hardware-validated vision bundle).
+
 ## Bringup
 
-The bringup launches expose `controller:=traj|policy|all`:
+The bringup launches expose `controller:=traj|policy|vision_policy|all` (vision_policy: sim only for now):
 
 ```bash
 # Just the trajectory controller (default)
