@@ -5,8 +5,14 @@ from pathlib import Path
 import yaml
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+)
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     LaunchConfiguration,
@@ -378,24 +384,58 @@ def generate_launch_description():
 
     # Display (RViz). Skipped when the calibration dashboard is up, or when
     # moveit:=true (the MoveIt MotionPlanning RViz replaces the plain display).
-    show_display = IfCondition(PythonExpression([
+    _show_display_expr = [
         "'", LaunchConfiguration("calibration"), "' == 'false' and ",
         "'", LaunchConfiguration("mode"), "' != 'tests' and ",
         "'", LaunchConfiguration("moveit"), "' == 'false'",
-    ]))
+    ]
+    _display_source = PythonLaunchDescriptionSource(
+        os.path.join(
+            volcaniarm_description_share,
+            "launch",
+            "display.launch.py",
+        )
+    )
+    _display_args = [
+        ("use_sim_time", LaunchConfiguration("use_sim_time")),
+        ("controller", LaunchConfiguration("controller")),
+    ]
+    # Gazebo boots in seconds, so its RViz starts immediately.
     display_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                volcaniarm_description_share,
-                "launch",
-                "display.launch.py",
-            )
-        ),
-        launch_arguments=[
-            ("use_sim_time", LaunchConfiguration("use_sim_time")),
-            ("controller", LaunchConfiguration("controller")),
+        _display_source,
+        launch_arguments=_display_args,
+        condition=IfCondition(PythonExpression(
+            _show_display_expr + [" and '", LaunchConfiguration("sim"), "' == 'gazebo'"]
+        )),
+    )
+    # Isaac Sim takes ~1 min to boot; opening RViz against a dead bridge
+    # just shows an empty scene with TF errors. Gate it on the bridge
+    # actually publishing: a throwaway waiter process polls for
+    # /isaac_joint_states and exits, and RViz starts on its exit. With
+    # isaac_gui:=false against an already-running Isaac the topic exists
+    # immediately, so this degrades to a no-delay start.
+    isaac_ready_waiter = ExecuteProcess(
+        cmd=[
+            "bash", "-c",
+            "echo '[sim_bringup] waiting for Isaac Sim bridge (/isaac_joint_states)...'; "
+            "until ros2 topic list 2>/dev/null | grep -qx /isaac_joint_states; "
+            "do sleep 2; done; "
+            "echo '[sim_bringup] Isaac Sim bridge is up — starting RViz'",
         ],
-        condition=show_display,
+        name="isaac_ready_waiter",
+        output="screen",
+        condition=IfCondition(PythonExpression(
+            _show_display_expr + [" and '", LaunchConfiguration("sim"), "' == 'isaac'"]
+        )),
+    )
+    display_after_isaac = RegisterEventHandler(
+        OnProcessExit(
+            target_action=isaac_ready_waiter,
+            on_exit=[IncludeLaunchDescription(
+                _display_source,
+                launch_arguments=_display_args,
+            )],
+        )
     )
 
     # Calibration dashboard activated when calibration:=true (any mode)
@@ -488,6 +528,8 @@ def generate_launch_description():
             rl_vision_controller_launch,
             rl_inactive_spawner,
             display_launch,
+            isaac_ready_waiter,
+            display_after_isaac,
             weed_targeting_launch,
             calibration_dashboard,
             move_group_launch,
