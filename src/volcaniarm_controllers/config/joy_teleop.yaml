@@ -4,8 +4,10 @@ volcaniarm_joystick_teleop:
     rate_hz: 20.0
 
     # Hold-to-activate button (axes ignored unless held).
-    # Default 5 = RB (Xbox) / R1 (PS).
-    deadman_button: 5
+    # Jazzy's joy_node uses the SDL GameController mapping, where the
+    # right shoulder is index 10 (verified empirically with an Xbox
+    # Series X pad over BT — old joydev mapping had RB=5).
+    deadman_button: 10
 
     # Axis mappings: left-stick X -> EE Y (arm plane),
     #                left-stick Y -> EE Z (world up).
@@ -38,10 +40,10 @@ volcaniarm_joystick_teleop:
       - volcaniarm_left_elbow_joint
 
     # Home: deadman + this button publishes one trajectory point sending
-    # both elbows to home_positions over home_duration_sec. Default 0
-    # is X (Xbox) / square (PS). After triggering, release+repress the
+    # both elbows to home_positions over home_duration_sec. SDL mapping:
+    # 2 = X (Xbox) / square (PS). After triggering, release+repress the
     # deadman to resume stick teleop from the new pose.
-    home_button: 0
+    home_button: 2
     # Order MUST match joint_names above (right first, left second).
     home_positions: [0.0, 0.0]
     home_duration_sec: 3.0
