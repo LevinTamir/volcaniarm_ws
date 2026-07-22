@@ -671,7 +671,7 @@
         <mesh filename="package://volcaniarm_description/meshes/camera_mount_linear_link.STL" />
       </geometry>
       <material name="">
-        <color rgba="${galvanized_rgba}" />
+        <color rgba="${powder_red_rgba}" />
       </material>
     </visual>
     <collision>
