@@ -1,11 +1,12 @@
 <?xml version="1.0"?>
 
 <!-- Real-robot flat-color palette — the single source of visual colors for
-     RViz and Gazebo. Each color exists twice on purpose:
-       * a xacro property (so visuals can inline the rgba — libsdformat and
-         the Isaac URDF importer don't reliably resolve named-material
-         references, RViz does)
-       * a named <material> (so RViz shows a meaningful name)
+     RViz and Gazebo, as xacro rgba properties that visuals inline into
+     ANONYMOUS <material name=""> tags. Deliberately no named/root-level
+     <material> definitions: RViz's urdf material resolver maps materials
+     by name and repaints every referencing link with one entry (whole
+     robot rendered a single color), while anonymous inline colors render
+     correctly in RViz, libsdformat/gz, and the Isaac URDF importer alike.
      Keep the RGB values in sync with the PBR palette in
      volcaniarm_isaaclab/scripts/apply_materials.py (MATERIAL_GROUPS
      base_color) — that script is what colors the Isaac Sim USD; these flat
@@ -15,27 +16,15 @@
 
   <!-- Powder-coated red table frame (base_link + table legs). -->
   <xacro:property name="powder_red_rgba" value="0.62 0.07 0.09 1.0"/>
-  <material name="powder_red">
-    <color rgba="${powder_red_rgba}"/>
-  </material>
 
   <!-- Cool galvanized steel (arm links, camera, casters). -->
   <xacro:property name="galvanized_rgba" value="0.72 0.74 0.76 1.0"/>
-  <material name="galvanized">
-    <color rgba="${galvanized_rgba}"/>
-  </material>
 
   <!-- Painted black steel (arm mounting column). -->
   <xacro:property name="steel_black_rgba" value="0.02 0.02 0.02 1.0"/>
-  <material name="steel_black">
-    <color rgba="${steel_black_rgba}"/>
-  </material>
 
   <!-- Matte black printed plastic (camera rev mount). -->
   <xacro:property name="plastic_black_rgba" value="0.04 0.04 0.04 1.0"/>
-  <material name="plastic_black">
-    <color rgba="${plastic_black_rgba}"/>
-  </material>
 
   <!-- Debug-visual colors (closure scaffolding spheres — sim-side aids,
        stripped from the Isaac URDF by sync_urdf.py). -->
