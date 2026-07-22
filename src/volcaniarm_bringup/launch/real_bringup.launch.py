@@ -172,7 +172,7 @@ def generate_launch_description():
         "serial_port",
         default_value="/dev/volcaniarm",
         description="Serial port for hardware interface (stable symlink "
-                    "created by the udev rule in volcaniarm_hardware/udev/)",
+                    "created by the udev rule in volcaniarm_hardware_interface/udev/)",
     )
 
     auto_home_arg = DeclareLaunchArgument(
@@ -180,8 +180,17 @@ def generate_launch_description():
         default_value="false",
         choices=["true", "false"],
         description="If true, run limit-switch homing during hardware on_configure. "
-                    "If false, boot without homing and use the volcaniarm_hardware/home "
+                    "If false, boot without homing and use the volcaniarm_hardware_interface/home "
                     "service to home manually when ready.",
+    )
+
+    moveit_arg = DeclareLaunchArgument(
+        "moveit",
+        default_value="false",
+        choices=["true", "false"],
+        description="Launch MoveIt move_group + MotionPlanning RViz (replaces "
+                    "the plain display RViz). Same phantom-chain planning "
+                    "setup as sim_bringup moveit:=true.",
     )
 
     # Controller mode:
@@ -224,21 +233,19 @@ def generate_launch_description():
                     "enables the on-robot eye-in-hand calibration.",
     )
 
-    moveit_arg = DeclareLaunchArgument(
-        "moveit",
-        default_value="false",
-        choices=["true", "false"],
-        description="Launch MoveIt move_group + MotionPlanning RViz",
-    )
-
     # Pointcloud is on by default for parity with sim and so RViz / the
     # weed detector see depth without needing an extra arg. Disable on
     # bandwidth-constrained setups with pointcloud:=false.
+    # The cloud is NOT the RealSense driver's own — it is composed from the
+    # color + aligned-depth images by the shared depth_image_proc pipeline
+    # (camera_pointcloud.launch.py), the same code path Gazebo and Isaac use.
     pointcloud_arg = DeclareLaunchArgument(
         "pointcloud",
         default_value="true",
         choices=["true", "false"],
-        description="Publish /camera/depth/color/points from the RealSense driver",
+        description="Compose /camera/depth/color/points (XYZRGB) from the "
+                    "color + aligned-depth images via the shared "
+                    "depth_image_proc pipeline",
     )
 
     # Drives both the URDF mesh scale (via the apriltag xacro) and the
@@ -421,6 +428,26 @@ def generate_launch_description():
         condition=show_display,
     )
 
+    # MoveIt (opt-in): move_group (+ joint_state_transformer) and the
+    # MotionPlanning RViz, replacing the plain display. No readiness
+    # gating needed on real hardware — the interface is up in seconds.
+    volcaniarm_moveit_share = get_package_share_directory("volcaniarm_moveit_config")
+    is_moveit = IfCondition(LaunchConfiguration("moveit"))
+    move_group_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(volcaniarm_moveit_share, "launch", "move_group.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_moveit,
+    )
+    moveit_rviz_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(volcaniarm_moveit_share, "launch", "moveit_rviz.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_moveit,
+    )
+
     # Calibration dashboard.
     # Activated when calibration:=true (any mode) OR when mode=tests
     # with calibration:=false (the standard test workflow). The
@@ -468,28 +495,23 @@ def generate_launch_description():
             'depth_module.depth_profile': '848x480x30',
             'rgb_camera.color_profile': '848x480x30',
             'align_depth.enable': 'true',
-            'pointcloud.enable': LaunchConfiguration("pointcloud"),
+            # Driver cloud stays off — /camera/depth/color/points comes from
+            # the shared depth_image_proc composer below instead.
+            'pointcloud.enable': 'false',
             'publish_tf': 'false',  # URDF handles all TF
         }.items(),
     )
 
-    # MoveIt (opt-in): move_group + MotionPlanning RViz, reusing the running
-    # robot_state_publisher, JTC and passive broadcaster.
-    is_moveit = IfCondition(LaunchConfiguration("moveit"))
-    volcaniarm_moveit_share = get_package_share_directory("volcaniarm_moveit_config")
-    move_group_launch = IncludeLaunchDescription(
+    # Shared colored-pointcloud composer — same include sim_bringup uses,
+    # so real hardware and both sims generate the cloud with the same code.
+    camera_pointcloud_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(volcaniarm_moveit_share, "launch", "move_group.launch.py")
+            os.path.join(
+                get_package_share_directory("volcaniarm_bringup"),
+                "launch", "camera_pointcloud.launch.py")
         ),
         launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=is_moveit,
-    )
-    moveit_rviz_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(volcaniarm_moveit_share, "launch", "moveit_rviz.launch.py")
-        ),
-        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=is_moveit,
+        condition=IfCondition(LaunchConfiguration("pointcloud")),
     )
 
     return LaunchDescription(
@@ -497,10 +519,10 @@ def generate_launch_description():
             use_sim_time_arg,
             serial_port_arg,
             auto_home_arg,
+            moveit_arg,
             controller_arg,
             mode_arg,
             calibration_arg,
-            moveit_arg,
             pointcloud_arg,
             tag_size_arg,
             marker_world_rpy_arg,
@@ -526,6 +548,7 @@ def generate_launch_description():
             rl_inactive_spawner,
             weed_targeting_launch,
             realsense_camera,
+            camera_pointcloud_launch,
             calibration_dashboard,
             move_group_launch,
             moveit_rviz_launch,

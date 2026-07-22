@@ -51,22 +51,30 @@
 
     <scene>
       <ambient>0.4 0.4 0.4 1</ambient>
-      <background>0.85 0.86 0.88 1</background>
+      <background>0.7 0.8 1.0 1</background>
       <grid>false</grid>
     </scene>
 
-    <!-- Small ground plane under the robot -->
+    <!-- ==================================================================
+         Lab decor mirroring the Isaac Sim lab overlay
+         (volcaniarm_isaaclab/scripts/build_lab.py). Same colors, same
+         dimensions, same weed asset, so the two sims share a visual
+         reference:
+           floor  concrete grey  (0.72 0.70 0.68)
+           walls  off-white      (0.92 0.91 0.88), open front / no ceiling
+           mat    matte black rubber, 0.9 x 2.0 x 0.006 m centred on robot
+           weed   3D-printed fake_weed STL, 0.115 m tall, on the mat
+         ================================================================== -->
+
+    <!-- Concrete floor under the robot -->
     <model name="ground_plane">
       <static>true</static>
-      <!-- Offset toward the open front (-X) so the floor is shallow behind the arm
-           (+X) and extends into the open front working area (not a centred square). -->
-      <pose>-0.75 0 0 0 0 0</pose>
       <link name="link">
         <collision name="collision">
           <geometry>
             <plane>
               <normal>0 0 1</normal>
-              <size>3.5 5</size>
+              <size>8 8</size>
             </plane>
           </geometry>
           <surface>
@@ -81,71 +89,33 @@
           <geometry>
             <plane>
               <normal>0 0 1</normal>
-              <size>3.5 5</size>
+              <size>8 8</size>
             </plane>
           </geometry>
           <material>
-            <ambient>0.45 0.44 0.40 1</ambient>
-            <diffuse>0.72 0.70 0.63 1</diffuse>
+            <ambient>0.72 0.70 0.68 1</ambient>
+            <diffuse>0.72 0.70 0.68 1</diffuse>
             <specular>0.05 0.05 0.05 1</specular>
           </material>
         </visual>
       </link>
     </model>
 
-    <!-- Lab walls: back wall (+X, ~1 m behind the arm) + two side walls (+/-Y at
-         2.5 m), giving an indoors backdrop while the front (-X, the working side) is
-         left open so the view and camera aren't boxed in. Side walls run from the open
-         front back to the rear wall. 2.5 m tall, light beige, visual only. -->
-    <model name="lab_walls">
-      <static>true</static>
-      <link name="walls_link">
-        <visual name="wall_px">
-          <pose>1.0 0 1.25 0 0 0</pose>
-          <geometry><box><size>0.05 5.0 2.5</size></box></geometry>
-          <material>
-            <ambient>0.62 0.59 0.53 1</ambient>
-            <diffuse>0.90 0.86 0.78 1</diffuse>
-            <specular>0.02 0.02 0.02 1</specular>
-          </material>
-        </visual>
-        <visual name="wall_py">
-          <pose>-0.75 2.5 1.25 0 0 0</pose>
-          <geometry><box><size>3.5 0.05 2.5</size></box></geometry>
-          <material>
-            <ambient>0.62 0.59 0.53 1</ambient>
-            <diffuse>0.90 0.86 0.78 1</diffuse>
-            <specular>0.02 0.02 0.02 1</specular>
-          </material>
-        </visual>
-        <visual name="wall_ny">
-          <pose>-0.75 -2.5 1.25 0 0 0</pose>
-          <geometry><box><size>3.5 0.05 2.5</size></box></geometry>
-          <material>
-            <ambient>0.62 0.59 0.53 1</ambient>
-            <diffuse>0.90 0.86 0.78 1</diffuse>
-            <specular>0.02 0.02 0.02 1</specular>
-          </material>
-        </visual>
-      </link>
-    </model>
-
-    <!-- Black mat under the robot. Covers the table-leg footprint
-         (0.68 x 1.40 m, legs at +/-0.34 x, +/-0.698 y around base_link, robot
-         spawned at world origin) plus ~15 cm margin each side. Thin box sitting on
-         the floor; visual only. The potted plant rests on top of it. -->
+    <!-- Black non-reflective rubber mat under the rig. Visual-only (no
+         collision), same as the Isaac overlay — the robot's wheels rest
+         on the ground plane, the 6 mm mat is cosmetic. -->
     <model name="floor_mat">
       <static>true</static>
-      <pose>0 0 0.0025 0 0 0</pose>
-      <link name="mat_link">
-        <visual name="mat_visual">
+      <pose>0 0 0.003 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
           <geometry>
             <box>
-              <size>1.00 1.70 0.005</size>
+              <size>0.9 2.0 0.006</size>
             </box>
           </geometry>
           <material>
-            <ambient>0.02 0.02 0.02 1</ambient>
+            <ambient>0.04 0.04 0.04 1</ambient>
             <diffuse>0.04 0.04 0.04 1</diffuse>
             <specular>0.0 0.0 0.0 1</specular>
           </material>
@@ -153,45 +123,83 @@
       </link>
     </model>
 
-    <!-- Potted weed: vase + plant as one model. Raised by the mat thickness
-         (0.005) so the vase bottom rests on top of the black mat. -->
-    <model name="weed_target">
+    <!-- Room shell: back wall 0.5 m behind the arm plus two side walls.
+         Open-fronted and open-topped like the Isaac lab — the walls exist
+         to give the camera a realistic background, not to seal a volume.
+         NOTE: the Gazebo robot faces -X (mirrored vs the Isaac stage, where
+         the converted USD faces +X), so the whole room is rotated 180°
+         relative to build_lab.py: back wall on +X, interior x in
+         [-3.0, 0.5], y in [-2.0, 2.0], height 2.6. -->
+    <model name="room_shell">
       <static>true</static>
-      <pose>-0.12 0.25 0.005 0 0 0</pose>
-
-      <link name="vase_link">
-        <!-- Vase cylinder: 0.15m tall, shifted up so bottom sits at Z=0 -->
-        <visual name="vase_visual">
-          <pose>0 0 0.075 0 0 0</pose>
+      <link name="link">
+        <visual name="back_wall">
+          <pose>0.55 0 1.3 0 0 0</pose>
           <geometry>
-            <cylinder>
-              <radius>0.04</radius>
-              <length>0.15</length>
-            </cylinder>
+            <box>
+              <size>0.1 4.2 2.6</size>
+            </box>
           </geometry>
           <material>
-            <ambient>0.05 0.05 0.05 1</ambient>
-            <diffuse>0.1 0.1 0.1 1</diffuse>
+            <ambient>0.92 0.91 0.88 1</ambient>
+            <diffuse>0.92 0.91 0.88 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
           </material>
         </visual>
+        <visual name="left_wall">
+          <pose>-1.25 2.05 1.3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>3.5 0.1 2.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.92 0.91 0.88 1</ambient>
+            <diffuse>0.92 0.91 0.88 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+        <visual name="right_wall">
+          <pose>-1.25 -2.05 1.3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>3.5 0.1 2.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.92 0.91 0.88 1</ambient>
+            <diffuse>0.92 0.91 0.88 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
 
-        <!-- 3D-printed fake plant (green PLA), to match the real one. The STL is
-             modelled in mm so scale to metres (0.001). Its origin is a bbox corner,
-             so shift X/Y by -half the footprint to centre it on the vase axis; the
-             bottom (mesh min Z = 0) then sits on the vase top at Z=0.15. Visual only,
-             no collision (same as before). -->
-        <visual name="plant_visual">
-          <pose>-0.0347 -0.0316 0.15 0 0 0</pose>
+    <!-- The 3D-printed fake weed standing on the mat — the same STL the
+         Isaac task trains against (volcaniarm_isaaclab assets/STLs/
+         fake_weed.stl, authored in mm at 73.35 mm tall, bbox cornered at
+         the origin). Scale 0.115/73.352 = 0.0015678 brings it to the
+         0.115 m contract height; the visual pose offsets by half the
+         scaled XY footprint so the model pose is where the weed stands.
+         Pose is Isaac's WEED_XY (0.071, 0.10) rotated 180° with the room
+         (Gazebo robot faces -X): 7.1 cm in front of the arm, 10 cm to its
+         left, base on the mat top. -->
+    <model name="weed_target">
+      <static>true</static>
+      <pose>-0.071 -0.10 0.006 0 0 0</pose>
+      <link name="link">
+        <visual name="weed_visual">
+          <pose>-0.054327 -0.049507 0 0 0 0</pose>
           <geometry>
             <mesh>
-              <uri>model://plant/meshes/small_fake_plant.STL</uri>
-              <scale>0.001 0.001 0.001</scale>
+              <uri>model://fake_weed/meshes/fake_weed.stl</uri>
+              <scale>0.0015678 0.0015678 0.0015678</scale>
             </mesh>
           </geometry>
           <material>
-            <ambient>0.02 0.15 0.03 1</ambient>
-            <diffuse>0.10 0.55 0.12 1</diffuse>
-            <specular>0.20 0.25 0.20 1</specular>
+            <ambient>0.24 0.75 0.51 1</ambient>
+            <diffuse>0.24 0.75 0.51 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
           </material>
         </visual>
       </link>
