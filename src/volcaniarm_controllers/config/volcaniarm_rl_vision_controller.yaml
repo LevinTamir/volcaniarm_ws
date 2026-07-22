@@ -26,7 +26,7 @@ volcaniarm_rl_vision_controller:
 
     # Bundled ONNX (image + joint_pos_rel + last_action → action),
     # exported by source/volcaniarm/scripts/rsl_rl/export_onnx_bundle.py.
-    model_path: "$(find-pkg-share volcaniarm_controller)/models/policy_vision.onnx"
+    model_path: "$(find-pkg-share volcaniarm_controllers)/models/policy_vision.onnx"
 
     # Camera image topic. Default matches both Gazebo's bridged
     # `/camera/color/image_raw` and the IsaacSim ROS2 USD's
@@ -42,14 +42,43 @@ volcaniarm_rl_vision_controller:
     image_height: 96
 
     # -- Safety / polish (carried over from RLPolicyController) --
-    # joint_position_min / joint_position_max omitted on purpose:
     # rclcpp on Jazzy treats explicit empty arrays as "no value set",
     # which the controller's get_parameter().as_double_array() call
     # then throws on. The controller's auto_declare already provides
-    # an empty default that disables clamping; just leave both out
-    # of YAML to keep clamping off, or specify both as real arrays
-    # (one entry per joint) to enable it.
-    action_smoothing_alpha: 1.0
+    # an empty default that disables clamping; leave both out of
+    # YAML to keep clamping off, or specify real arrays (one entry
+    # per joint) to enforce mechanical / safety limits independent
+    # of what the policy outputs. Recommended on real hardware.
+    # Order matches `joints` above: [left_elbow, right_elbow].
+    #
+    # !!! SIM-TO-SIM SETTING — TIGHTEN BEFORE REAL HARDWARE !!!
+    #
+    # Currently set to the URDF's mechanical joint limits (+-3.14 rad), i.e.
+    # the controller imposes no restriction of its own and the URDF
+    # command_interface bounds are the only backstop. That is deliberate while
+    # validating against Isaac Sim, where an over-travel costs nothing.
+    #
+    # History: this was +-1.0 as a conservative real-hardware guard, but that
+    # is TIGHTER than the range the policy trained in (+-1.3089969 rad, set by
+    # the `elbow_pos_in_range` reward term). The controller was silently
+    # refusing valid actions, costing roughly half the reachable Y span at
+    # canopy height — y in [-0.219,+0.159] collapsed to [-0.098,+0.108] in the
+    # 0.125-0.150 m band — which is why the arm failed to reach weeds toward
+    # the outer edges in Y.
+    #
+    # For the physical robot, use +-1.3089969 (the trained envelope) at most,
+    # and only after confirming the arm's true mechanical limits. A clamp
+    # tighter than training breaks reachability; a clamp wider than training
+    # lets the policy command poses it has never seen.
+    joint_position_min: [-3.14, -3.14]
+    joint_position_max: [3.14, 3.14]
+
+    # EMA smoothing on raw policy outputs. 1.0 = no smoothing.
+    # Lower values damp the high-frequency demands that exceed the
+    # stepper's physical step rate (the sim-to-real gap that caused
+    # the state-based policy to chase its own tail on first deploy).
+    # 0.3 = 70% old / 30% new each tick.
+    action_smoothing_alpha: 0.3
 
     # Stale-image watchdog. If the latest image stamp is older than
     # this many seconds the controller falls back to the home pose.
