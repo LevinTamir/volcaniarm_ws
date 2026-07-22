@@ -1,37 +1,45 @@
 <?xml version="1.0"?>
 
-<robot>
+<!-- Real-robot flat-color palette — the single source of visual colors for
+     RViz and Gazebo. Each color exists twice on purpose:
+       * a xacro property (so visuals can inline the rgba — libsdformat and
+         the Isaac URDF importer don't reliably resolve named-material
+         references, RViz does)
+       * a named <material> (so RViz shows a meaningful name)
+     Keep the RGB values in sync with the PBR palette in
+     volcaniarm_isaaclab/scripts/apply_materials.py (MATERIAL_GROUPS
+     base_color) — that script is what colors the Isaac Sim USD; these flat
+     values are its RViz/Gazebo approximation. -->
 
-  <material name="black">
-    <color rgba="0.0 0.0 0.0 1.0"/>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Powder-coated red table frame (base_link + table legs). -->
+  <xacro:property name="powder_red_rgba" value="0.62 0.07 0.09 1.0"/>
+  <material name="powder_red">
+    <color rgba="${powder_red_rgba}"/>
   </material>
 
-  <material name="white">
-    <color rgba="1.0 1.0 1.0 1.0"/>
+  <!-- Cool galvanized steel (arm links, camera, casters). -->
+  <xacro:property name="galvanized_rgba" value="0.72 0.74 0.76 1.0"/>
+  <material name="galvanized">
+    <color rgba="${galvanized_rgba}"/>
   </material>
 
-  <material name="red">
-    <color rgba="0.8 0.0 0.0 1.0"/>
+  <!-- Painted black steel (arm mounting column). -->
+  <xacro:property name="steel_black_rgba" value="0.02 0.02 0.02 1.0"/>
+  <material name="steel_black">
+    <color rgba="${steel_black_rgba}"/>
   </material>
 
-  <material name="blue">
-    <color rgba="0.0 0.0 0.8 1.0"/>
+  <!-- Matte black printed plastic (camera rev mount). -->
+  <xacro:property name="plastic_black_rgba" value="0.04 0.04 0.04 1.0"/>
+  <material name="plastic_black">
+    <color rgba="${plastic_black_rgba}"/>
   </material>
 
-  <material name="green">
-    <color rgba="0.0 0.8 0.0 1.0"/>
-  </material>
-
-  <material name="grey">
-    <color rgba="0.75 0.75 0.8 1.0"/>
-  </material>
-
-  <material name="orange">
-    <color rgba="${255/255} ${108/255} ${10/255} 1.0"/>
-  </material>
-
-  <material name="brown">
-    <color rgba="${222/255} ${207/255} ${195/255} 1.0"/>
-  </material>
+  <!-- Debug-visual colors (closure scaffolding spheres — sim-side aids,
+       stripped from the Isaac URDF by sync_urdf.py). -->
+  <xacro:property name="tip_green_rgba" value="0.0 1.0 0.0 1.0"/>
+  <xacro:property name="closure_purple_rgba" value="0.6 0.0 0.8 1.0"/>
 
 </robot>
