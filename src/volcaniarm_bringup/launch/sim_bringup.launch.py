@@ -33,7 +33,7 @@ _CAMERA_POSE_CONFIG = (
 # but Isaac can still be loading assets / compiling shaders for a while —
 # opening RViz into that just shows a stuttering scene. Bump if RViz still
 # comes up before Isaac feels responsive on a slower machine.
-ISAAC_RVIZ_SETTLE_SEC = 3
+ISAAC_RVIZ_SETTLE_SEC = 1
 
 
 def _camera_xacro_defaults() -> dict:
