@@ -426,6 +426,27 @@ def generate_launch_description():
         "'", LaunchConfiguration("mode"), "' != 'tests' and ",
         "'", LaunchConfiguration("moveit"), "' == 'false'",
     ]
+    # Either RViz flavor wants the sim publishing before it opens, so the
+    # readiness waiters below run for the plain display OR the MoveIt one.
+    _wants_rviz_expr = [
+        "(", *_show_display_expr,
+        ") or '", LaunchConfiguration("moveit"), "' == 'true'",
+    ]
+
+    # MoveIt MotionPlanning RViz — instantiated per readiness handler below
+    # (one for each sim backend) so it opens against live sim data with the
+    # same settle delay as the plain display.
+    volcaniarm_moveit_share = get_package_share_directory("volcaniarm_moveit_config")
+
+    def _moveit_rviz_include():
+        return IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(volcaniarm_moveit_share, "launch", "moveit_rviz.launch.py")
+            ),
+            launch_arguments=[
+                ("use_sim_time", LaunchConfiguration("use_sim_time"))],
+            condition=IfCondition(LaunchConfiguration("moveit")),
+        )
     _display_source = PythonLaunchDescriptionSource(
         os.path.join(
             volcaniarm_description_share,
@@ -453,7 +474,8 @@ def generate_launch_description():
         name="gazebo_ready_waiter",
         output="screen",
         condition=IfCondition(PythonExpression(
-            _show_display_expr + [" and '", LaunchConfiguration("sim"), "' == 'gazebo'"]
+            ["(", *_wants_rviz_expr, ") and '",
+             LaunchConfiguration("sim"), "' == 'gazebo'"]
         )),
     )
     display_after_gazebo = RegisterEventHandler(
@@ -461,10 +483,15 @@ def generate_launch_description():
             target_action=gazebo_ready_waiter,
             on_exit=[TimerAction(
                 period=float(RVIZ_SETTLE_SEC),
-                actions=[IncludeLaunchDescription(
-                    _display_source,
-                    launch_arguments=_display_args,
-                )],
+                actions=[
+                    IncludeLaunchDescription(
+                        _display_source,
+                        launch_arguments=_display_args,
+                        condition=IfCondition(
+                            PythonExpression(_show_display_expr)),
+                    ),
+                    _moveit_rviz_include(),
+                ],
             )],
         )
     )
@@ -504,12 +531,15 @@ def generate_launch_description():
                 # opening late rather than against a stuttering sim.
                 TimerAction(
                     period=float(RVIZ_SETTLE_SEC),
-                    actions=[IncludeLaunchDescription(
-                        _display_source,
-                        launch_arguments=_display_args,
-                        condition=IfCondition(
-                            PythonExpression(_show_display_expr)),
-                    )],
+                    actions=[
+                        IncludeLaunchDescription(
+                            _display_source,
+                            launch_arguments=_display_args,
+                            condition=IfCondition(
+                                PythonExpression(_show_display_expr)),
+                        ),
+                        _moveit_rviz_include(),
+                    ],
                 ),
             ],
         )
@@ -555,23 +585,17 @@ def generate_launch_description():
         ],
     )
 
-    # MoveIt (opt-in): move_group + MotionPlanning RViz, reusing the running
-    # robot_state_publisher, JTC and passive broadcaster.
-    is_moveit = IfCondition(LaunchConfiguration("moveit"))
-    volcaniarm_moveit_share = get_package_share_directory("volcaniarm_moveit_config")
+    # MoveIt (opt-in): move_group, reusing the running robot_state_publisher,
+    # JTC and passive broadcaster. The MotionPlanning RViz is NOT started
+    # here — it fires from the per-backend readiness handlers above, after
+    # the sim publishes real data plus the shared settle delay, same as the
+    # plain display.
     move_group_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(volcaniarm_moveit_share, "launch", "move_group.launch.py")
         ),
         launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=is_moveit,
-    )
-    moveit_rviz_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(volcaniarm_moveit_share, "launch", "moveit_rviz.launch.py")
-        ),
-        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=is_moveit,
+        condition=IfCondition(LaunchConfiguration("moveit")),
     )
 
     return LaunchDescription(
@@ -609,6 +633,5 @@ def generate_launch_description():
             weed_targeting_launch,
             calibration_dashboard,
             move_group_launch,
-            moveit_rviz_launch,
         ]
     )
