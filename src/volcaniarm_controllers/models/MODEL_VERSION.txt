@@ -6,5 +6,11 @@ policy.onnx
           restricted to elbow joints, 10× smoothness bump.
 
 policy_vision.onnx (not tracked — see .gitignore)
-  source: volcaniarm_isaaclab logs/reach_vision/rsl_rl/volcaniarm_reach_vision/2026-05-05_13-01-17/exported/policy_bundled.onnx
-  task:   Volcaniarm-Reach-Vision-v0 (image → ResNet18 + MLP, bundled)
+  source: volcaniarm_isaaclab logs/reach_vision_ame/rsl_rl/volcaniarm_reach_vision_ame/2026-07-22_18-26-01/exported/policy_bundled.onnx
+  md5:    b9d34aa29236fa5f05cc38dbe828b677
+  task:   Volcaniarm-Reach-Vision-AME-v0 (green mask → CNN + spatial attention, bundled; model_700.pt)
+  notes:  First AME policy trained on the full 2D reachable region (table-
+          driven weed sampling under the joystick-measured mirrored joint
+          bounds, 2026-07-22). Bundle input is 96x96 RGB (controller resize),
+          nominal green thresholds baked. Replaces the retired ResNet18
+          bundle from 2026-05-05.
