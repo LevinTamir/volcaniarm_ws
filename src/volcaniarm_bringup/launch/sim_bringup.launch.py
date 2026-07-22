@@ -410,17 +410,20 @@ def generate_launch_description():
     )
     # Isaac Sim takes ~1 min to boot; opening RViz against a dead bridge
     # just shows an empty scene with TF errors. Gate it on the bridge
-    # actually publishing: a throwaway waiter process polls for
-    # /isaac_joint_states and exits, and RViz starts on its exit. With
-    # isaac_gui:=false against an already-running Isaac the topic exists
-    # immediately, so this degrades to a no-delay start.
+    # actually *delivering data*: a throwaway waiter blocks until a
+    # /isaac_joint_states message arrives, and RViz starts on its exit.
+    # (`ros2 topic list` is NOT a valid readiness signal here — the
+    # ros2_control TopicBasedSystem subscribes to /isaac_joint_states at
+    # startup, which already makes the name appear in the graph.) With
+    # isaac_gui:=false against an already-running Isaac the first message
+    # lands within one cycle, so this degrades to a no-delay start.
     isaac_ready_waiter = ExecuteProcess(
         cmd=[
             "bash", "-c",
-            "echo '[sim_bringup] waiting for Isaac Sim bridge (/isaac_joint_states)...'; "
-            "until ros2 topic list 2>/dev/null | grep -qx /isaac_joint_states; "
-            "do sleep 2; done; "
-            "echo '[sim_bringup] Isaac Sim bridge is up — starting RViz'",
+            "echo '[sim_bringup] waiting for Isaac Sim to publish /isaac_joint_states...'; "
+            "until timeout 5 ros2 topic echo /isaac_joint_states --once >/dev/null 2>&1; "
+            "do :; done; "
+            "echo '[sim_bringup] Isaac Sim bridge is publishing — starting RViz'",
         ],
         name="isaac_ready_waiter",
         output="screen",
