@@ -28,12 +28,13 @@ _CAMERA_POSE_CONFIG = (
     Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'
          'config/camera_pose.yaml').expanduser())
 
-# Seconds between the first /isaac_joint_states message and opening RViz on
-# the sim:=isaac path. The first bridge message proves the sim is playing,
-# but Isaac can still be loading assets / compiling shaders for a while —
-# opening RViz into that just shows a stuttering scene. Bump if RViz still
-# comes up before Isaac feels responsive on a slower machine.
-ISAAC_RVIZ_SETTLE_SEC = 1
+# Seconds between the sim's first data message and opening RViz (both
+# backends: /isaac_joint_states for Isaac, /joint_states for Gazebo). The
+# first message proves the sim is playing, but it can still be loading
+# assets / compiling shaders for a moment — opening RViz into that just
+# shows a stuttering scene. Bump if RViz still comes up before the sim
+# feels responsive on a slower machine.
+RVIZ_SETTLE_SEC = 1
 
 
 def _camera_xacro_defaults() -> dict:
@@ -420,13 +421,36 @@ def generate_launch_description():
         ("use_sim_time", LaunchConfiguration("use_sim_time")),
         ("controller", LaunchConfiguration("controller")),
     ]
-    # Gazebo boots in seconds, so its RViz starts immediately.
-    display_launch = IncludeLaunchDescription(
-        _display_source,
-        launch_arguments=_display_args,
+    # Gazebo boots in seconds, but the same sim-first-then-RViz order as
+    # the isaac path still applies: wait for the first real /joint_states
+    # message (broadcaster active → controllers spawned → Gazebo running),
+    # then open RViz after the shared settle delay.
+    gazebo_ready_waiter = ExecuteProcess(
+        cmd=[
+            "bash", "-c",
+            "echo '[sim_bringup] waiting for Gazebo to publish /joint_states...'; "
+            "until timeout 5 ros2 topic echo /joint_states --once >/dev/null 2>&1; "
+            "do :; done; "
+            "echo '[sim_bringup] Gazebo is publishing — "
+            "RViz in {}s'".format(RVIZ_SETTLE_SEC),
+        ],
+        name="gazebo_ready_waiter",
+        output="screen",
         condition=IfCondition(PythonExpression(
             _show_display_expr + [" and '", LaunchConfiguration("sim"), "' == 'gazebo'"]
         )),
+    )
+    display_after_gazebo = RegisterEventHandler(
+        OnProcessExit(
+            target_action=gazebo_ready_waiter,
+            on_exit=[TimerAction(
+                period=float(RVIZ_SETTLE_SEC),
+                actions=[IncludeLaunchDescription(
+                    _display_source,
+                    launch_arguments=_display_args,
+                )],
+            )],
+        )
     )
     # Isaac Sim takes ~1 min to boot. Anything that needs a *live* sim —
     # controller spawners (their activate call needs the /clock-driven
@@ -446,7 +470,7 @@ def generate_launch_description():
             "until timeout 5 ros2 topic echo /isaac_joint_states --once >/dev/null 2>&1; "
             "do :; done; "
             "echo '[sim_bringup] Isaac Sim bridge is publishing — "
-            "spawning controllers, RViz in {}s'".format(ISAAC_RVIZ_SETTLE_SEC),
+            "spawning controllers, RViz in {}s'".format(RVIZ_SETTLE_SEC),
         ],
         name="isaac_ready_waiter",
         output="screen",
@@ -463,7 +487,7 @@ def generate_launch_description():
                 # in flight). RViz is pure display, so err on the side of
                 # opening late rather than against a stuttering sim.
                 TimerAction(
-                    period=float(ISAAC_RVIZ_SETTLE_SEC),
+                    period=float(RVIZ_SETTLE_SEC),
                     actions=[IncludeLaunchDescription(
                         _display_source,
                         launch_arguments=_display_args,
@@ -561,7 +585,8 @@ def generate_launch_description():
             isaac_launch,
             isaac_gui_proc,
             *gazebo_controller_actions,
-            display_launch,
+            gazebo_ready_waiter,
+            display_after_gazebo,
             isaac_ready_waiter,
             isaac_gated_actions,
             weed_targeting_launch,
