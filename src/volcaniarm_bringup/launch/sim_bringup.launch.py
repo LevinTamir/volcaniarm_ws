@@ -5,10 +5,14 @@ from pathlib import Path
 import yaml
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import (
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
@@ -143,7 +147,31 @@ def generate_launch_description():
         default_value="gazebo",
         choices=["gazebo", "isaac"],
         description="Simulator backend: 'gazebo' (auto-launches Gazebo) or 'isaac' "
-                    "(expects Isaac Sim already running with the ROS2 bridge and the scene loaded)",
+                    "(auto-launches the Isaac Sim GUI with the lab stage unless "
+                    "isaac_gui:=false, in which case Isaac Sim must already be "
+                    "running with the ROS2 bridge and the scene loaded)",
+    )
+
+    # Isaac Sim GUI autostart. Ctrl-C on this launch also closes Isaac Sim
+    # (which takes ~1 min to boot) — pass isaac_gui:=false while iterating
+    # on the ROS side to keep a running Isaac Sim alive across relaunches.
+    isaac_gui_arg = DeclareLaunchArgument(
+        "isaac_gui",
+        default_value="true",
+        choices=["true", "false"],
+        description="With sim:=isaac, start the Isaac Sim app with the lab "
+                    "stage playing. false = attach to an already-running Isaac Sim.",
+    )
+    isaac_path_arg = DeclareLaunchArgument(
+        "isaac_path",
+        default_value=os.path.expanduser("~/isaac/isaac-sim"),
+        description="Isaac Sim install directory (contains isaac-sim.sh)",
+    )
+    isaac_open_script_arg = DeclareLaunchArgument(
+        "isaac_open_script",
+        default_value=os.path.expanduser(
+            "~/projects/volcaniarm_isaaclab/scripts/open_lab_gui.py"),
+        description="Kit --exec script that opens the lab USD and presses Play",
     )
 
     # Controller mode:
@@ -287,6 +315,25 @@ def generate_launch_description():
         condition=is_isaac,
     )
 
+    # Isaac Sim GUI itself — Gazebo-parity autostart. The --exec script
+    # opens the volcaniarm lab USD and presses Play, which brings up the
+    # ROS2 bridge topics (/isaac_joint_states, /joint_commands, camera).
+    # The ros2_control TopicBasedSystem above just idles until those
+    # topics appear (~1 min boot), so start order doesn't matter.
+    isaac_gui_proc = ExecuteProcess(
+        cmd=[
+            PathJoinSubstitution([LaunchConfiguration("isaac_path"), "isaac-sim.sh"]),
+            "--/isaac/startup/create_new_stage=false",
+            "--exec", LaunchConfiguration("isaac_open_script"),
+        ],
+        name="isaac_sim",
+        output="screen",
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration("sim"), "' == 'isaac' and ",
+            "'", LaunchConfiguration("isaac_gui"), "' == 'true'",
+        ])),
+    )
+
     controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(volcaniarm_controller_share, "launch", "controller.launch.py")
@@ -421,6 +468,9 @@ def generate_launch_description():
             camera_mount_x_arg,
             camera_mount_pitch_arg,
             sim_arg,
+            isaac_gui_arg,
+            isaac_path_arg,
+            isaac_open_script_arg,
             controller_arg,
             tag_size_arg,
             pointcloud_arg,
@@ -432,6 +482,7 @@ def generate_launch_description():
             cam_roll_arg, cam_pitch_arg, cam_yaw_arg,
             gazebo_launch,
             isaac_launch,
+            isaac_gui_proc,
             controller_launch,
             rl_controller_launch,
             rl_vision_controller_launch,
