@@ -184,6 +184,15 @@ def generate_launch_description():
                     "service to home manually when ready.",
     )
 
+    moveit_arg = DeclareLaunchArgument(
+        "moveit",
+        default_value="false",
+        choices=["true", "false"],
+        description="Launch MoveIt move_group + MotionPlanning RViz (replaces "
+                    "the plain display RViz). Same phantom-chain planning "
+                    "setup as sim_bringup moveit:=true.",
+    )
+
     # Controller mode:
     #   traj   → only trajectory controller loaded + active (default)
     #   policy → only RL policy controller loaded + active
@@ -407,7 +416,8 @@ def generate_launch_description():
     # runner's RViz takes over).
     show_display = IfCondition(PythonExpression([
         "'", LaunchConfiguration("calibration"), "' == 'false' and ",
-        "'", LaunchConfiguration("mode"), "' != 'tests'",
+        "'", LaunchConfiguration("mode"), "' != 'tests' and ",
+        "'", LaunchConfiguration("moveit"), "' == 'false'",
     ]))
     display_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -415,6 +425,26 @@ def generate_launch_description():
         ),
         launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
         condition=show_display,
+    )
+
+    # MoveIt (opt-in): move_group (+ joint_state_transformer) and the
+    # MotionPlanning RViz, replacing the plain display. No readiness
+    # gating needed on real hardware — the interface is up in seconds.
+    volcaniarm_moveit_share = get_package_share_directory("volcaniarm_moveit_config")
+    is_moveit = IfCondition(LaunchConfiguration("moveit"))
+    move_group_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(volcaniarm_moveit_share, "launch", "move_group.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_moveit,
+    )
+    moveit_rviz_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(volcaniarm_moveit_share, "launch", "moveit_rviz.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_moveit,
     )
 
     # Calibration dashboard.
@@ -488,6 +518,7 @@ def generate_launch_description():
             use_sim_time_arg,
             serial_port_arg,
             auto_home_arg,
+            moveit_arg,
             controller_arg,
             mode_arg,
             calibration_arg,
@@ -518,5 +549,7 @@ def generate_launch_description():
             realsense_camera,
             camera_pointcloud_launch,
             calibration_dashboard,
+            move_group_launch,
+            moveit_rviz_launch,
         ]
     )
