@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(volcaniarm_hardware)
+project(volcaniarm_hardware_interface)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
@@ -18,7 +18,7 @@ find_package(std_srvs REQUIRED)
 find_package(controller_manager_msgs REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
-  src/volcaniarm_hardware.cpp
+  src/volcaniarm_hardware_interface.cpp
 )
 
 target_include_directories(${PROJECT_NAME}

@@ -13,7 +13,7 @@
 #include "std_srvs/srv/trigger.hpp"
 #include "controller_manager_msgs/srv/switch_controller.hpp"
 
-namespace volcaniarm_hardware
+namespace volcaniarm_hardware_interface
 {
 
 class VolcaniArmHardware : public hardware_interface::SystemInterface
@@ -67,7 +67,7 @@ private:
   double left_elbow_home_offset_{0.0};
 
   // Whether to trigger limit-switch homing automatically in on_configure.
-  // When false, the service "volcaniarm_hardware/home" can still be used
+  // When false, the service "volcaniarm_hardware_interface/home" can still be used
   // to home manually at any time.
   bool auto_home_on_configure_{false};
 
@@ -107,4 +107,4 @@ private:
   bool reset_controller_();
 };
 
-}  // namespace volcaniarm_hardware
+}  // namespace volcaniarm_hardware_interface

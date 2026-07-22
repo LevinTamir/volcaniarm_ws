@@ -172,7 +172,7 @@ def generate_launch_description():
         "serial_port",
         default_value="/dev/volcaniarm",
         description="Serial port for hardware interface (stable symlink "
-                    "created by the udev rule in volcaniarm_hardware/udev/)",
+                    "created by the udev rule in volcaniarm_hardware_interface/udev/)",
     )
 
     auto_home_arg = DeclareLaunchArgument(
@@ -180,7 +180,7 @@ def generate_launch_description():
         default_value="false",
         choices=["true", "false"],
         description="If true, run limit-switch homing during hardware on_configure. "
-                    "If false, boot without homing and use the volcaniarm_hardware/home "
+                    "If false, boot without homing and use the volcaniarm_hardware_interface/home "
                     "service to home manually when ready.",
     )
 
