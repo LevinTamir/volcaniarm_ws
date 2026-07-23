@@ -42,6 +42,8 @@ RLVisionPolicyController::on_init()
     auto_declare<std::vector<double>>("joint_position_max", std::vector<double>{});
     auto_declare<double>("action_smoothing_alpha", 1.0);
     auto_declare<double>("image_max_age_s", 1.0);
+    auto_declare<bool>("start_in_work_mode", false);
+    auto_declare<double>("rest_ramp_s", 1.0);
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_node()->get_logger(), "on_init failed: %s", e.what());
     return controller_interface::CallbackReturn::ERROR;
@@ -105,7 +107,16 @@ RLVisionPolicyController::on_configure(const rclcpp_lifecycle::State & /*previou
     return controller_interface::CallbackReturn::ERROR;
   }
 
+  start_in_work_mode_ = get_node()->get_parameter("start_in_work_mode").as_bool();
+  rest_ramp_s_ = get_node()->get_parameter("rest_ramp_s").as_double();
+  if (rest_ramp_s_ < 0.0) {
+    RCLCPP_ERROR(
+      get_node()->get_logger(), "rest_ramp_s must be >= 0 (got %.3f)", rest_ramp_s_);
+    return controller_interface::CallbackReturn::ERROR;
+  }
+
   last_action_.assign(joint_names_.size(), 0.0);
+  ramp_start_positions_.assign(joint_names_.size(), 0.0);
 
   // Image callback runs off the RT loop: decode + cv::resize to the
   // training resolution + RGB8 and stash a uint8 NHWC buffer for the
@@ -140,6 +151,24 @@ RLVisionPolicyController::on_configure(const rclcpp_lifecycle::State & /*previou
       std::memcpy(frame->rgb_hwc.data(), resized.data, total);
       frame->stamp = msg->header.stamp;
       image_frame_buffer_.writeFromNonRT(frame);
+    });
+
+  // REST/WORK mode I/O. The service runs on the controller_manager's
+  // executor (non-RT); it only flips an atomic read by update().
+  mode_pub_ = get_node()->create_publisher<std_msgs::msg::Bool>(
+    "~/work_mode", rclcpp::QoS(1).transient_local());
+  set_work_mode_srv_ = get_node()->create_service<std_srvs::srv::SetBool>(
+    "~/set_work_mode",
+    [this](
+      const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
+      std::shared_ptr<std_srvs::srv::SetBool::Response> res) {
+      work_mode_.store(req->data, std::memory_order_relaxed);
+      res->success = true;
+      res->message = req->data
+        ? "WORK: policy inference enabled"
+        : "REST: ramping to home, inference disabled";
+      RCLCPP_INFO(get_node()->get_logger(), "%s", res->message.c_str());
+      publish_mode(req->data);
     });
 
   if (!model_path_.empty()) {
@@ -182,6 +211,15 @@ controller_interface::CallbackReturn
 RLVisionPolicyController::on_activate(const rclcpp_lifecycle::State & /*previous_state*/)
 {
   std::fill(last_action_.begin(), last_action_.end(), 0.0);
+  // Deterministic safe start: every activation resets the mode from the
+  // parameter, discarding any service call made while inactive.
+  work_mode_.store(start_in_work_mode_, std::memory_order_relaxed);
+  prev_work_mode_ = start_in_work_mode_;
+  rest_entry_pending_ = true;  // first REST tick captures the current pose
+  publish_mode(start_in_work_mode_);
+  RCLCPP_INFO(
+    get_node()->get_logger(), "Activated in %s mode",
+    start_in_work_mode_ ? "WORK" : "REST");
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -216,9 +254,55 @@ RLVisionPolicyController::state_interface_configuration() const
 }
 
 controller_interface::return_type
-RLVisionPolicyController::update(const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
+RLVisionPolicyController::update(const rclcpp::Time & /*time*/, const rclcpp::Duration & period)
 {
   const size_t n = joint_names_.size();
+
+  // REST/WORK gate. REST skips the image read and ONNX inference
+  // entirely and ramps to the home pose; WORK falls through to the
+  // unchanged inference pipeline below.
+  const bool work = work_mode_.load(std::memory_order_relaxed);
+  if (!work) {
+    if (prev_work_mode_ || rest_entry_pending_) {
+      // Entering REST: capture the current pose as the ramp start so a
+      // mid-reach WORK->REST switch glides home instead of jumping.
+      prev_work_mode_ = false;
+      rest_entry_pending_ = false;
+      ramp_elapsed_s_ = 0.0;
+      bool have_state = true;
+      for (size_t i = 0; i < n; ++i) {
+        const auto q_opt = state_interfaces_[i].get_optional();
+        if (!q_opt.has_value()) {
+          have_state = false;
+          break;
+        }
+        ramp_start_positions_[i] = q_opt.value();
+      }
+      if (!have_state) {
+        // No state yet (first ticks on some hardware): jump, don't ramp.
+        ramp_start_positions_ = default_joint_positions_;
+      }
+      // Clean slate for the next WORK entry (EMA + policy last_action).
+      std::fill(last_action_.begin(), last_action_.end(), 0.0);
+    }
+    ramp_elapsed_s_ += period.seconds();
+    const double a = (rest_ramp_s_ > 0.0)
+      ? std::min(1.0, ramp_elapsed_s_ / rest_ramp_s_) : 1.0;
+    for (size_t i = 0; i < n; ++i) {
+      double target_q = (1.0 - a) * ramp_start_positions_[i]
+                      + a * default_joint_positions_[i];
+      if (!joint_position_min_.empty() && !joint_position_max_.empty()) {
+        target_q = std::clamp(target_q, joint_position_min_[i], joint_position_max_[i]);
+      }
+      if (!command_interfaces_[i].set_value(target_q)) {
+        RCLCPP_WARN_THROTTLE(
+          get_node()->get_logger(), *get_node()->get_clock(), 1000,
+          "Failed to write command on %s", command_interfaces_[i].get_name().c_str());
+      }
+    }
+    return controller_interface::return_type::OK;
+  }
+  prev_work_mode_ = true;
 
   const auto frame_ptr = image_frame_buffer_.readFromRT();
   const bool has_frame = frame_ptr != nullptr && *frame_ptr != nullptr;
@@ -450,6 +534,16 @@ RLVisionPolicyController::run_inference(
       get_node()->get_logger(), *get_node()->get_clock(), 1000,
       "ONNX inference failed: %s", e.what());
     return std::vector<double>(n, 0.0);
+  }
+}
+
+void
+RLVisionPolicyController::publish_mode(bool work)
+{
+  if (mode_pub_) {
+    std_msgs::msg::Bool msg;
+    msg.data = work;
+    mode_pub_->publish(msg);
   }
 }
 

@@ -18,6 +18,8 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(realtime_tools REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(urdf REQUIRED)
@@ -88,6 +90,8 @@ ament_target_dependencies(rl_vision_policy_controller
   rclcpp_lifecycle
   realtime_tools
   sensor_msgs
+  std_msgs
+  std_srvs
 )
 target_link_libraries(rl_vision_policy_controller
   onnxruntime::onnxruntime

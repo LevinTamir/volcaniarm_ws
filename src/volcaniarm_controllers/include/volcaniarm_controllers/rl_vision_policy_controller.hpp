@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -11,6 +12,8 @@
 #include "rclcpp_lifecycle/state.hpp"
 #include "realtime_tools/realtime_buffer.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "std_msgs/msg/bool.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 
 namespace volcaniarm_controller
 {
@@ -34,6 +37,15 @@ namespace volcaniarm_controller
 // builds the three input tensors, runs inference, and writes joint
 // position targets — same downstream pipeline as the state-based
 // controller (action_scale, EMA smoothing, NaN guard, joint clamps).
+//
+// REST/WORK mode: the controller ACTIVATES IN REST — it ramps from the
+// current pose to default_joint_positions over rest_ramp_s and holds
+// there, skipping image processing and ONNX inference entirely. Policy
+// control starts only after `~/set_work_mode` (std_srvs/SetBool) is
+// called with data=true; data=false ramps back home. Every
+// (re)activation resets the mode to the `start_in_work_mode` parameter
+// (default false) — a service call made while inactive does not carry
+// over. The current mode is latched on `~/work_mode` (std_msgs/Bool).
 class RLVisionPolicyController : public controller_interface::ControllerInterface
 {
 public:
@@ -84,6 +96,20 @@ private:
   double action_smoothing_alpha_{1.0};
   double image_max_age_s_{1.0};
 
+  // REST/WORK mode. `work_mode_` is written by the ~/set_work_mode
+  // service callback (non-RT executor thread) and read once per
+  // update() tick — a single lock-free word, no buffer needed.
+  std::atomic<bool> work_mode_{false};
+  bool start_in_work_mode_{false};  // initial mode on every activation
+  double rest_ramp_s_{1.0};         // current pose -> home ramp duration
+
+  // REST-ramp state, touched only from the RT thread (update /
+  // on_activate) — no synchronization needed.
+  bool prev_work_mode_{false};
+  bool rest_entry_pending_{true};   // force ramp capture on first REST tick
+  std::vector<double> ramp_start_positions_;
+  double ramp_elapsed_s_{0.0};
+
   // Runtime state.
   std::vector<double> last_action_;
 
@@ -107,6 +133,12 @@ private:
   // ROS I/O.
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
   realtime_tools::RealtimeBuffer<std::shared_ptr<ImageFrame>> image_frame_buffer_;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_work_mode_srv_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr mode_pub_;
+
+  // Publish the current mode on ~/work_mode (latched). Non-RT contexts
+  // only (on_activate, service callback) — never call from update().
+  void publish_mode(bool work);
 };
 
 }  // namespace volcaniarm_controller

@@ -85,3 +85,20 @@ volcaniarm_rl_vision_controller:
     # Skipped when stamp is zero (un-stamped publishers), same policy
     # as the state-based controller's stale-target watchdog.
     image_max_age_s: 1.0
+
+    # -- REST/WORK mode --
+    # The controller ACTIVATES IN REST: it ramps to default_joint_positions
+    # over rest_ramp_s and holds there, skipping image processing and ONNX
+    # inference entirely. Policy control starts only after:
+    #   ros2 service call /volcaniarm_rl_vision_controller/set_work_mode \
+    #     std_srvs/srv/SetBool "{data: true}"
+    # and "{data: false}" ramps back home. Every (re)activation resets the
+    # mode to start_in_work_mode — a service call made before activation
+    # does not carry over. The current mode is latched on ~/work_mode
+    # (std_msgs/Bool).
+    start_in_work_mode: false
+
+    # Seconds to ramp from the current pose to home when entering REST
+    # (including a mid-reach WORK->REST switch). 0.0 = command home
+    # instantly.
+    rest_ramp_s: 1.0
