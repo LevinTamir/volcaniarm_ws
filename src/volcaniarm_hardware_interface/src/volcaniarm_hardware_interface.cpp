@@ -1,10 +1,12 @@
 #include "volcaniarm_hardware_interface/volcaniarm_hardware_interface.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
+#include <limits>
 #include <termios.h>
 #include <unistd.h>
 
@@ -58,8 +60,37 @@ hardware_interface::CallbackReturn VolcaniArmHardware::on_init(
     auto_home_on_configure_ = (v == "true" || v == "True" || v == "1");
   }
 
+  // Software travel guard: parse the position command interface's
+  // min/max params from the URDF (<command_interface><param name="min">
+  // ... in volcaniarm_ros2_control.xacro). Matched by joint NAME — the
+  // serial protocol's P1/P2 order (right, left) is unrelated to the
+  // info_.joints order.
+  const double inf = std::numeric_limits<double>::infinity();
+  cmd_min_right_elbow_ = -inf;
+  cmd_max_right_elbow_ = inf;
+  cmd_min_left_elbow_ = -inf;
+  cmd_max_left_elbow_ = inf;
+  for (const auto & joint : info_.joints) {
+    for (const auto & ci : joint.command_interfaces) {
+      if (ci.name != hardware_interface::HW_IF_POSITION) {
+        continue;
+      }
+      const double lo = ci.min.empty() ? -inf : std::stod(ci.min);
+      const double hi = ci.max.empty() ? inf : std::stod(ci.max);
+      if (joint.name == "volcaniarm_right_elbow_joint") {
+        cmd_min_right_elbow_ = lo;
+        cmd_max_right_elbow_ = hi;
+      } else if (joint.name == "volcaniarm_left_elbow_joint") {
+        cmd_min_left_elbow_ = lo;
+        cmd_max_left_elbow_ = hi;
+      }
+    }
+  }
+
   std::cout << "[VolcaniArmHardware] Initialized with steps_per_rev = " << steps_per_rev_
             << ", auto_home_on_configure = " << (auto_home_on_configure_ ? "true" : "false")
+            << ", position limits right [" << cmd_min_right_elbow_ << ", " << cmd_max_right_elbow_
+            << "] left [" << cmd_min_left_elbow_ << ", " << cmd_max_left_elbow_ << "]"
             << std::endl;
 
   hw_position_right_elbow_ = 0.0;
@@ -268,12 +299,31 @@ void VolcaniArmHardware::read_serial_()
 }
 
 hardware_interface::return_type
-VolcaniArmHardware::write(const rclcpp::Time &, const rclcpp::Duration &)
+VolcaniArmHardware::write(const rclcpp::Time & time, const rclcpp::Duration &)
 {
   if (homing_active_.load(std::memory_order_acquire)) {
     return hardware_interface::return_type::OK;
   }
-  if (!send_position_command_rad_(hw_position_command_right_elbow_, hw_position_command_left_elbow_))
+  // Travel guard: clamp to the URDF command-interface bounds before the
+  // command becomes serial steps. A clamp firing here means the active
+  // controller misbehaved — warn (throttled to 1 Hz) so the operator sees it.
+  const double cmd_right = std::clamp(
+    hw_position_command_right_elbow_, cmd_min_right_elbow_, cmd_max_right_elbow_);
+  const double cmd_left = std::clamp(
+    hw_position_command_left_elbow_, cmd_min_left_elbow_, cmd_max_left_elbow_);
+  if (cmd_right != hw_position_command_right_elbow_ ||
+      cmd_left != hw_position_command_left_elbow_)
+  {
+    const double now_s = time.seconds();
+    if (now_s - last_clamp_warn_s_ >= 1.0) {
+      last_clamp_warn_s_ = now_s;
+      std::cerr << "[VolcaniArmHardware] Command outside travel limits, clamped:"
+                << " right " << hw_position_command_right_elbow_ << " -> " << cmd_right
+                << ", left " << hw_position_command_left_elbow_ << " -> " << cmd_left
+                << std::endl;
+    }
+  }
+  if (!send_position_command_rad_(cmd_right, cmd_left))
   {
     return hardware_interface::return_type::ERROR;
   }

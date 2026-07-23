@@ -66,6 +66,19 @@ private:
   double right_elbow_home_offset_{0.0};
   double left_elbow_home_offset_{0.0};
 
+  // Software travel guard, parsed in on_init from the <command_interface>
+  // <param name="min"/"max"> tags in volcaniarm_ros2_control.xacro. This
+  // is the controller-independent backstop: write() clamps every command
+  // to these bounds before it becomes serial steps, so no controller bug
+  // can drive the arm past them. Defaults +-inf = no clamp if the xacro
+  // omits the params.
+  double cmd_min_right_elbow_;
+  double cmd_max_right_elbow_;
+  double cmd_min_left_elbow_;
+  double cmd_max_left_elbow_;
+  // Rate limit for the clamp warning (last warn time, seconds).
+  double last_clamp_warn_s_{-1.0};
+
   // Whether to trigger limit-switch homing automatically in on_configure.
   // When false, the service "volcaniarm_hardware_interface/home" can still be used
   // to home manually at any time.
