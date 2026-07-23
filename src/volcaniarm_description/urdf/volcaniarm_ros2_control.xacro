@@ -50,10 +50,19 @@
              order here eliminates any chance of the topic-based hardware
              interface or controller_manager binding interfaces in a
              different order than the policy expects. -->
+        <!-- min/max: software travel guard, enforced by the REAL hardware
+             interface (VolcaniArmHardware clamps in write() before rad->
+             steps). Sim plugins ignore these params (Gazebo enforces the
+             URDF <limit> instead). +-2.0 rad is the hardware backstop:
+             wider than every legitimate consumer (RL trained envelope
+             +-1.309, teleop EE box, weed-targeting IK) but inside the
+             URDF mechanical +-3.14.
+             TODO(Tamir): confirm against the physical hard stops and
+             tighten further if the mechanism allows less travel. -->
         <joint name="volcaniarm_left_elbow_joint">
             <command_interface name="position">
-              <param name="min">-3.14</param>
-              <param name="max">3.14</param>
+              <param name="min">-2.0</param>
+              <param name="max">2.0</param>
             </command_interface>
             <state_interface name="position">
               <param name="initial_value">0.0</param>
@@ -64,8 +73,8 @@
 
         <joint name="volcaniarm_right_elbow_joint">
             <command_interface name="position">
-              <param name="min">-3.14</param>
-              <param name="max">3.14</param>
+              <param name="min">-2.0</param>
+              <param name="max">2.0</param>
             </command_interface>
             <state_interface name="position">
               <param name="initial_value">0.0</param>
