@@ -147,6 +147,10 @@ def _build_controller_manager(context, robot_description_content):
     if mode in ("policy", "all"):
         yamls.append(os.path.join(
             volcaniarm_controller_share, "config", "volcaniarm_rl_controller.yaml"))
+    if mode == "vision_policy":
+        yamls.append(os.path.join(
+            volcaniarm_controller_share, "config",
+            "volcaniarm_rl_vision_controller.yaml"))
 
     return [Node(
         package="controller_manager",
@@ -194,14 +198,15 @@ def generate_launch_description():
     )
 
     # Controller mode:
-    #   traj   → only trajectory controller loaded + active (default)
-    #   policy → only RL policy controller loaded + active
-    #   all    → both loaded; trajectory active, policy inactive
-    #            (available to claim via `ros2 control switch_controllers`)
+    #   traj          → only trajectory controller loaded + active (default)
+    #   policy        → only state-based RL policy controller loaded + active
+    #   vision_policy → only vision RL policy controller loaded + active
+    #   all           → traj + state policy loaded; trajectory active,
+    #                   policy inactive (claim via `ros2 control switch_controllers`)
     controller_arg = DeclareLaunchArgument(
         "controller",
         default_value="traj",
-        choices=["traj", "policy", "all"],
+        choices=["traj", "policy", "vision_policy", "all"],
         description="Which controller(s) to load",
     )
 
@@ -326,6 +331,11 @@ def generate_launch_description():
     is_policy_only = IfCondition(
         PythonExpression(["'", LaunchConfiguration("controller"), "' == 'policy'"])
     )
+    is_vision_policy = IfCondition(
+        PythonExpression(
+            ["'", LaunchConfiguration("controller"), "' == 'vision_policy'"]
+        )
+    )
     is_all = IfCondition(
         PythonExpression(["'", LaunchConfiguration("controller"), "' == 'all'"])
     )
@@ -393,6 +403,18 @@ def generate_launch_description():
         ),
         launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
         condition=is_policy_only,
+    )
+
+    # Vision policy sub-launch (JSB + vision policy active). Included
+    # only for `vision_policy`.
+    rl_vision_controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                volcaniarm_controller_share,
+                "launch", "rl_vision_controller.launch.py")
+        ),
+        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
+        condition=is_vision_policy,
     )
 
     # For `all`: load the policy controller but leave it inactive so it
@@ -544,6 +566,7 @@ def generate_launch_description():
             display_launch,
             controller_launch,
             rl_controller_launch,
+            rl_vision_controller_launch,
             rl_inactive_spawner,
             weed_targeting_launch,
             realsense_camera,
