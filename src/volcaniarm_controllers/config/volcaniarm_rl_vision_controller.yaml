@@ -42,36 +42,22 @@ volcaniarm_rl_vision_controller:
     image_height: 96
 
     # -- Safety / polish (carried over from RLPolicyController) --
-    # rclcpp on Jazzy treats explicit empty arrays as "no value set",
-    # which the controller's get_parameter().as_double_array() call
-    # then throws on. The controller's auto_declare already provides
-    # an empty default that disables clamping; leave both out of
-    # YAML to keep clamping off, or specify real arrays (one entry
-    # per joint) to enforce mechanical / safety limits independent
-    # of what the policy outputs. Recommended on real hardware.
     # Order matches `joints` above: [left_elbow, right_elbow].
     #
-    # !!! SIM-TO-SIM SETTING — TIGHTEN BEFORE REAL HARDWARE !!!
-    #
-    # Currently set to the URDF's mechanical joint limits (+-3.14 rad), i.e.
-    # the controller imposes no restriction of its own and the URDF
-    # command_interface bounds are the only backstop. That is deliberate while
-    # validating against Isaac Sim, where an over-travel costs nothing.
-    #
-    # History: this was +-1.0 as a conservative real-hardware guard, but that
-    # is TIGHTER than the range the policy trained in (+-1.3089969 rad, set by
-    # the `elbow_pos_in_range` reward term). The controller was silently
-    # refusing valid actions, costing roughly half the reachable Y span at
-    # canopy height — y in [-0.219,+0.159] collapsed to [-0.098,+0.108] in the
-    # 0.125-0.150 m band — which is why the arm failed to reach weeds toward
-    # the outer edges in Y.
-    #
-    # For the physical robot, use +-1.3089969 (the trained envelope) at most,
-    # and only after confirming the arm's true mechanical limits. A clamp
-    # tighter than training breaks reachability; a clamp wider than training
-    # lets the policy command poses it has never seen.
-    joint_position_min: [-3.14, -3.14]
-    joint_position_max: [3.14, 3.14]
+    # +-1.3089969 rad = the envelope the policy trained in (set by the
+    # `elbow_pos_in_range` reward term). This is the REAL-HARDWARE value:
+    # a clamp tighter than training breaks reachability (history: +-1.0
+    # silently cost roughly half the reachable Y span at canopy height);
+    # a clamp wider than training lets the policy command poses it has
+    # never seen. NOTE the clamp is NOT what limits side reach in normal
+    # operation — the policy itself avoids leaving its trained envelope
+    # (verified 2026-07-23: widening to +-2.71 changed nothing). The clamp
+    # exists to catch malfunction, not to shape behavior. A second,
+    # controller-independent backstop lives in the hardware interface
+    # (xacro command_interface min/max, enforced in write()).
+    joint_position_min: [-1.3089969, -1.3089969]
+    joint_position_max: [1.3089969, 1.3089969]
+
 
     # EMA smoothing on raw policy outputs. 1.0 = no smoothing.
     # Lower values damp the high-frequency demands that exceed the
