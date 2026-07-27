@@ -5,7 +5,7 @@ policy.onnx
   notes:  Includes the smoothness fixes — action_rate / joint_vel penalties
           restricted to elbow joints, 10× smoothness bump.
 
-policy_vision.onnx (not tracked — see .gitignore)
+policy_vision.onnx
   source: volcaniarm_isaaclab logs/reach_vision_ame/rsl_rl/volcaniarm_reach_vision_ame/2026-07-23_12-42-39_stage2_dr/exported/policy_bundled.onnx
   md5:    6c048c750d4299723772c707a7b4bf3e
   task:   Volcaniarm-Reach-Vision-AME-v0 (green mask → CNN + spatial attention, bundled; model_999.pt)

@@ -1,7 +1,7 @@
-# Trained policy artifacts live here. The small state-based policy.onnx
-# (~7 KB) is committed. Larger artifacts — vision bundles, .pt checkpoints —
-# stay untracked: their source of truth is the training repo's
-# logs/<task>/rsl_rl/<run>/exported/, and committing them would bloat
-# this repo fast across retrains.
-*_vision.onnx
+# Trained policy artifacts live here. Both ONNX policies are committed so a
+# fresh clone can run either controller: the state-based policy.onnx (~7 KB)
+# and the vision policy_vision.onnx (~1 MB). Their source of truth is the
+# training repo's logs/<task>/rsl_rl/<run>/exported/ — MODEL_VERSION.txt
+# records which export (path + md5) each committed file is.
+# .pt checkpoints stay untracked (multi-MB, reproducible from the run dir).
 *.pt
