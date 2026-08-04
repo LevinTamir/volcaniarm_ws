@@ -94,7 +94,7 @@ _PROTOCOL_NOTES = {
 }
 
 
-DEFAULT_OUTPUT_DIR = '~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/data'
+DEFAULT_OUTPUT_DIR = '~/workspaces/volcaniarm_ws/experiments/data'
 
 # Sentinel used until the FK service responds with the actual (y, z)
 # corresponding to theta=(0, 0). Picked to be obviously a placeholder.
@@ -1051,8 +1051,9 @@ class CalibrationDashboardWidget(QWidget):
             self._refresh_reachability(test_name)
             return
         num_cycles = fields['iterations'].value() if 'iterations' in fields else 1
-        # Test classes still take a `targets` list (kept for backward
-        # compat with iter_visits); the runner reads `request.goals`.
+        # The runner executes the test's iter_visits() pattern, so
+        # `targets` is authoritative; request.goals is retained only
+        # for the config.yaml record.
         extra = {}
         if 'verify_home' in fields:  # repeatability page: opt-in home gate
             extra['verify_home_with_tag'] = fields['verify_home'].isChecked()
@@ -1089,7 +1090,7 @@ class CalibrationDashboardWidget(QWidget):
         if self._runner.request_run(request):
             self._start_btn.setEnabled(False)
             self._continue_btn.setEnabled(False)
-            self._progress.setRange(0, test.num_cycles * len(goals))
+            self._progress.setRange(0, test.total_visits())
             self._progress.setValue(0)
             self._detection_label.setText('detection: idle')
             self._banner.setVisible(False)
@@ -1403,7 +1404,7 @@ class CalibrationDashboardWidget(QWidget):
             self._banner.setVisible(False)
             self._start_btn.setEnabled(False)
             self._continue_btn.setEnabled(False)
-            self._progress.setRange(0, num_cycles * len(goals))
+            self._progress.setRange(0, test.total_visits())
             self._progress.setValue(state['done_visits'])
             self._log_msg(
                 f"resuming {cfg.get('run_id')} from cycle "
@@ -1452,9 +1453,15 @@ class CalibrationDashboardWidget(QWidget):
         if not self._last_test_name:
             return None
         candidates: list = []
-        # Source tree first. The widget lives at
-        # <pkg>/volcaniarm_calibration/rqt/calibration_dashboard_widget.py;
-        # the notebooks dir is two levels up under the package root.
+        # Notebooks live in the workspace-level experiments/ tree
+        # (outside src/, invisible to colcon); the per-test notebooks
+        # for the pre-Exp0 tests are under legacy/. Derived from the
+        # output dir so both track the same experiments/ root.
+        exp_root = Path(DEFAULT_OUTPUT_DIR).expanduser().parent
+        candidates.append(exp_root / 'notebooks' / 'legacy'
+                          / f'{self._last_test_name}.ipynb')
+        # Fallbacks for older checkouts: the package source tree, then
+        # the installed share dir.
         candidates.append(Path(__file__).resolve().parents[2]
                           / 'notebooks' / f'{self._last_test_name}.ipynb')
         try:

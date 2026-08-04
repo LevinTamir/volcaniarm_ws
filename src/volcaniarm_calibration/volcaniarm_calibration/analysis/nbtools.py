@@ -31,8 +31,12 @@ FIG_TALL = (6.3, 4.4)
 FIG_SQUARE = (5.2, 5.0)
 FIG_WIDE = (6.3, 3.2)
 
-# Figures land next to the notebooks regardless of the kernel cwd.
-FIGURES_DIR = Path(__file__).resolve().parents[2] / 'notebooks' / 'figures'
+# Figures land next to the (legacy per-test) notebooks regardless of
+# the kernel cwd. Both moved to the workspace-level experiments/ tree
+# with the Exp0 integration; parents[4] is the workspace root
+# (…/src/volcaniarm_calibration/volcaniarm_calibration/analysis/nbtools.py).
+FIGURES_DIR = (Path(__file__).resolve().parents[4]
+               / 'experiments' / 'notebooks' / 'legacy' / 'figures')
 
 
 def apply_style():

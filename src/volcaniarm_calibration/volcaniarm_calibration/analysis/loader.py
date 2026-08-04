@@ -21,8 +21,10 @@ import pandas as pd
 import yaml
 
 
+# Run data lives in the workspace-level experiments/ tree (outside
+# src/, invisible to colcon) since the Exp0 integration.
 DEFAULT_DATA_ROOT = (
-    Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/data')
+    Path('~/workspaces/volcaniarm_ws/experiments/data')
     .expanduser())
 
 
