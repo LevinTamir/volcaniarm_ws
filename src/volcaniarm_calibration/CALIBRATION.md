@@ -3,9 +3,15 @@
 This document is the full operating procedure for producing
 thesis-grade accuracy and repeatability numbers with the
 `volcaniarm_calibration` package: what the tests are, how to run them
-from the GUI, and how to validate the results with the analysis
-notebooks afterwards. A new user should be able to go from a powered
-robot to quotable numbers using only this file.
+from the GUI, and how to validate the results afterwards. A new user
+should be able to go from a powered robot to quotable numbers using
+only this file.
+
+**Experiment 0.** The end-to-end characterization campaign (joint
+limit measurement, noise gate, settle probe, grid sweeps, anchor
+points, weed-position freeze) has its own step-by-step pipeline in
+the experiments repo: `<ws>/experiments/RUNBOOK.md`. This file stays
+the reference for what each test does and how to judge the numbers.
 
 **Measurement principle.** An external camera observes two AprilTags,
 one on `volcaniarm_base_link` and one on `right_arm_tip_link` (the
@@ -213,70 +219,40 @@ working plane; feeds the per-point maps.
    cube diagonal: the arm is planar, so a plane-filling grid is the
    meaningful envelope. State that deviation in the thesis.
 
-## 6. Validating the results (notebooks)
+## 6. Validating the results (report notebook)
 
-Each test has TWO notebooks in `notebooks/`: a **per-run report** for
-the quick visual check right after recording, and an **aggregate
-report** with the in-depth statistics for the thesis.
+Evaluation lives in the experiments repo, outside this package:
+`<ws>/experiments/notebooks/exp0_report.py` (percent-format, runs
+directly in VSCode). After recording runs, execute it top to bottom -
+each section auto-discovers every matching run under
+`experiments/data/`, prints its verdict/metrics, and writes figures +
+`exp0_summary.md` to `experiments/figures/`.
 
-| Notebook | When to open | Produces |
-|---|---|---|
-| `static_accuracy.ipynb` | right after a run (the GUI's Open-notebook button) | residual-per-cycle trend, per-axis trend, residual-vector scatter, one stats line |
-| `static_accuracy_aggregate.ipynb` | after 3+ runs | per-run table, across-run mean +/- t-CI, weeding verdicts, box/violin/histogram/ECDF/Q-Q, convergence, sessions trend, per-pose breakdown |
-| `repeatability.ipynb` | right after a run | cluster with RP circle, drift check, per-axis trend, one stats line |
-| `repeatability_aggregate.ipynb` | after 3+ runs | per-run RP table, within-run RP +/- t-CI, pooled RP, cluster panels, RP bars, distance histogram, drift, sessions trend, per-pose breakdown |
-| `workspace_coverage.ipynb` | right after a sweep | per-point table, accuracy map, error-vector map |
-| `workspace_coverage_aggregate.ipynb` | after 3+ sweeps | coverage table, accuracy/RP/spread maps, error vectors, axis profiles, ranked points, worst-point tables |
+Sections: 0 noise-gate PASS/FAIL, 1 settle time, 2 sweep accuracy
+maps + metrics (P0-2/3/4), 3 anchor AP+RP (P0-5/6), 4 systematic vs
+random + measured-vs-analytical overlay (P0-7), 5 frozen weed
+positions, 6 summary export. `workspace_figures.py` alongside it
+produces the analytic task-region set (P0-1, P0-8a/b/c).
 
-Every figure is exported automatically to
-`notebooks/figures/<notebook>/<figure>.png` (300 dpi) and `.pdf`
-(vector), with stable filenames, ready to place in the thesis
-experiments section. Re-running a notebook refreshes the files.
-
-The kernel imports `volcaniarm_calibration` through a `.pth` file;
-after changing package code, restart the kernel before re-running.
-
-**Per-run notebooks** take one parameter: `RUN_DIR` (path to a run
-directory; `None` analyses the latest completed run, which is the one
-you just recorded). They are deliberately simple: trends and a stats
-line, no statistics machinery.
-
-**Aggregate notebooks** find every completed run of their test on
-disk, print a targets-on-disk overview and every excluded run with
-the reason (that exclusion list is what makes the aggregation
-auditable), then aggregate. Parameters:
-
-- `GROUP`: `'pose'` (default) aggregates all comparable runs at one
-  pose, which is the thesis headline mode; `'all'` pools every run
-  across poses for a workspace-wide view, always accompanied by the
-  per-pose breakdown so poses are never silently mixed into one
-  statistic.
-- `POSE`: which pose `'pose'` mode analyses, e.g. `(0.2, 0.6)`;
-  `None` picks the pose with the most runs.
-- `MATCH_CYCLES`: e.g. `30` to aggregate only 30-cycle runs; `None`
-  includes all (the per-run table shows each run's cycle count, and
-  mixing counts is statistically fine for the mean-of-means
-  headline).
-- `RUN_DIRS`: pin the exact run list (use for the final thesis
-  figures so they are reproducible).
-- `ALLOW_MOUNT_KEYS`: merge runs recorded under different git SHAs
-  known to share the same physical mounts.
-- `MIN_RUNS`: the protocol target; a warning prints below it.
+Run selection defaults to auto-discovery (interrupted runs included:
+their captured rows are valid data and resumed sweeps reassemble by
+pass id); pin the `*_RUNS` selectors at the top of the notebook to an
+explicit run list for the final thesis figures so they are
+reproducible.
 
 What "validated" looks like:
 
-- The run count in the header matches what you recorded, and nothing
-  unexpected appears in the exclusion list.
-- Static accuracy: per-run means agree within a few millimetres of
-  each other (an outlier run means something moved that session;
-  investigate or drop it via `RUN_DIRS` and say so). Quote the
-  across-run mean +/- t-CI, and the pooled std as the precision.
-- Repeatability: quote the mean within-run RP +/- t-CI as the ISO
-  number; the pooled cross-session RP goes alongside, labelled as
-  such. Compare against the ~10 mm weeding tolerance.
-- Workspace: the coverage table shows every grid point with the
-  expected `n_runs` and `n_samples` before you trust the maps; hollow
-  points on the RP map mean too few samples there.
+- The discovered run/pass counts printed by each section match what
+  you actually recorded.
+- Noise gate: PASS (worst axis <= 2 mm after the 30-frame median).
+- Sweep: passes agree per point (small between-pass spread means the
+  error is systematic and calibratable; section 4 quantifies the
+  split). Quote mean/RMSE/percentiles and the success rates at
+  10/15/20 mm.
+- Anchors: quote AP and RP per point; with repeat sessions, the
+  within vs between decomposition separates short-term repeatability
+  from day-to-day drift. Compare against the ~10 mm weeding
+  tolerance.
 
 ## 7. Mount bias
 
@@ -306,16 +282,17 @@ Until this is done, report the standard deviation as the positioning
 precision and the mean as a fiducial modelling artefact; afterwards
 the mean residual is the absolute accuracy.
 
-## 8. Aggregation rules (what the notebooks enforce)
+## 8. Aggregation rules (what the analysis enforces)
 
-- Runs are grouped by commanded goals (matched to the millimetre) and
-  by **mount version** (recorded per run in `config.yaml` under
-  `urdf_mounts`; legacy runs fall back to their git SHA). Runs from
-  different mount versions are **never averaged together**; merging
-  requires the explicit `ALLOW_MOUNT_KEYS` whitelist.
-- Headline statistics are across-run means with t-based 95 %
-  confidence intervals (degrees of freedom = runs - 1); pooled
-  per-cycle statistics feed the histograms and worst-case numbers.
+- Sweep passes are pooled by the `pass_id` recorded in each run's
+  `config.yaml`, with keep-last dedupe per grid point, so an
+  interrupted pass plus its resume run reassemble into one pass.
+- Anchor sessions are pooled by commanded position (rounded to the
+  millimetre); repeat sessions add cycles and unlock the
+  within/between-session decomposition.
+- Every run's `config.yaml` records the URDF mount snapshot
+  (`urdf_mounts`); do not mix runs recorded before/after a mount
+  recalibration in one statistic - pin the run selectors instead.
 
 ## 9. Deviations from ISO 9283 to state in the thesis
 
@@ -331,17 +308,23 @@ the mean residual is the absolute accuracy.
 
 ## 10. Data layout
 
+Runs are written to the experiments repo, outside this package:
+
 ```
-data/<test_name>/<YYYY-MM-DD>/<HH-MM-SS>/
+<ws>/experiments/data/<test_name>/<YYYY-MM-DD>/<HH-MM-SS>/
   config.yaml           run config + git SHA + mount snapshot + status
-  tag_observations.csv  one row per capture (world Y-Z origins,
-                        d_detected / d_urdf / d_error, tip quaternion)
-  fk_poses.csv          analytic FK at each visited goal
+  tag_observations.csv  one row per sample (world Y-Z origins,
+                        d_detected / d_urdf / d_error, tip quaternion,
+                        visit label + approach tag)
+  fk_poses.csv          analytic FK at each captured visit
 ```
 
 `config.yaml` records the final status (`completed`, `canceled`,
-`failed` with a `failure_reason`); only completed runs enter the
-analysis.
+`failed` with a `failure_reason`) plus the Exp0 metadata
+(`pass_id`, `session_note`, `samples_per_capture`, `skip_visits`).
+The report notebook auto-discovers interrupted runs too - their
+captured rows are valid data and resumed sweeps reassemble by pass
+id.
 
 ## 11. Troubleshooting
 

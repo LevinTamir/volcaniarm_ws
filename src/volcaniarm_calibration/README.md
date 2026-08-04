@@ -23,8 +23,9 @@ calibrated, so the sim calibration flow was removed.
 | `repeatability`      | Same goal, gated on a tag-confirmed home between visits.  | 30 cycles, 3+ runs      |
 | `workspace_coverage` | Sweeps a goal grid N times across the envelope.           | 9 goals × 3 sweeps, 3+ runs |
 
-Experiment 0 adds three headless-only test types (run via
-`ros2 run volcaniarm_calibration accuracy_test`, modes documented in
+Experiment 0 adds three test types, each with its own dashboard page
+and also runnable headless (`ros2 run volcaniarm_calibration
+accuracy_test`, modes documented in
 [config/exp0_params.yaml](config/exp0_params.yaml)):
 
 | Test            | What it does                                                              |
@@ -41,11 +42,11 @@ joint limits, and closure margin -- see `volcaniarm_calibration/grid.py`).
 
 The full operating procedure (cycle/run counts and why, the tag
 mount bias, aggregation rules) is in
-[CALIBRATION.md](CALIBRATION.md). Analysis lives in the workspace-level
-`experiments/notebooks/` tree: `exp0_analysis.py` for Experiment 0,
-and `legacy/` with two notebooks per pre-Exp0 test (per-run report +
-aggregate report). Legacy figures are auto-exported to
-`experiments/notebooks/legacy/figures/` as PNG + PDF.
+[CALIBRATION.md](CALIBRATION.md); the Exp0 step-by-step pipeline is
+`<ws>/experiments/RUNBOOK.md`. Analysis lives in the separate
+experiments repo (nested at `<ws>/experiments/`, its own private git
+repo): run the tests here, then evaluate with
+`experiments/notebooks/exp0_report.py`.
 
 ## Run it
 

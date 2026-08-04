@@ -7,7 +7,6 @@
 !/third_party.repos
 !/README.md
 !/docs/
-!/experiments/
 
 # ROS 2 build artifacts
 /build/
@@ -40,11 +39,6 @@ __pycache__/
 # base_link -> camera_link with the calibrated pose. Don't commit.
 /src/volcaniarm_calibration/config/camera_pose.yaml
 
-# Experiment run data and generated figures stay local; the inner
-# .gitignore files keep the directories present in the repo. (Runs
-# committed on purpose, e.g. the pre-Exp0 baselines moved from
-# src/volcaniarm_calibration/data, remain tracked regardless.)
-/experiments/data/*
-!/experiments/data/.gitignore
-/experiments/figures/*
-!/experiments/figures/.gitignore
+# experiments/ is its own private repo (volcaniarm-experiments):
+# run data, analysis notebooks, and figures live there, versioned
+# separately from the code. The /* allowlist above already ignores it.
