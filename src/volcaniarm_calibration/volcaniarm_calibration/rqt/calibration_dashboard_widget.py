@@ -43,7 +43,8 @@ from python_qt_binding.QtCore import Signal, Slot, QObject, QTimer, Qt
 from python_qt_binding.QtGui import QPixmap
 from python_qt_binding.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QCheckBox, QDoubleSpinBox, QFrame, QMessageBox, QSizePolicy,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QLineEdit,
+    QMessageBox, QSizePolicy,
     QSpinBox, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QPlainTextEdit, QProgressBar, QTextEdit,
 )
@@ -70,7 +71,7 @@ from ..runner import (
     CalibrationRunner, CameraCalibrationRunner, RunRequest, TEST_REGISTRY,
     MODE_STAND, MODE_ON_ROBOT,
 )
-from ..runner.data_writer import load_resume_state
+from ..runner.data_writer import load_resume_state, load_sweep_resume_state
 # Run discovery only (list_runs + status). Analysis has no rclpy/Qt
 # dependencies, so importing it here is safe and keeps the completed-run
 # counters consistent with what the notebooks will aggregate.
@@ -79,18 +80,35 @@ from ..analysis import loader as _analysis_loader
 # Per-test protocol guidance shown on each page. ISO 9283 specifies 30
 # cycles per pose; the across-run averaging happens in the notebooks.
 _PROTOCOL_NOTES = {
+    'noise_gate': (
+        'Exp0 step 3 (BLOCKING): ~5 static poses spanning the task '
+        'region, ~500 samples each. Validate in the report notebook '
+        'section 0: effective noise must be <= 1-2 mm per axis before '
+        'any sweep runs.'),
+    'settle_probe': (
+        'Exp0 step 4: settle time is forced to 0 and each visit records '
+        'a timestamped burst (~120 samples ~ 4 s at 30 Hz). Notebook '
+        'section 1 reports the p95 settle time - set it as the settle '
+        'time on the other pages.'),
+    'workspace_coverage': (
+        'Exp0 steps 5-6: generate the grid from the task rectangle '
+        '(measure the joint limits first - runbook step 1), then one '
+        'run per pass. Pass 2 runs on a different day / after a power '
+        'cycle with pass id 2. Interrupted sweeps resume from the '
+        'post-run banner.'),
+    'repeatability': (
+        'Exp0 step 7: one 30-cycle run per anchor point (ISO 9283 - the '
+        'same cluster yields accuracy AP and repeatability RP). Use the '
+        'anchor picker below; enable the home gate once the tag mounts '
+        'are calibrated.'),
     'static_accuracy': (
         'Protocol: 30 cycles per run (ISO 9283), 3 or more independent '
         'runs with re-homing between them. The notebook averages across '
         'runs.'),
-    'repeatability': (
-        'Protocol: 30 cycles per run (ISO 9283 RP is defined over a '
-        '30-point cluster), 3 or more independent runs with re-homing '
-        'between them. Enable the home gate once the tag mounts are '
-        'calibrated.'),
-    'workspace_coverage': (
-        'Protocol: 3 cycles (full sweeps) per run, 3 or more runs. '
-        'Feeds the Y-Z accuracy and repeatability maps.'),
+    'backlash': (
+        'Optional: each cycle approaches every goal from -Y and +Y via '
+        'capture-free pre-points; rows are tagged with the approach '
+        'direction. Kept available, not scheduled in Exp0.'),
 }
 
 
@@ -117,21 +135,29 @@ class _RunnerBridge(QObject):
 
 class CalibrationDashboardWidget(QWidget):
 
-    # Sidebar rows / stacked-page indices. The three test pages map to a
-    # TEST_REGISTRY key; Start and Camera pages have no test.
+    # Sidebar rows / stacked-page indices, ordered as the Exp0 protocol
+    # runs them (noise gate -> settle probe -> sweep -> anchors). Test
+    # pages map to a TEST_REGISTRY key; Start and Camera have no test.
     _PAGE_START = 0
     _PAGE_CAMERA = 1
-    _PAGE_STATIC = 2
-    _PAGE_REPEAT = 3
-    _PAGE_WORKSPACE = 4
+    _PAGE_NOISE = 2
+    _PAGE_SETTLE = 3
+    _PAGE_SWEEP = 4
+    _PAGE_REPEAT = 5
+    _PAGE_STATIC = 6
+    _PAGE_BACKLASH = 7
     _PAGE_TEST_NAME = {
-        _PAGE_STATIC: 'static_accuracy',
+        _PAGE_NOISE: 'noise_gate',
+        _PAGE_SETTLE: 'settle_probe',
+        _PAGE_SWEEP: 'workspace_coverage',
         _PAGE_REPEAT: 'repeatability',
-        _PAGE_WORKSPACE: 'workspace_coverage',
+        _PAGE_STATIC: 'static_accuracy',
+        _PAGE_BACKLASH: 'backlash',
     }
     _NAV_LABELS = (
         'Start', 'Camera Localization',
-        'Static Accuracy', 'Repeatability', 'Workspace Coverage',
+        'Noise Gate', 'Settle Probe', 'Workspace Sweep',
+        'Repeatability', 'Static Accuracy', 'Backlash',
     )
 
     def __init__(self, node):
@@ -225,18 +251,35 @@ class CalibrationDashboardWidget(QWidget):
         self._pages.addWidget(self._build_start_page())
         self._pages.addWidget(self._build_camera_page())
         self._pages.addWidget(self._build_test_page(
+            'noise_gate', with_iterations=False,
+            with_home_gate=False, goal_mode='list',
+            samples_default=500))
+        self._pages.addWidget(self._build_test_page(
+            'settle_probe', with_iterations=True,
+            with_home_gate=False, goal_mode='list',
+            iterations_default=3,
+            iterations_label='probes per pose (cycles)',
+            samples_default=120, hide_settle=True))
+        self._pages.addWidget(self._build_test_page(
+            'workspace_coverage', with_iterations=True,
+            with_home_gate=False, goal_mode='list',
+            iterations_default=1,
+            iterations_label='cycles (full sweeps)',
+            with_grid=True, with_pass_meta=True))
+        self._pages.addWidget(self._build_test_page(
+            'repeatability', with_iterations=True,
+            with_home_gate=True, goal_mode='single',
+            iterations_default=30, with_anchors=True))
+        self._pages.addWidget(self._build_test_page(
             'static_accuracy', with_iterations=True,
             with_home_gate=False, goal_mode='single',
             iterations_default=30))
         self._pages.addWidget(self._build_test_page(
-            'repeatability', with_iterations=True,
-            with_home_gate=True, goal_mode='single',
-            iterations_default=30))
-        self._pages.addWidget(self._build_test_page(
-            'workspace_coverage', with_iterations=True,
+            'backlash', with_iterations=True,
             with_home_gate=False, goal_mode='list',
-            iterations_default=3,
-            iterations_label='cycles (full sweeps)'))
+            iterations_default=5,
+            iterations_label='cycles (reps per direction)',
+            with_approach_offset=True))
         # Keep the page compact (sized to its content) and let the run
         # panel's log expand to fill the rest, so there's no large blank
         # gap between a page's controls and the log at the bottom.
@@ -302,17 +345,24 @@ class CalibrationDashboardWidget(QWidget):
             '<code>ros2 launch volcaniarm_calibration calibration_gui.launch.py</code>'
             '</li>'
             '</ol>'
-            '<p><b>Steps (left sidebar)</b></p>'
+            '<p><b>Steps (left sidebar, in Exp0 protocol order - see '
+            'experiments/RUNBOOK.md)</b></p>'
             '<ul>'
             '<li><b>Camera Localization</b> - measure where the camera '
             'sits relative to the arm base before running tests.</li>'
+            '<li><b>Noise Gate</b> - static bursts at a few poses; the '
+            'blocking measurement-noise validation (report section 0).'
+            '</li>'
+            '<li><b>Settle Probe</b> - timestamped bursts on arrival; '
+            'measures the true settle time (report section 1).</li>'
+            '<li><b>Workspace Sweep</b> - serpentine grid over the task '
+            'rectangle, one run per pass.</li>'
+            '<li><b>Repeatability</b> - 30-cycle cluster per anchor '
+            'point (ISO 9283 AP + RP), tag-confirmed home gate.</li>'
             '<li><b>Static Accuracy</b> - one goal, N cycles, returning '
-            'to the initial pose each visit; reports the per-visit error '
-            'distribution.</li>'
-            '<li><b>Repeatability</b> - one goal, N cycles, gated on a '
-            'tag-confirmed home between iterations (ISO 9283 RP_yz).</li>'
-            '<li><b>Workspace Coverage</b> - sweep a list of goals once '
-            'each across the envelope.</li>'
+            'to the initial pose each visit.</li>'
+            '<li><b>Backlash</b> - approach-direction hysteresis '
+            '(optional).</li>'
             '</ul>')
         instructions.setWordWrap(True)
         instructions.setTextFormat(Qt.TextFormat.RichText)
@@ -378,14 +428,29 @@ class CalibrationDashboardWidget(QWidget):
     def _build_test_page(self, test_name: str, *, with_iterations: bool,
                          with_home_gate: bool, goal_mode: str,
                          iterations_default: int = 3,
-                         iterations_label: str = 'iterations') -> QWidget:
-        """Build one accuracy/repeatability/workspace page.
+                         iterations_label: str = 'iterations',
+                         samples_default: Optional[int] = None,
+                         hide_settle: bool = False,
+                         with_approach_offset: bool = False,
+                         with_pass_meta: bool = False,
+                         with_grid: bool = False,
+                         with_anchors: bool = False) -> QWidget:
+        """Build one test page.
 
         Each page owns its own pose/goal/iterations/home widgets (a Qt
         widget can only live in one layout, so they can't be shared across
-        pages). The shared capture settings (settle/fresh/auto) live in the
-        run panel instead. Widget references are stashed in
-        ``self._pages_fields[test_name]`` for the run/reset/seed paths.
+        pages). Widget references are stashed in
+        ``self._pages_fields[test_name]`` for the run/reset/seed paths;
+        every input widget dropped into ``fields`` is persisted
+        automatically by save/restore_settings.
+
+        Optional extras (Exp0): ``samples_default`` adds the per-visit
+        burst controls; ``hide_settle`` greys the settle spinbox (the
+        settle-probe test forces 0); ``with_approach_offset`` adds the
+        backlash pre-point offset; ``with_pass_meta`` adds pass id +
+        session note; ``with_grid`` adds the task-rectangle grid
+        generator feeding the goals list; ``with_anchors`` adds the
+        9-anchor-point picker (rectangle taken from the sweep page).
         """
         page = QWidget()
         v = QVBoxLayout(page)
@@ -403,14 +468,28 @@ class CalibrationDashboardWidget(QWidget):
         v.addWidget(runs_label)
         fields['runs_label'] = runs_label
 
-        if with_iterations:
+        if with_iterations or with_approach_offset:
             cfg_box = QGroupBox('Test configuration')
             cfg_form = QFormLayout(cfg_box)
-            iterations = QSpinBox()
-            iterations.setRange(1, 100)
-            iterations.setValue(iterations_default)
-            cfg_form.addRow(iterations_label, iterations)
-            fields['iterations'] = iterations
+            if with_iterations:
+                iterations = QSpinBox()
+                iterations.setRange(1, 100)
+                iterations.setValue(iterations_default)
+                cfg_form.addRow(iterations_label, iterations)
+                fields['iterations'] = iterations
+            if with_approach_offset:
+                approach_offset = QDoubleSpinBox()
+                approach_offset.setRange(0.01, 0.2)
+                approach_offset.setSingleStep(0.01)
+                approach_offset.setDecimals(3)
+                approach_offset.setSuffix(' m')
+                approach_offset.setValue(0.05)
+                approach_offset.setToolTip(
+                    'Capture-free pre-point offset: each goal is approached '
+                    'once from y-offset and once from y+offset. Pre-points '
+                    'must themselves be reachable.')
+                cfg_form.addRow('approach offset', approach_offset)
+                fields['approach_offset_m'] = approach_offset
             v.addWidget(cfg_box)
 
         if with_home_gate:
@@ -490,6 +569,65 @@ class CalibrationDashboardWidget(QWidget):
         fields['initial_z'] = initial_z
         v.addWidget(initial_box)
 
+        if with_grid:
+            # Task-rectangle grid generator: fills the goals list below
+            # with a filtered serpentine (same in-process kinematics the
+            # runner uses, see grid.py). The joint limit is deliberately
+            # editable: it is UNMEASURED until the mechanical stops are
+            # measured (runbook step 1 / protocol item 6b).
+            grid_box = QGroupBox('Sweep grid (task rectangle)')
+            grid_outer = QVBoxLayout(grid_box)
+            grid_form = QFormLayout()
+
+            def _grid_spin(lo, hi, val, step=0.025, decimals=3, suffix=' m'):
+                sb = QDoubleSpinBox()
+                sb.setRange(lo, hi)
+                sb.setSingleStep(step)
+                sb.setDecimals(decimals)
+                sb.setSuffix(suffix)
+                sb.setValue(val)
+                return sb
+
+            grid_y0 = _grid_spin(-0.6, 0.6, -0.40)
+            grid_y1 = _grid_spin(-0.6, 0.6, 0.40)
+            grid_z0 = _grid_spin(0.1, 1.0, 0.55)
+            grid_z1 = _grid_spin(0.1, 1.0, 0.85)
+            grid_form.addRow('y0 (left)', grid_y0)
+            grid_form.addRow('y1 (right)', grid_y1)
+            grid_form.addRow('z0 (top)', grid_z0)
+            grid_form.addRow('z1 (bottom)', grid_z1)
+            grid_spacing = _grid_spin(0.005, 0.1, 0.025, step=0.005)
+            grid_form.addRow('spacing', grid_spacing)
+            joint_limit = _grid_spin(0.2, 3.14, 1.13, step=0.01,
+                                     suffix=' rad')
+            joint_limit.setToolTip(
+                'UNMEASURED placeholder. Measure the mechanical stops '
+                'first (runbook step 1); the homing switches sit at '
+                '1.064 / 1.104 rad, the only measured values so far.')
+            grid_form.addRow('joint limit', joint_limit)
+            limit_margin = _grid_spin(0.0, 0.3, 0.05, step=0.01,
+                                      suffix=' rad')
+            grid_form.addRow('limit margin', limit_margin)
+            closure_margin = _grid_spin(0.0, 0.1, 0.02, step=0.005)
+            closure_margin.setToolTip(
+                'Minimum distance from the stretched (type-2) singularity '
+                'where the distal links go collinear.')
+            grid_form.addRow('closure margin', closure_margin)
+            grid_outer.addLayout(grid_form)
+            gen_btn = QPushButton('Generate grid into goals list')
+            gen_btn.clicked.connect(
+                lambda _=False, tn=test_name: self._on_generate_grid(tn))
+            grid_outer.addWidget(gen_btn)
+            fields['grid_y0'] = grid_y0
+            fields['grid_y1'] = grid_y1
+            fields['grid_z0'] = grid_z0
+            fields['grid_z1'] = grid_z1
+            fields['grid_spacing'] = grid_spacing
+            fields['joint_limit_rad'] = joint_limit
+            fields['limit_margin_rad'] = limit_margin
+            fields['closure_margin_m'] = closure_margin
+            v.addWidget(grid_box)
+
         if goal_mode == 'single':
             goal_box = QGroupBox('Goal pose (workspace, metres)')
             goal_form = QFormLayout(goal_box)
@@ -499,6 +637,28 @@ class CalibrationDashboardWidget(QWidget):
             goal_form.addRow('z', goal_z)
             fields['goal_y'] = goal_y
             fields['goal_z'] = goal_z
+            if with_anchors:
+                # 9-anchor picker: corners + edge mids + center of the
+                # task rectangle (taken live from the sweep page's grid
+                # fields), each reachability-checked independently.
+                # Selecting an anchor fills the goal spinboxes; one
+                # 30-cycle run per anchor.
+                anchor_row = QHBoxLayout()
+                anchor_combo = QComboBox()
+                anchor_combo.setPlaceholderText('anchor points...')
+                load_btn = QPushButton('Load anchors')
+                load_btn.setToolTip(
+                    'Compute the 9 anchor points from the task rectangle '
+                    'on the Workspace Sweep page (corners + edge mids + '
+                    'center, inset one grid spacing).')
+                load_btn.clicked.connect(
+                    lambda _=False, tn=test_name: self._on_load_anchors(tn))
+                anchor_combo.activated.connect(
+                    lambda _idx, tn=test_name: self._on_anchor_selected(tn))
+                anchor_row.addWidget(anchor_combo, stretch=1)
+                anchor_row.addWidget(load_btn)
+                goal_form.addRow('anchors', anchor_row)
+                fields['anchor_combo'] = anchor_combo
             v.addWidget(goal_box)
         else:
             goals_box = QGroupBox(
@@ -507,7 +667,9 @@ class CalibrationDashboardWidget(QWidget):
             goals_edit = QPlainTextEdit()
             goals_edit.setPlaceholderText(
                 '0.0, 0.5\n0.1, 0.5\n-0.1, 0.5\n0.0, 0.6')
-            goals_edit.setMaximumBlockCount(200)
+            # High cap: a full 25 mm sweep grid is 400+ lines (plus the
+            # provenance comment header the generator writes).
+            goals_edit.setMaximumBlockCount(2000)
             goals_outer.addWidget(goals_edit)
             fields['goals_edit'] = goals_edit
             v.addWidget(goals_box)
@@ -547,8 +709,35 @@ class CalibrationDashboardWidget(QWidget):
         settle_time.setRange(0.0, 10.0)
         settle_time.setSingleStep(0.5)
         settle_time.setDecimals(1)
-        settle_time.setValue(2.0)
+        settle_time.setValue(0.0 if hide_settle else 2.0)
+        if hide_settle:
+            # The settle-probe test forces settle_time = 0 (capturing
+            # starts on arrival); show the value greyed so the operator
+            # sees why there is no settle here.
+            settle_time.setEnabled(False)
+            settle_time.setToolTip(
+                'Forced to 0 by this test: the burst starting on arrival '
+                'IS the settle measurement.')
         cap_form.addRow('settle time (s)', settle_time)
+        if samples_default is not None:
+            samples = QSpinBox()
+            samples.setRange(1, 2000)
+            samples.setValue(samples_default)
+            samples.setToolTip(
+                'Detections captured per visit, each individually gated '
+                'on a fresh TF stamp (N samples = N distinct detections).')
+            cap_form.addRow('samples per visit', samples)
+            sample_period = QDoubleSpinBox()
+            sample_period.setRange(0.0, 1.0)
+            sample_period.setSingleStep(0.05)
+            sample_period.setDecimals(2)
+            sample_period.setValue(0.0)
+            sample_period.setToolTip(
+                'Minimum spacing between burst samples; 0 = as fast as '
+                'fresh detections arrive.')
+            cap_form.addRow('min sample period (s)', sample_period)
+            fields['samples_per_capture'] = samples
+            fields['sample_min_period_s'] = sample_period
         fresh_window = QDoubleSpinBox()
         fresh_window.setRange(0.1, 2.0)
         fresh_window.setSingleStep(0.1)
@@ -588,6 +777,28 @@ class CalibrationDashboardWidget(QWidget):
         fields['auto_continue'] = auto_continue
         fields['auto_hold'] = auto_hold
         v.addWidget(cap_box)
+
+        if with_pass_meta:
+            # Sweep pass metadata, recorded in the run's config.yaml.
+            # Pass 2 of the Exp0 serpentine runs on a different day /
+            # after a power cycle; the analysis pools passes by pass id.
+            pass_box = QGroupBox('Sweep pass')
+            pass_form = QFormLayout(pass_box)
+            pass_id = QSpinBox()
+            pass_id.setRange(1, 20)
+            pass_id.setValue(1)
+            pass_id.setToolTip(
+                'Bump for each independent pass over the same grid '
+                '(different day / power cycle). A resumed sweep keeps '
+                'the pass id of the interrupted run.')
+            pass_form.addRow('pass id', pass_id)
+            session_note = QLineEdit()
+            session_note.setPlaceholderText(
+                'free-form session note (lighting, temperature, ...)')
+            pass_form.addRow('session note', session_note)
+            fields['pass_id'] = pass_id
+            fields['session_note'] = session_note
+            v.addWidget(pass_box)
 
         btn_row = QHBoxLayout()
         start_btn = QPushButton('Start Run')
@@ -681,11 +892,14 @@ class CalibrationDashboardWidget(QWidget):
         self._banner_keep = QPushButton('Keep')
         self._banner_resume = QPushButton('Resume run')
         self._banner_delete = QPushButton('Delete run')
-        self._banner_open = QPushButton('Open notebook')
+        self._banner_open = QPushButton('Open folder')
+        self._banner_open.setToolTip(
+            'Open the run directory (config.yaml + CSVs). Evaluate runs '
+            'in experiments/notebooks/exp0_report.py.')
         self._banner_keep.clicked.connect(self._on_banner_keep)
         self._banner_resume.clicked.connect(self._on_banner_resume)
         self._banner_delete.clicked.connect(self._on_banner_delete)
-        self._banner_open.clicked.connect(self._on_banner_open_notebook)
+        self._banner_open.clicked.connect(self._on_banner_open_folder)
         btn_row.addWidget(self._banner_keep)
         btn_row.addWidget(self._banner_resume)
         btn_row.addWidget(self._banner_delete)
@@ -1027,7 +1241,7 @@ class CalibrationDashboardWidget(QWidget):
             return
         fields = self._pages_fields[test_name]
         cls = TEST_REGISTRY[test_name]
-        if test_name == 'workspace_coverage':
+        if 'goals_edit' in fields:
             try:
                 goals = self._parse_goals_text(
                     fields['goals_edit'].toPlainText())
@@ -1057,6 +1271,8 @@ class CalibrationDashboardWidget(QWidget):
         extra = {}
         if 'verify_home' in fields:  # repeatability page: opt-in home gate
             extra['verify_home_with_tag'] = fields['verify_home'].isChecked()
+        if 'approach_offset_m' in fields:  # backlash page
+            extra['approach_offset_m'] = fields['approach_offset_m'].value()
         try:
             test = cls(
                 targets=goals,
@@ -1069,14 +1285,24 @@ class CalibrationDashboardWidget(QWidget):
             self._log_msg(f'cannot start: {exc}')
             self._status_label.setText(f'cannot start: {exc}')
             return
-        # Home-confirm params only exist on the repeatability page; the
+        # Optional per-page params: presence in `fields` decides; the
         # RunRequest dataclass supplies sensible defaults otherwise.
-        home_kwargs = {}
+        req_kwargs = {}
         if 'home_tol_mm' in fields:
-            home_kwargs = dict(
+            req_kwargs.update(
                 home_tol_m=fields['home_tol_mm'].value() / 1000.0,
                 home_hold_frames=fields['home_hold_frames'].value(),
                 home_timeout_s=fields['home_timeout_s'].value(),
+            )
+        if 'samples_per_capture' in fields:
+            req_kwargs.update(
+                samples_per_capture=fields['samples_per_capture'].value(),
+                sample_min_period_s=fields['sample_min_period_s'].value(),
+            )
+        if 'pass_id' in fields:
+            req_kwargs.update(
+                pass_id=fields['pass_id'].value(),
+                session_note=fields['session_note'].text(),
             )
         request = RunRequest(
             test=test,
@@ -1085,7 +1311,7 @@ class CalibrationDashboardWidget(QWidget):
             goals=tuple(goals),
             detection_max_age_s=fields['fresh_window'].value(),
             detection_timeout_s=fields['det_timeout'].value(),
-            **home_kwargs,
+            **req_kwargs,
         )
         if self._runner.request_run(request):
             self._start_btn.setEnabled(False)
@@ -1122,6 +1348,94 @@ class CalibrationDashboardWidget(QWidget):
                     f'line {lineno}: y or z is not a number ({raw!r})')
             goals.append((y, z))
         return goals
+
+    def _on_generate_grid(self, test_name: str):
+        """Fill the goals editor with the filtered serpentine grid.
+
+        The comment header records the rectangle / limit / rejection
+        provenance; _parse_goals_text skips '#' lines, and the goals
+        themselves land in the run's config.yaml, so a sweep's grid
+        parameters are always reconstructible from its run dir.
+        """
+        from ..grid import serpentine, filter_grid
+        fields = self._pages_fields[test_name]
+        y0, y1 = fields['grid_y0'].value(), fields['grid_y1'].value()
+        z0, z1 = fields['grid_z0'].value(), fields['grid_z1'].value()
+        spacing = fields['grid_spacing'].value()
+        limit = fields['joint_limit_rad'].value()
+        margin = fields['limit_margin_rad'].value()
+        closure = fields['closure_margin_m'].value()
+        if y1 <= y0 or z1 <= z0:
+            self._log_msg('grid: empty rectangle (need y1 > y0 and z1 > z0)')
+            return
+        pts = serpentine(y0, y1, z0, z1, spacing)
+        kept, stats = filter_grid(pts, limit, margin, closure)
+        counts = (f'{stats.total} candidates -> {stats.kept} kept '
+                  f'(ik {stats.ik_invalid}, limit {stats.joint_limit}, '
+                  f'closure {stats.closure_margin} rejected)')
+        header = (
+            f'# grid rect y[{y0:.3f}, {y1:.3f}] z[{z0:.3f}, {z1:.3f}] '
+            f'spacing {spacing:.3f}\n'
+            f'# joint limit {limit:.3f} rad (margin {margin:.3f}), '
+            f'closure margin {closure:.3f} m\n'
+            f'# {counts}\n')
+        fields['goals_edit'].setPlainText(
+            header + ''.join(f'{y:.3f}, {z:.3f}\n' for y, z in kept))
+        est_min = stats.kept * 13 / 60
+        self._log_msg(f'grid: {counts}; ~{est_min:.0f} min per pass '
+                      f'at 13 s/point')
+        if not kept:
+            self._log_msg('grid: nothing kept - check the rectangle and '
+                          'the joint limit')
+
+    def _on_load_anchors(self, test_name: str):
+        """Populate the anchor combo from the sweep page's rectangle.
+
+        Each anchor is reachability-checked independently (its own run
+        seeded from home), NOT seed-chained across the large jumps
+        between anchors.
+        """
+        from ..grid import nine_points, filter_grid
+        fields = self._pages_fields[test_name]
+        sweep = self._pages_fields.get('workspace_coverage', {})
+        if 'grid_y0' not in sweep:
+            self._log_msg('anchors: sweep-page grid fields unavailable')
+            return
+        y0, y1 = sweep['grid_y0'].value(), sweep['grid_y1'].value()
+        z0, z1 = sweep['grid_z0'].value(), sweep['grid_z1'].value()
+        anchors = nine_points(y0, y1, z0, z1,
+                              inset=sweep['grid_spacing'].value())
+        names = ['corner --', 'corner +-', 'corner -+', 'corner ++',
+                 'mid bottom', 'mid top', 'mid left', 'mid right',
+                 'center']
+        combo = fields['anchor_combo']
+        combo.clear()
+        n_ok = 0
+        for name, (y, z) in zip(names, anchors):
+            ok = bool(filter_grid(
+                [(y, z)], sweep['joint_limit_rad'].value(),
+                sweep['limit_margin_rad'].value(),
+                sweep['closure_margin_m'].value())[0])
+            suffix = '' if ok else '  [unreachable]'
+            combo.addItem(f'{name}  ({y:+.3f}, {z:.3f}){suffix}',
+                          (y, z, ok))
+            n_ok += ok
+        self._log_msg(f'anchors: 9 points from the sweep rectangle '
+                      f'y[{y0:.3f}, {y1:.3f}] z[{z0:.3f}, {z1:.3f}], '
+                      f'{n_ok} reachable')
+
+    def _on_anchor_selected(self, test_name: str):
+        fields = self._pages_fields[test_name]
+        data = fields['anchor_combo'].currentData()
+        if not data:
+            return
+        y, z, ok = data
+        if not ok:
+            self._log_msg(f'anchor ({y:.3f}, {z:.3f}) is outside the '
+                          f'filtered workspace; pick another or adjust '
+                          f'the rectangle')
+        fields['goal_y'].setValue(y)
+        fields['goal_z'].setValue(z)
 
     @Slot()
     def _on_continue_clicked(self):
@@ -1338,10 +1652,20 @@ class CalibrationDashboardWidget(QWidget):
         self._refresh_run_counts()
         self._show_banner(run_dir, status)
 
+    # Multi-goal tests resume at visit granularity (a NEW run dir with
+    # skip_visits; the analysis pools the pass pieces by pass_id).
+    # Backlash is excluded: its approach offset is a ctor arg not
+    # recorded in config.yaml, so the visit list can't be reconstructed
+    # faithfully. Single-goal tests keep the cycle-level append resume.
+    _VISIT_RESUME_TESTS = ('workspace_coverage', 'noise_gate',
+                           'settle_probe')
+
     def _resume_info(self, run_dir: Optional[Path]):
-        """(config, resume_state) for a failed run dir, or None when the
-        run cannot be resumed (missing config, unknown test, or all
-        cycles already captured)."""
+        """(config, resume_state) for an interrupted run dir, or None
+        when the run cannot be resumed (missing config, unknown test,
+        or nothing left to capture). resume_state['mode'] is 'visits'
+        (sweep-style, new dir + skip_visits) or 'cycles' (single-goal,
+        append to the same dir)."""
         if run_dir is None or not (Path(run_dir) / 'config.yaml').exists():
             return None
         try:
@@ -1349,12 +1673,26 @@ class CalibrationDashboardWidget(QWidget):
                 cfg = yaml.safe_load(f) or {}
             goals = [tuple(g) for g in (cfg.get('goals') or [])]
             num_cycles = int(cfg.get('num_cycles') or 0)
-            if cfg.get('test_name') not in TEST_REGISTRY or not goals \
+            test_name = cfg.get('test_name')
+            if test_name not in TEST_REGISTRY or not goals \
                     or num_cycles < 1:
                 return None
+            if test_name in self._VISIT_RESUME_TESTS:
+                test = TEST_REGISTRY[test_name](
+                    targets=goals, num_cycles=num_cycles,
+                    settle_time=float(cfg.get('settle_time', 2.0)),
+                    return_home_between_targets=True)
+                state = load_sweep_resume_state(
+                    run_dir, test.total_visits())
+                if not state['resumable']:
+                    return None
+                state['mode'] = 'visits'
+                state['total_visits'] = test.total_visits()
+                return cfg, state
             state = load_resume_state(run_dir, len(goals), num_cycles)
             if not state['resumable']:
                 return None
+            state['mode'] = 'cycles'
             return cfg, state
         except Exception:  # noqa: BLE001
             return None
@@ -1384,10 +1722,10 @@ class CalibrationDashboardWidget(QWidget):
         except ValueError as exc:
             self._log_msg(f'cannot resume: {exc}')
             return
-        # Everything comes from the failed run's config, not the page
-        # widgets, so the resumed cycles are captured under identical
-        # conditions to the originals.
-        request = RunRequest(
+        # Everything comes from the interrupted run's config, not the
+        # page widgets, so the resumed visits are captured under
+        # identical conditions to the originals.
+        req_kwargs = dict(
             test=test,
             output_root=Path(DEFAULT_OUTPUT_DIR).expanduser(),
             initial_pose=tuple(cfg.get('initial_pose', (0.0, 0.5))),
@@ -1397,18 +1735,37 @@ class CalibrationDashboardWidget(QWidget):
             home_tol_m=float(cfg.get('home_tol_m', 0.02)),
             home_hold_frames=int(cfg.get('home_hold_frames', 5)),
             home_timeout_s=float(cfg.get('home_timeout_s', 10.0)),
-            resume_dir=Path(self._last_run_dir),
-            start_cycle=state['next_cycle'],
+            samples_per_capture=int(cfg.get('samples_per_capture', 1)),
+            sample_min_period_s=float(cfg.get('sample_min_period_s', 0.0)),
+            pass_id=int(cfg.get('pass_id', 1)),
+            session_note=str(cfg.get('session_note', '')),
         )
+        if state['mode'] == 'visits':
+            # Sweep-style resume: NEW run dir, skip the visits already
+            # captured. Keeps the interrupted run's pass_id so the
+            # analysis reassembles the pieces into one pass.
+            req_kwargs['skip_visits'] = state['skip_visits']
+            done, total = state['skip_visits'], state['total_visits']
+        else:
+            req_kwargs['resume_dir'] = Path(self._last_run_dir)
+            req_kwargs['start_cycle'] = state['next_cycle']
+            done, total = state['done_visits'], test.total_visits()
+        request = RunRequest(**req_kwargs)
         if self._runner.request_run(request):
             self._banner.setVisible(False)
             self._start_btn.setEnabled(False)
             self._continue_btn.setEnabled(False)
-            self._progress.setRange(0, test.total_visits())
-            self._progress.setValue(state['done_visits'])
-            self._log_msg(
-                f"resuming {cfg.get('run_id')} from cycle "
-                f"{state['next_cycle']}/{num_cycles}")
+            self._progress.setRange(0, total)
+            self._progress.setValue(done)
+            if state['mode'] == 'visits':
+                self._log_msg(
+                    f"resuming {cfg.get('run_id')} in a new run dir: "
+                    f"skipping {done}/{total} captured visits "
+                    f"(pass {req_kwargs['pass_id']})")
+            else:
+                self._log_msg(
+                    f"resuming {cfg.get('run_id')} from cycle "
+                    f"{state['next_cycle']}/{num_cycles}")
 
     def _show_banner(self, run_dir: str, status: str):
         self._last_run_dir = Path(run_dir) if run_dir else None
@@ -1428,51 +1785,28 @@ class CalibrationDashboardWidget(QWidget):
             self._banner_path.setText('(no run directory)')
         self._banner_delete.setEnabled(self._last_run_dir is not None
                                        and self._last_run_dir.exists())
-        resumable = (status == 'failed'
-                     and self._resume_info(self._last_run_dir) is not None)
-        self._banner_resume.setEnabled(resumable)
-        self._banner_resume.setToolTip(
-            'Continue this run from its first incomplete cycle, appending '
-            'to the same data files.' if resumable else
-            'Only failed runs with remaining cycles can be resumed.')
-        self._banner_open.setEnabled(self._notebook_path() is not None)
-        self._banner_open.setToolTip(
-            '' if self._notebook_path() is not None
-            else 'notebook for this test type does not exist yet')
+        # Resume covers both interruption flavours: 'failed' (detection
+        # loss etc.) and 'canceled' (operator stop / Ctrl+C) -- an
+        # interrupted sweep is normally 'canceled' and its captured
+        # visits are valid data.
+        info = (self._resume_info(self._last_run_dir)
+                if status in ('failed', 'canceled') else None)
+        self._banner_resume.setEnabled(info is not None)
+        if info is not None and info[1]['mode'] == 'visits':
+            self._banner_resume.setToolTip(
+                'Start a new run covering the remaining visits '
+                '(same pass id; the analysis pools the pieces).')
+        elif info is not None:
+            self._banner_resume.setToolTip(
+                'Continue this run from its first incomplete cycle, '
+                'appending to the same data files.')
+        else:
+            self._banner_resume.setToolTip(
+                'Only interrupted runs with remaining work can be '
+                'resumed.')
+        self._banner_open.setEnabled(self._last_run_dir is not None
+                                     and self._last_run_dir.exists())
         self._banner.setVisible(True)
-
-    def _notebook_path(self) -> Optional[Path]:
-        """Resolve the analysis notebook path for the current test type.
-
-        Prefers the source tree (the git-tracked notebook, so re-running
-        it and letting nbstripout keep it clean edits the file you'd
-        actually commit), then falls back to the installed share dir for a
-        production install with no source tree. Returns None if neither
-        exists, so the Open button can disable itself.
-        """
-        if not self._last_test_name:
-            return None
-        candidates: list = []
-        # Notebooks live in the workspace-level experiments/ tree
-        # (outside src/, invisible to colcon); the per-test notebooks
-        # for the pre-Exp0 tests are under legacy/. Derived from the
-        # output dir so both track the same experiments/ root.
-        exp_root = Path(DEFAULT_OUTPUT_DIR).expanduser().parent
-        candidates.append(exp_root / 'notebooks' / 'legacy'
-                          / f'{self._last_test_name}.ipynb')
-        # Fallbacks for older checkouts: the package source tree, then
-        # the installed share dir.
-        candidates.append(Path(__file__).resolve().parents[2]
-                          / 'notebooks' / f'{self._last_test_name}.ipynb')
-        try:
-            share = Path(get_package_share_directory('volcaniarm_calibration'))
-            candidates.append(share / 'notebooks' / f'{self._last_test_name}.ipynb')
-        except Exception:
-            pass
-        for path in candidates:
-            if path.exists():
-                return path
-        return None
 
     @Slot()
     def _on_banner_keep(self):
@@ -1497,18 +1831,16 @@ class CalibrationDashboardWidget(QWidget):
             self._log_msg(f'delete failed: {exc}')
 
     @Slot()
-    def _on_banner_open_notebook(self):
-        # Open the analysis notebook directly. Re-running it is safe for
-        # git: the repo's nbstripout filter (*.ipynb filter=nbstripout in
-        # .gitattributes) strips cell outputs / execution counts, so the
-        # regenerated graphs never show up as a working-tree change.
-        path = self._notebook_path()
-        if path is None:
+    def _on_banner_open_folder(self):
+        # Open the run directory in the file manager so the operator can
+        # eyeball the CSVs before evaluating in the report notebook
+        # (experiments/notebooks/exp0_report.py).
+        if self._last_run_dir is None or not self._last_run_dir.exists():
             return
         try:
-            subprocess.Popen(['xdg-open', str(path)])
+            subprocess.Popen(['xdg-open', str(self._last_run_dir)])
         except OSError as exc:
-            self._log_msg(f'open notebook failed: {exc}')
+            self._log_msg(f'open folder failed: {exc}')
 
     def shutdown(self):
         self._align_timer.stop()
@@ -1537,6 +1869,9 @@ class CalibrationDashboardWidget(QWidget):
                 elif isinstance(widget, QPlainTextEdit):
                     plugin_settings.set_value(
                         f'{test_name}/{key}', widget.toPlainText())
+                elif isinstance(widget, QLineEdit):
+                    plugin_settings.set_value(
+                        f'{test_name}/{key}', widget.text())
                 elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
                     plugin_settings.set_value(
                         f'{test_name}/{key}', widget.value())
@@ -1553,6 +1888,8 @@ class CalibrationDashboardWidget(QWidget):
                     widget.setChecked(str(v).lower() in ('1', 'true'))
                 elif isinstance(widget, QPlainTextEdit):
                     widget.setPlainText(str(v))
+                elif isinstance(widget, QLineEdit):
+                    widget.setText(str(v))
                 elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
                     try:
                         widget.setValue(type(widget.value())(v))

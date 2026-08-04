@@ -94,6 +94,28 @@ def load_resume_state(run_dir: Path, num_goals: int,
             'resumable': next_cycle <= num_cycles}
 
 
+def load_sweep_resume_state(run_dir: Path, total_captures: int) -> dict:
+    """Visit-level resume state for sweep-style runs (multi-goal lists).
+
+    Counts captured visits as the distinct (cycle, target_idx) pairs
+    among phase=='target' observation rows; a visit whose first sample
+    failed wrote no row and is redone on resume. Unlike the cycle-level
+    resume above, the follow-up run starts a NEW run directory with
+    ``RunRequest.skip_visits`` set to this count -- the analysis pools
+    the pieces of a pass by their shared pass_id.
+    """
+    seen = set()
+    csv_path = Path(run_dir) / 'tag_observations.csv'
+    if csv_path.exists():
+        with csv_path.open(newline='') as f:
+            for row in csv.DictReader(f):
+                if row.get('phase') != 'target':
+                    continue
+                seen.add((row.get('cycle'), row.get('target_idx')))
+    n = len(seen)
+    return {'skip_visits': n, 'resumable': 0 < n < total_captures}
+
+
 class RunWriter:
     """Owns the per-run output directory and CSV writers.
 
