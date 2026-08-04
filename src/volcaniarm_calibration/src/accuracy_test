@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from volcaniarm_calibration.accuracy_test_node import main
+main()

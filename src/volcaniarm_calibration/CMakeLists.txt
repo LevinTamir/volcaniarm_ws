@@ -9,6 +9,7 @@ ament_python_install_package(${PROJECT_NAME})
 
 # Install Python executables
 install(PROGRAMS
+  src/accuracy_test
   src/camera_locator
   src/calibration_overlay
   DESTINATION lib/${PROJECT_NAME}
@@ -36,9 +37,8 @@ install(FILES plugin.xml
 install(DIRECTORY rviz/
   DESTINATION share/${PROJECT_NAME}/rviz
 )
-install(DIRECTORY notebooks/
-  DESTINATION share/${PROJECT_NAME}/notebooks
-)
+# Notebooks moved to the workspace-level experiments/ tree (outside
+# src/, not installed): see <ws>/experiments/README.md.
 # GUI resources (start-page robot image, etc.)
 install(DIRECTORY resource/
   DESTINATION share/${PROJECT_NAME}/resource
