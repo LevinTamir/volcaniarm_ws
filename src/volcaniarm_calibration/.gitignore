@@ -1,7 +1,0 @@
-# Test/calibration run data (CSVs + config.yaml under data/) is tracked
-# on purpose: the raw measurements are the thesis record, and the graphs
-# are reproducible from that data plus the notebooks. Notebook outputs are
-# stripped by the repo's nbstripout filter, so re-running never dirties git.
-#
-# (The per-setup camera_pose.yaml stays ignored via the workspace-root
-# .gitignore; it's machine-specific state, not a test result.)

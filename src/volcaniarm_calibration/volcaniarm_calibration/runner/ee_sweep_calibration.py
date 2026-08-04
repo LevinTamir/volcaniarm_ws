@@ -61,8 +61,10 @@ SAFE_Y_MAX = 0.30
 SAFE_Z_MIN = 0.35
 SAFE_Z_MAX = 0.65
 
+# Camera-localization runs join the same workspace-level tree as every
+# other run type (the dashboard's alignment-status reader looks there).
 DEFAULT_DATA_ROOT = (
-    Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/data')
+    Path('~/workspaces/volcaniarm_ws/experiments/data')
     .expanduser())
 DEFAULT_CAMERA_POSE_CONFIG = (
     Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'

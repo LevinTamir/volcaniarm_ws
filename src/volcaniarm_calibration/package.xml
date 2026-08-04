@@ -27,7 +27,6 @@
   <depend>python3-pyqt5</depend>
   <depend>python3-yaml</depend>
   <depend>python3-pandas</depend>
-  <depend>python3-matplotlib</depend>
   <depend>python3-numpy</depend>
   <exec_depend>python3-scipy</exec_depend>
 
