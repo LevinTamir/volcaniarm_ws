@@ -46,12 +46,17 @@ TAG_OBS_FIELDS = [
     # tip-orientation provenance for diagnostics; NaN when the lookup
     # failed. Appended last so older CSVs stay column-compatible.
     'tip_qx', 'tip_qy', 'tip_qz', 'tip_qw',
+    # Visit label (the target's '(y,z)' string) and approach direction
+    # tag ('+y'/'-y' for the backlash test, '' otherwise). Appended
+    # after tip_q* to keep older CSVs column-compatible.
+    'label', 'approach',
 ]
 
 FK_FIELDS = [
     'run_id', 'cycle', 'target_idx',
     'theta_right', 'theta_left',
     'fk_x', 'fk_y', 'fk_z',
+    'label', 'approach',
 ]
 
 

@@ -7,10 +7,19 @@ from typing import Iterable
 
 @dataclass(frozen=True)
 class Target:
-    """A single EE position the runner should visit."""
+    """A single EE position the runner should visit.
+
+    ``capture`` False marks a motion-only visit (e.g. a backlash
+    approach pre-point): the runner moves and settles there but takes
+    no measurement. ``approach`` is a free-form tag ('+y' / '-y' for
+    backlash) copied into the CSV rows so the analysis can group
+    samples by approach direction.
+    """
     y: float
     z: float
     label: str = ''
+    capture: bool = True
+    approach: str = ''
 
 
 class BaseTest(ABC):
@@ -19,10 +28,14 @@ class BaseTest(ABC):
     A test owns the visit pattern (which targets, in what order) and any
     per-test summary logic. The runner handles ROS plumbing.
 
-    Sampling is one detection per visit, gated on a freshly progressed
-    TF stamp post-settle. Multi-sample averaging was dropped because the
-    arm is stationary by the time we read; repeated lookups added latency
-    confounds without reducing the fundamental detector pixel noise floor.
+    Sampling defaults to one detection per visit, gated on a freshly
+    progressed TF stamp post-settle. Multi-sample averaging was dropped
+    for the accuracy tests because the arm is stationary by the time we
+    read; repeated lookups added latency confounds without reducing the
+    fundamental detector pixel noise floor. The Exp0 characterization
+    tests (noise_gate, settle_probe) re-enable per-visit bursts
+    deliberately via ``RunRequest.samples_per_capture`` -- the former to
+    measure that noise floor, the latter to trace pose vs time.
     """
 
     name: str = 'base'
@@ -55,4 +68,6 @@ class BaseTest(ABC):
         ...
 
     def total_visits(self) -> int:
-        return len(self.targets) * self.num_cycles
+        """Number of *captured* visits (progress reflects measurements,
+        not moves; motion-only pre-points are excluded)."""
+        return sum(1 for v in self.iter_visits() if v.capture)

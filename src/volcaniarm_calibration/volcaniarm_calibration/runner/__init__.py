@@ -7,6 +7,7 @@ from .data_writer import RunWriter
 from .tests import (
     BaseTest, Target,
     StaticAccuracyTest, RepeatabilityTest, WorkspaceCoverageTest,
+    NoiseGateTest, SettleProbeTest, BacklashTest,
     TEST_REGISTRY,
 )
 
@@ -16,5 +17,6 @@ __all__ = [
     'MODE_STAND', 'MODE_ON_ROBOT',
     'BaseTest', 'Target',
     'StaticAccuracyTest', 'RepeatabilityTest', 'WorkspaceCoverageTest',
+    'NoiseGateTest', 'SettleProbeTest', 'BacklashTest',
     'TEST_REGISTRY',
 ]

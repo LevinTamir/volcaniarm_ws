@@ -98,6 +98,31 @@ class RunRequest:
     home_tol_m: float = 0.02
     home_hold_frames: int = 5
     home_timeout_s: float = 10.0
+    # -- Exp0 extensions -------------------------------------------
+    # Samples captured per visit. 1 (default) keeps the historical
+    # single-sample behaviour. The noise_gate test uses ~500 to map
+    # the detector noise floor; settle_probe uses a burst sized to
+    # cover ~4 s so t_ros_ns traces pose vs time after arrival.
+    # Every sample is individually stamp-gated, so N samples are N
+    # distinct detections, not N reads of one buffered TF.
+    samples_per_capture: int = 1
+    # Minimum wall-clock spacing between samples (0 = as fast as
+    # fresh detections arrive).
+    sample_min_period_s: float = 0.0
+    # Sweep-pass metadata, recorded in config.yaml. Pass 2 of the
+    # Exp0 serpentine runs on a different day / after power cycle;
+    # the analysis joins passes on (pass_id, label).
+    pass_id: int = 1
+    session_note: str = ''
+    # Visit-level resume for sweeps: skip the first N *captured*
+    # visits (and any motion-only pre-points that precede them). To
+    # resume an interrupted sweep in a NEW run directory, count the
+    # target rows in the dead run's fk_poses.csv and pass that count
+    # here; cycle/target_idx numbering stays aligned with the
+    # original visit order because bookkeeping is computed over the
+    # full visit list. Orthogonal to the dashboard's cycle-level
+    # resume (resume_dir/start_cycle), which appends to the old dir.
+    skip_visits: int = 0
 
 
 # Callback signatures used by the runner. The widget wires Qt signals.
@@ -112,6 +137,51 @@ AwaitingContinueCb = Callable[[int, int], None]
 # freshness label. ``age_s`` is meaningful only when ``is_fresh`` is
 # True; otherwise pass 0.0.
 DetectionStateCb = Callable[[bool, float], None]
+
+
+def _visit_bookkeeping(visits) -> Tuple[list, list, int]:
+    """Per-visit (cycle, target_idx) derived from captured visits' labels.
+
+    Matches the historical round-robin numbering exactly for the
+    pre-existing tests: target_idx is the order of the label's first
+    captured appearance, cycle is the 1-based count of captured visits
+    to that label so far. Motion-only visits (capture=False, e.g.
+    backlash pre-points carrying distinct '... pre' labels) get cycle
+    for status text only and target_idx 0, and never shift the
+    numbering. Returns (cycle_of, tidx_of, total_captures).
+    """
+    label_first: dict = {}
+    label_count: dict = {}
+    cycle_of: list = []
+    tidx_of: list = []
+    for v in visits:
+        if v.capture:
+            if v.label not in label_first:
+                label_first[v.label] = len(label_first) + 1
+            label_count[v.label] = label_count.get(v.label, 0) + 1
+            cycle_of.append(label_count[v.label])
+            tidx_of.append(label_first[v.label])
+        else:
+            cycle_of.append(label_count.get(v.label, 0) + 1)
+            tidx_of.append(0)
+    total_captures = sum(1 for v in visits if v.capture)
+    return cycle_of, tidx_of, total_captures
+
+
+def resume_start_index(visits, skip_captured: int) -> int:
+    """Index of the first visit to execute after skipping the first
+    ``skip_captured`` captured visits (motion-only pre-points that
+    precede them are skipped too). Returns len(visits) when nothing is
+    left to do, -1 when skip_captured exceeds the captured total."""
+    if skip_captured <= 0:
+        return 0
+    seen = 0
+    for i, v in enumerate(visits):
+        if v.capture:
+            seen += 1
+            if seen == skip_captured:
+                return i + 1
+    return -1
 
 
 class CalibrationRunner:
@@ -329,6 +399,11 @@ class CalibrationRunner:
             'home_tol_m': request.home_tol_m,
             'home_hold_frames': request.home_hold_frames,
             'home_timeout_s': request.home_timeout_s,
+            'samples_per_capture': request.samples_per_capture,
+            'sample_min_period_s': request.sample_min_period_s,
+            'pass_id': request.pass_id,
+            'session_note': request.session_note,
+            'skip_visits': request.skip_visits,
         }
         # Record which URDF apriltag mount values this run was taken
         # with. The analysis groups runs by these so runs recorded
@@ -388,22 +463,63 @@ class CalibrationRunner:
             return False
         initial_theta_r, initial_theta_l = initial_ik
 
-        goals = list(request.goals)
-        if not goals:
-            self._emit_status('no goals supplied; aborting')
+        # The visit list comes from the test's iter_visits(), which
+        # owns the pattern (order, repetitions, motion-only
+        # pre-points). The runner is pattern-agnostic: it moves,
+        # settles, and captures wherever Target.capture is True.
+        visits = list(request.test.iter_visits())
+        if not visits:
+            self._emit_status('no visits supplied; aborting')
             return False
-        goal_iks: list = []
-        goal_fks: list = []
-        for idx, (gy, gz) in enumerate(goals, start=1):
-            ik = self._call_ik(gy, gz)
+        cycle_of, tidx_of, total_captures = _visit_bookkeeping(visits)
+
+        # Two resume mechanisms map onto one captured-visit skip:
+        # 1. skip_visits (Exp0 sweep resume, NEW run dir): skip the
+        #    first N captured visits verbatim.
+        # 2. start_cycle (dashboard resume, appends to the old dir):
+        #    skip every captured visit belonging to a cycle below
+        #    start_cycle -- identical to the historical cycle-granular
+        #    restart for the round-robin tests.
+        # Bookkeeping was computed over the FULL list, so cycle /
+        # target_idx numbering stays aligned with the original order.
+        skip_captured = 0
+        if request.skip_visits > 0:
+            skip_captured = int(request.skip_visits)
+        elif request.start_cycle > 1:
+            skip_captured = sum(
+                1 for i, v in enumerate(visits)
+                if v.capture and cycle_of[i] < request.start_cycle)
+        start_idx = resume_start_index(visits, skip_captured)
+        if start_idx < 0 or start_idx >= len(visits):
+            self._emit_status(
+                f'resume leaves no work (skipping {skip_captured} of '
+                f'{total_captures} captured visits); aborting')
+            return False
+        if skip_captured > 0:
+            self._emit_status(
+                f'resuming: skipping first {skip_captured} captured '
+                f'visits ({start_idx} visits total)')
+            self._emit_progress(skip_captured, total_captures)
+
+        # Resolve IK for every remaining visit up front, seeded with
+        # the previous solution for branch continuity along the sweep;
+        # an unreachable visit aborts before any motion. FK is
+        # best-effort; if it fails we still record the commanded
+        # (y, z) so the analysis notebook has something.
+        visit_iks: list = []
+        visit_fks: list = []
+        seed_r, seed_l = initial_ik
+        for i in range(start_idx, len(visits)):
+            v = visits[i]
+            ik = self._call_ik(v.y, v.z, seed_left=seed_l, seed_right=seed_r)
             if ik is None:
                 self._emit_status(
-                    f'IK failed for goal {idx} y={gy:.3f} z={gz:.3f}; aborting')
+                    f'IK failed for visit {i + 1} ({v.label or "unlabeled"}) '
+                    f'y={v.y:.3f} z={v.z:.3f}; aborting')
                 return False
-            goal_iks.append(ik)
-            # FK is best-effort; if it fails we still record the
-            # commanded (y, z) so the analysis notebook has something.
-            goal_fks.append(self._call_fk(*ik) or (0.0, gy, gz))
+            visit_iks.append(ik)
+            seed_r, seed_l = ik
+            visit_fks.append(self._call_fk(seed_r, seed_l) or (0.0, v.y, v.z))
 
         # Move to initial pose, settle, snapshot the home reference.
         self._emit_status(
@@ -429,92 +545,86 @@ class CalibrationRunner:
                 phase='home', cycle=0, target_idx=None,
                 theta_right=initial_theta_r, theta_left=initial_theta_l)
 
-        # Round-robin: each iteration sweeps across every goal in
-        # order. Total visits = num_cycles * len(goals). Single-goal
-        # tests (accuracy / repeatability) use len(goals) == 1 so the
-        # loop is a straight N-iteration capture; the workspace test
-        # uses K > 1 to walk the envelope each cycle. A resume starts
-        # the loop at start_cycle and counts the already-captured
-        # visits into the progress so the bar reflects the whole run.
+        # Visit-driven loop. Motion-only visits (Target.capture=False,
+        # e.g. backlash approach pre-points) move and settle but skip
+        # the capture, the FK row, and any return-to-initial.
         total_iterations = request.test.num_cycles
-        total_visits = total_iterations * len(goals)
-        visit_count = max(0, request.start_cycle - 1) * len(goals)
-        if request.start_cycle > 1:
-            self._emit_status(
-                f'resuming run at cycle {request.start_cycle}/'
-                f'{total_iterations}')
-            self._emit_progress(visit_count, total_visits)
-        for iteration in range(max(1, request.start_cycle),
-                               total_iterations + 1):
+        captured = skip_captured
+        for i in range(start_idx, len(visits)):
             if self._stop_event.is_set():
                 return False
-            for goal_idx, (gy, gz) in enumerate(goals, start=1):
-                if self._stop_event.is_set():
-                    return False
-                theta_r, theta_l = goal_iks[goal_idx - 1]
-                fk_xyz = goal_fks[goal_idx - 1]
+            v = visits[i]
+            theta_r, theta_l = visit_iks[i - start_idx]
+            fk_xyz = visit_fks[i - start_idx]
+            kind = 'goal' if v.capture else 'via'
+            self._emit_status(
+                f'visit {i + 1}/{len(visits)} ({kind} {v.label}): '
+                f'moving to y={v.y:.3f} z={v.z:.3f}')
+            if not self._send_and_wait(
+                    request.joint_names, theta_r, theta_l,
+                    request.trajectory_duration):
+                self._emit_status('visit trajectory failed; aborting run')
+                return False
+            if not self._settle(request.test.settle_time, kind):
+                return False
+            if not v.capture:
+                continue
 
+            # Repeatability / accuracy tests are hands-off (the gate
+            # is just to wait for a fresh detection); workspace-
+            # coverage runs without an operator gate too. The
+            # awaiting-continue + auto-continue plumbing in the
+            # dashboard remains for backwards compatibility but no
+            # longer blocks: capture is gated only on a freshly
+            # progressed TF stamp post-settle.
+            # Clear the continue event BEFORE emitting: a headless
+            # awaiting_continue_cb calls proceed() synchronously from
+            # this same thread, and clearing inside the wait would eat
+            # that proceed and deadlock the run.
+            self._continue_event.clear()
+            self._emit_awaiting_continue(cycle_of[i], total_iterations)
+            if not self._wait_for_continue(request):
+                # Either cancelled or the runner was shut down.
+                return False
+
+            self._capture_observations(
+                request, writer,
+                phase='target', cycle=cycle_of[i], target_idx=tidx_of[i],
+                theta_right=theta_r, theta_left=theta_l,
+                label=v.label, approach=v.approach)
+            writer.add_fk({
+                'cycle': cycle_of[i],
+                'target_idx': tidx_of[i],
+                'theta_right': theta_r,
+                'theta_left': theta_l,
+                'fk_x': fk_xyz[0],
+                'fk_y': fk_xyz[1],
+                'fk_z': fk_xyz[2],
+                'label': v.label,
+                'approach': v.approach,
+            })
+            captured += 1
+            self._emit_progress(captured, total_captures)
+
+            # Single-pose tests return to the initial pose between
+            # visits so each visit starts from a known state and
+            # the run ends with the arm parked at the operator-
+            # chosen initial. Sweep-style tests skip this so they can
+            # walk the envelope without doubling back on every goal.
+            if request.test.return_to_initial_between_visits:
                 self._emit_status(
-                    f'cycle {iteration}/{total_iterations} '
-                    f'goal {goal_idx}/{len(goals)}: moving to '
-                    f'y={gy:.3f} z={gz:.3f}')
+                    f'visit {i + 1}/{len(visits)}: returning to initial')
                 if not self._send_and_wait(
-                        request.joint_names, theta_r, theta_l,
+                        request.joint_names,
+                        initial_theta_r, initial_theta_l,
                         request.trajectory_duration):
-                    self._emit_status('goal trajectory failed; aborting run')
-                    return False
-                if not self._settle(request.test.settle_time, 'goal'):
-                    return False
-
-                # Repeatability / accuracy tests are hands-off (the gate
-                # is just to wait for a fresh detection); workspace-
-                # coverage runs without an operator gate too. The
-                # awaiting-continue + auto-continue plumbing in the
-                # dashboard remains for backwards compatibility but no
-                # longer blocks: capture is gated only on a freshly
-                # progressed TF stamp post-settle.
-                self._emit_awaiting_continue(iteration, total_iterations)
-                if not self._wait_for_continue(request):
-                    # Either cancelled or the runner was shut down.
-                    return False
-
-                self._capture_observations(
-                    request, writer,
-                    phase='target', cycle=iteration, target_idx=goal_idx,
-                    theta_right=theta_r, theta_left=theta_l)
-                writer.add_fk({
-                    'cycle': iteration,
-                    'target_idx': goal_idx,
-                    'theta_right': theta_r,
-                    'theta_left': theta_l,
-                    'fk_x': fk_xyz[0],
-                    'fk_y': fk_xyz[1],
-                    'fk_z': fk_xyz[2],
-                })
-                visit_count += 1
-                self._emit_progress(visit_count, total_visits)
-
-                # Single-pose tests return to the initial pose between
-                # visits so each visit starts from a known state and
-                # the run ends with the arm parked at the operator-
-                # chosen initial. The workspace_coverage sweep skips
-                # this so it can walk the envelope without doubling
-                # back on every goal.
-                if request.test.return_to_initial_between_visits:
                     self._emit_status(
-                        f'cycle {iteration}/{total_iterations} '
-                        f'goal {goal_idx}/{len(goals)}: returning to initial')
-                    if not self._send_and_wait(
-                            request.joint_names,
-                            initial_theta_r, initial_theta_l,
-                            request.trajectory_duration):
-                        self._emit_status(
-                            'return-to-initial move failed; aborting run')
+                        'return-to-initial move failed; aborting run')
+                    return False
+                if request.test.verify_home_with_tag:
+                    if not self._wait_for_home_confirmed(
+                            request, label=f'cycle {cycle_of[i]}'):
                         return False
-                    if request.test.verify_home_with_tag:
-                        if not self._wait_for_home_confirmed(
-                                request, label=f'cycle {iteration}'):
-                            return False
         # End-of-run park. Single-pose tests already returned to
         # initial after their last visit, so this is a no-op for them
         # and we skip it. The workspace sweep ends at the last goal,
@@ -629,9 +739,13 @@ class CalibrationRunner:
         # IK/FK are in-process now; only the trajectory action needs waiting.
         return self._action_client.wait_for_server(timeout_sec=timeout_s)
 
-    def _call_ik(self, y: float, z: float):
+    def _call_ik(self, y: float, z: float,
+                 seed_left: float = 0.0, seed_right: float = 0.0):
         # Returns (theta1=right, theta2=left) to match the prior service API.
-        ik = vk.inverse_ee(self._kin, y, z, 0.0, 0.0)
+        # Seeds keep the IK branch continuous along a sweep (each call
+        # seeded with the previous solution); (0, 0) reproduces the
+        # historical behaviour for one-shot calls.
+        ik = vk.inverse_ee(self._kin, y, z, seed_left, seed_right)
         if not ik.valid:
             return None
         return float(ik.theta_right), float(ik.theta_left)
@@ -694,8 +808,12 @@ class CalibrationRunner:
         ``detection_max_age_s`` monotonic seconds. Works identically in
         sim (where stamps are sim-time and the rqt clock may be wall-
         time) and on real hardware.
+
+        The caller clears ``_continue_event`` before emitting
+        awaiting_continue (NOT here): a headless callback proceeds
+        synchronously from the worker thread, so clearing after the
+        emit would discard that proceed and block forever.
         """
-        self._continue_event.clear()
         # Reset the detection indicator so the dashboard starts in the
         # "no detection yet" state on each gate entry.
         self._emit_detection_state(False, 0.0)
@@ -986,48 +1104,93 @@ class CalibrationRunner:
     def _capture_observations(self, request: RunRequest, writer: RunWriter,
                               phase: str, cycle: int,
                               target_idx: Optional[int],
-                              theta_right: float, theta_left: float):
-        """Capture exactly one base->ee detection at the current pose.
+                              theta_right: float, theta_left: float,
+                              label: str = '', approach: str = ''):
+        """Capture ``request.samples_per_capture`` detections here.
 
-        Multi-sample averaging was dropped: the arm is stationary by
-        the time we read, so repeated lookups recorded the detector
-        pixel noise floor without measuring anything that varied. The
-        single capture is gated on a TF stamp progression (a detection
-        whose stamp differs from the one buffered before settle ended)
-        so the row reflects a measurement made *after* the arm settled,
-        not a stale buffered transform.
+        Default is exactly one, preserving the historical behaviour:
+        multi-sample averaging was dropped for the accuracy tests
+        because the arm is stationary by the time we read, so repeated
+        lookups recorded the detector pixel noise floor without
+        measuring anything that varied. The noise_gate and
+        settle_probe tests re-enable bursts deliberately -- the former
+        to *characterize* that noise floor, the latter because its
+        timestamped samples trace pose vs time after arrival.
+
+        Every sample is individually gated on TF stamp progression (a
+        detection whose stamp differs from the previous one), so N
+        samples are N distinct detections, never N reads of one
+        buffered transform. A missing FIRST sample at a target pose
+        aborts the run (we needed a measurement here); losing
+        detection mid-burst logs how many samples landed and moves on.
+        """
+        if self._stop_event.is_set():
+            return
+        n = max(1, int(request.samples_per_capture))
+        got = 0
+        for sample_idx in range(1, n + 1):
+            if self._stop_event.is_set():
+                return
+            ok = self._capture_one_sample(
+                request, writer, phase, cycle, target_idx,
+                theta_right, theta_left, label, approach,
+                sample_idx, verbose=(sample_idx == 1 or sample_idx % 100 == 0))
+            if not ok:
+                if sample_idx > 1:
+                    self._emit_status(
+                        f'{phase} capture: burst ended early at sample '
+                        f'{sample_idx}/{n} ({got} recorded)')
+                return
+            got += 1
+            if request.sample_min_period_s > 0 and sample_idx < n:
+                if self._stop_event.wait(request.sample_min_period_s):
+                    return
+        if n > 1:
+            self._emit_status(
+                f'{phase} capture (cycle={cycle}, target_idx={target_idx}): '
+                f'{got}/{n} samples recorded')
+
+    def _capture_one_sample(self, request: RunRequest, writer: RunWriter,
+                            phase: str, cycle: int,
+                            target_idx: Optional[int],
+                            theta_right: float, theta_left: float,
+                            label: str, approach: str,
+                            sample_idx: int, verbose: bool) -> bool:
+        """One stamp-gated detection -> one CSV row.
+
+        Returns False when no row was written. First-sample failures
+        at a 'target' phase set the failure reason and stop the run
+        (matching the historical single-sample semantics); later
+        samples fail soft so a burst that loses the tag partway keeps
+        what it has.
 
         Each row stores the raw apriltag base->ee transform (for tag-
         frame diagnostics), the world-frame Y-Z origins of both the
         detected and URDF base/EE markers (so the analysis can plot
         clusters in a single consistent frame), and the headline
         scalars ``d_detected``, ``d_urdf`` and the signed difference
-        ``d_error``. The d_* scalars are computed in the world frame
-        so the Y and Z axes refer to the same physical directions for
-        detection and URDF, regardless of how each parent tag frame
-        is oriented.
+        ``d_error``, computed in the world frame so Y and Z refer to
+        the same physical axes for detection and URDF.
         """
-        if self._stop_event.is_set():
-            return
         det = self._wait_for_fresh_detection(
             request, request.detection_timeout_s)
         if det is None:
-            reason = (f'no fresh detection after settle '
+            reason = (f'no fresh detection '
                       f'(timeout={request.detection_timeout_s:.1f} s)')
             self._emit_status(
                 f'{phase} capture: {reason} (cycle={cycle}, '
-                f'target_idx={target_idx})')
-            # 'target' phase: the run cannot recover -- we needed a
-            # measurement at this pose. 'home' baseline missing is
-            # logged but not fatal (the analysis still has the goal
-            # rows).
-            if phase == 'target':
+                f'target_idx={target_idx}, sample={sample_idx})')
+            # First sample at a 'target' phase: the run cannot recover
+            # -- we needed a measurement at this pose. 'home' baseline
+            # missing is logged but not fatal (the analysis still has
+            # the goal rows).
+            if phase == 'target' and sample_idx == 1:
                 self._failure_reason = (
                     f'detection lost during sampling at cycle={cycle}, '
                     f'target_idx={target_idx}: {reason}')
                 self._emit_status(f'aborting: {self._failure_reason}')
                 self._stop_event.set()
-            return
+            return False
         d_detected, det_origins, det_reason = self._yz_segment_world(
             request, request.base_tag_frame, request.ee_tag_frame, 0.1)
         d_urdf, urdf_origins, urdf_reason = self._yz_segment_world(
@@ -1035,20 +1198,21 @@ class CalibrationRunner:
         if d_detected is None:
             self._emit_status(
                 f'{phase} capture: detected segment unavailable in '
-                f'world frame ({det_reason}); aborting')
-            if phase == 'target':
+                f'world frame ({det_reason})')
+            if phase == 'target' and sample_idx == 1:
                 self._failure_reason = (
                     f'world-frame detection lookup failed at cycle={cycle}, '
                     f'target_idx={target_idx}: {det_reason}')
                 self._stop_event.set()
-            return
+            return False
         if d_urdf is None:
             d_urdf_val = float('nan')
             d_error = float('nan')
             urdf_origins = (float('nan'),) * 4
-            self._emit_status(
-                f'{phase} capture: URDF segment unavailable in world '
-                f'frame ({urdf_reason}); logging detection only')
+            if verbose:
+                self._emit_status(
+                    f'{phase} capture: URDF segment unavailable in world '
+                    f'frame ({urdf_reason}); logging detection only')
         else:
             d_urdf_val = d_urdf
             d_error = d_detected - d_urdf
@@ -1070,7 +1234,9 @@ class CalibrationRunner:
             'phase': phase,
             'cycle': cycle,
             'target_idx': '' if target_idx is None else target_idx,
-            'sample_idx': 1,
+            'sample_idx': sample_idx,
+            'label': label,
+            'approach': approach,
             't_ros_ns': stamp.nanoseconds,
             'theta_right': theta_right,
             'theta_left': theta_left,
@@ -1086,13 +1252,17 @@ class CalibrationRunner:
             'tip_qx': tip_q[0], 'tip_qy': tip_q[1],
             'tip_qz': tip_q[2], 'tip_qw': tip_q[3],
         })
-        if math.isnan(d_error):
-            self._emit_status(
-                f'{phase} capture (cycle={cycle}, target_idx={target_idx}): '
-                f'd_detected={d_detected * 1000:.1f} mm  d_urdf=n/a')
-        else:
-            self._emit_status(
-                f'{phase} capture (cycle={cycle}, target_idx={target_idx}): '
-                f'd_detected={d_detected * 1000:.1f} mm  '
-                f'd_urdf={d_urdf_val * 1000:.1f} mm  '
-                f'd_error={d_error * 1000:+.1f} mm')
+        if verbose:
+            if math.isnan(d_error):
+                self._emit_status(
+                    f'{phase} capture (cycle={cycle}, '
+                    f'target_idx={target_idx}, sample={sample_idx}): '
+                    f'd_detected={d_detected * 1000:.1f} mm  d_urdf=n/a')
+            else:
+                self._emit_status(
+                    f'{phase} capture (cycle={cycle}, '
+                    f'target_idx={target_idx}, sample={sample_idx}): '
+                    f'd_detected={d_detected * 1000:.1f} mm  '
+                    f'd_urdf={d_urdf_val * 1000:.1f} mm  '
+                    f'd_error={d_error * 1000:+.1f} mm')
+        return True
