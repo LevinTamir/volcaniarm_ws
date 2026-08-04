@@ -1,4 +1,8 @@
 repositories:
+  experiments:
+    type: git
+    url: git@github.com:LevinTamir/thesis-experiments.git
+    version: main
   src/apriltag_ros:
     type: git
     url: https://github.com/christianrauch/apriltag_ros.git
