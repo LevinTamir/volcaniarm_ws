@@ -311,15 +311,15 @@ class CalibrationDashboardWidget(QWidget):
             iterations_default=5,
             iterations_label='cycles (reps per direction)',
             with_approach_offset=True)))
-        # Keep the page compact (sized to its content) and let the run
-        # panel's log expand to fill the rest, so there's no large blank
-        # gap between a page's controls and the log at the bottom.
+        # Pages take most of the vertical space (they scroll internally
+        # past that); the run panel below keeps a compact status/log
+        # strip that grows only with leftover room.
         self._pages.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         # Floor so the log's stretch can't squeeze the page area into a
         # sliver; past this the page scrolls (see _scrolled above).
         self._pages.setMinimumHeight(340)
-        right.addWidget(self._pages)
+        right.addWidget(self._pages, stretch=3)
         right.addWidget(self._build_run_panel(), stretch=1)
         root.addLayout(right, stretch=1)
 
@@ -335,7 +335,7 @@ class CalibrationDashboardWidget(QWidget):
         # Open at a comfortable size instead of the cramped default rqt
         # gives a fresh plugin; keep a sensible floor and a log that always
         # has room without dominating.
-        self._log.setMinimumHeight(150)
+        self._log.setMinimumHeight(80)
         self.setMinimumSize(960, 720)
         self.resize(1080, 820)
 
@@ -353,21 +353,14 @@ class CalibrationDashboardWidget(QWidget):
         return nav
 
     def _build_start_page(self) -> QWidget:
+        # Homing is the page's one action, so it sits at the top - the
+        # long instructions and the logo scroll below it, never the
+        # other way around.
         page = QWidget()
         v = QVBoxLayout(page)
         title = QLabel('Volcaniarm Calibration')
         title.setStyleSheet('font-size: 22px; font-weight: bold;')
         v.addWidget(title)
-
-        pixmap = self._load_logo_pixmap()
-        image = QLabel()
-        image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        if pixmap is not None:
-            image.setPixmap(pixmap)
-        else:
-            image.setText('(robot image unavailable)')
-            image.setStyleSheet('color: gray;')
-        v.addWidget(image)
 
         instructions = QLabel(
             '<p>Calibrate the real Volcaniarm against AprilTag ground truth.</p>'
@@ -384,7 +377,7 @@ class CalibrationDashboardWidget(QWidget):
             'experiments/RUNBOOK.md)</b></p>'
             '<ul>'
             '<li><b>Joint Limits</b> - jog to the mechanical stops with '
-            'the joystick and capture the measured symmetric limit '
+            'the joystick and capture the measured joint range '
             '(once).</li>'
             '<li><b>Camera Localization</b> - measure where the camera '
             'sits relative to the arm base before running tests.</li>'
@@ -404,7 +397,6 @@ class CalibrationDashboardWidget(QWidget):
             '</ul>')
         instructions.setWordWrap(True)
         instructions.setTextFormat(Qt.TextFormat.RichText)
-        v.addWidget(instructions)
 
         # Robot homing: the only action on the Start tab. Triggers the
         # limit-switch homing service on volcaniarm_hardware (the arm
@@ -425,6 +417,17 @@ class CalibrationDashboardWidget(QWidget):
         self._home_status.setStyleSheet('color: gray;')
         home_outer.addWidget(self._home_status)
         v.addWidget(home_box)
+        v.addWidget(instructions)
+
+        pixmap = self._load_logo_pixmap()
+        image = QLabel()
+        image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if pixmap is not None:
+            image.setPixmap(pixmap)
+        else:
+            image.setText('(robot image unavailable)')
+            image.setStyleSheet('color: gray;')
+        v.addWidget(image)
         return page
 
     # -- Joint Limits page ----------------------------------------
