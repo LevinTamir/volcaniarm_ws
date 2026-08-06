@@ -201,11 +201,11 @@ class CalibrationRunner:
             node, FollowJointTrajectory,
             '/volcaniarm_controller/follow_joint_trajectory',
             callback_group=self._cb_group)
-        # Limit-switch homing service advertised by volcaniarm_hardware.
-        # The GUI's Start tab calls this to re-zero the arm when it was
-        # booted with auto_home:=false.
+        # Limit-switch homing service advertised by the hardware
+        # interface. The GUI's Start tab calls this to re-zero the arm
+        # when it was booted with auto_home:=false.
         self._home_client = self.node.create_client(
-            Trigger, '/volcaniarm_hardware/home',
+            Trigger, '/volcaniarm_hardware_interface/home',
             callback_group=self._cb_group)
 
         self._run_thread: Optional[threading.Thread] = None
@@ -686,7 +686,8 @@ class CalibrationRunner:
         poll its future, honouring _stop_event so Cancel aborts the wait.
         The hardware seek blocks up to ~30 s, so allow a 35 s deadline."""
         if not self._home_client.wait_for_service(timeout_sec=5.0):
-            self._emit_status('cannot home: /volcaniarm_hardware/home unavailable')
+            self._emit_status(
+                'cannot home: /volcaniarm_hardware_interface/home unavailable')
             self._emit_home_finished(False, 'home service unavailable')
             return
         self._emit_status('homing: seeking limit switches (up to ~30 s)...')

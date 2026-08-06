@@ -402,7 +402,7 @@ class CalibrationDashboardWidget(QWidget):
         self._home_btn = QPushButton('Home robot')
         self._home_btn.setObjectName('primary')
         self._home_btn.setToolTip(
-            'Run limit-switch homing (volcaniarm_hardware/home). The arm '
+            'Run limit-switch homing (volcaniarm_hardware_interface/home). The arm '
             'seeks its limit switches and re-zeros; takes up to ~30 s. '
             'Use this if the robot booted with auto_home:=false.')
         home_outer.addWidget(self._home_btn)
