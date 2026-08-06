@@ -54,10 +54,11 @@ volcaniarm_joystick_teleop:
     # Home: deadman + this button publishes one trajectory point sending
     # both elbows to home_positions over home_duration_sec. After
     # triggering, release+repress the deadman to resume stick teleop.
-    # SDL mapping: 2 = X (Xbox) / square (PS). NOTE: on the BT HID
-    # layout where RB=7 (this pad), X is often index 3 instead — if
-    # deadman+X does not home, verify with `ros2 topic echo /joy`.
-    home_button: 2
+    # A measured at index 0 on the ASUS TUF F16 with the Xbox Wireless
+    # Controller over Bluetooth (2026-08-06, `ros2 topic echo /joy`),
+    # same session as the deadman measurement above. Re-verify if the
+    # pad or machine changes.
+    home_button: 0
     # Order MUST match joint_names above (right first, left second).
     home_positions: [0.0, 0.0]
     home_duration_sec: 3.0
