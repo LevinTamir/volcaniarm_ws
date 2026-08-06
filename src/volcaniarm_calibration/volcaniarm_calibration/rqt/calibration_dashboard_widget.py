@@ -333,9 +333,12 @@ class CalibrationDashboardWidget(QWidget):
         self._apply_measured_joint_limit()
 
         # Open at a comfortable size instead of the cramped default rqt
-        # gives a fresh plugin; keep a sensible floor and a log that always
-        # has room without dominating.
-        self._log.setMinimumHeight(80)
+        # gives a fresh plugin. The log keeps a small floor for
+        # readability but is hard-capped so the run panel never takes
+        # more than about a quarter of the window - it scrolls
+        # internally past that.
+        self._log.setMinimumHeight(60)
+        self._log.setMaximumHeight(150)
         self.setMinimumSize(960, 720)
         self.resize(1080, 820)
 
