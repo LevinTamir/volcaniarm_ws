@@ -227,24 +227,30 @@ working plane; feeds the per-point maps.
    cube diagonal: the arm is planar, so a plane-filling grid is the
    meaningful envelope. State that deviation in the thesis.
 
-## 6. Validating the results (report notebook)
+## 6. Validating the results (evaluation notebooks)
 
 Evaluation lives in the experiments repo, outside this package:
-`<ws>/experiments/notebooks/exp0_report.py` (percent-format, runs
-directly in VSCode). After recording runs, execute it top to bottom -
-each section auto-discovers every matching run under
-`experiments/data/`, prints its verdict/metrics, and writes figures +
-`exp0_summary.md` to `experiments/figures/`.
+`<ws>/experiments/notebooks/` has one notebook per test (VSCode or
+Jupyter), runnable independently right after that test's data lands.
+Each auto-discovers its runs under `experiments/data/`, prints its
+verdict/metrics, writes its figures, and saves its headline numbers
+for `summary.ipynb`:
 
-Sections: 0 noise-gate PASS/FAIL, 1 settle time, 2 sweep accuracy
-maps + metrics (P0-2/3/4), 3 anchor AP+RP (P0-5/6), 4 systematic vs
-random + measured-vs-analytical overlay (P0-7), 5 frozen weed
-positions, 6 summary export. `workspace_figures.py` alongside it
-produces the analytic task-region set (P0-1, P0-8a/b/c).
+- `noise_gate.ipynb` - noise-gate PASS/FAIL
+- `settle_probe.ipynb` - p95 settle time
+- `workspace_sweep.ipynb` - sweep accuracy maps + metrics (P0-2/3/4),
+  systematic vs random, measured-vs-analytical overlay (P0-7)
+- `anchor_repeatability.ipynb` - anchor AP+RP (P0-5/6)
+- `weed_positions.ipynb` - frozen weed positions
+- `summary.ipynb` - merges everything into `figures/summary.md`
+- `workspace_design.ipynb` - analytic task-region set (P0-1, P0-8a/b/c)
+
+Shared loading/aggregation is in `report_lib.py`; the numpy FK port in
+`five_bar.py`.
 
 Run selection defaults to auto-discovery (interrupted runs included:
 their captured rows are valid data and resumed sweeps reassemble by
-pass id); pin the `*_RUNS` selectors at the top of the notebook to an
+pass id); pin the `RUN`/`RUNS` selector at the top of a notebook to an
 explicit run list for the final thesis figures so they are
 reproducible.
 
@@ -254,8 +260,8 @@ What "validated" looks like:
   you actually recorded.
 - Noise gate: PASS (worst axis <= 2 mm after the 30-frame median).
 - Sweep: passes agree per point (small between-pass spread means the
-  error is systematic and calibratable; section 4 quantifies the
-  split). Quote mean/RMSE/percentiles and the success rates at
+  error is systematic and calibratable; the sweep notebook quantifies
+  the split). Quote mean/RMSE/percentiles and the success rates at
   10/15/20 mm.
 - Anchors: quote AP and RP per point; with repeat sessions, the
   within vs between decomposition separates short-term repeatability

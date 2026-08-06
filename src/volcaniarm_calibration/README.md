@@ -45,8 +45,9 @@ mount bias, aggregation rules) is in
 [CALIBRATION.md](CALIBRATION.md); the Exp0 step-by-step pipeline is
 `<ws>/experiments/RUNBOOK.md`. Analysis lives in the separate
 experiments repo (nested at `<ws>/experiments/`, its own private git
-repo): run the tests here, then evaluate with
-`experiments/notebooks/exp0_report.py`.
+repo): run the tests here, then evaluate with the per-test notebooks
+under `experiments/notebooks/` (noise_gate, settle_probe,
+workspace_sweep, anchor_repeatability, weed_positions, summary).
 
 ## Run it
 

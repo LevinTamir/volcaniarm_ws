@@ -84,14 +84,14 @@ from ..analysis import loader as _analysis_loader
 _PROTOCOL_NOTES = {
     'noise_gate': (
         'Exp0 step 3 (BLOCKING): ~5 static poses spanning the task '
-        'region, ~500 samples each. Validate in the report notebook '
-        'section 0: effective noise must be <= 1-2 mm per axis before '
+        'region, ~500 samples each. Validate in noise_gate.ipynb: '
+        'effective noise must be <= 1-2 mm per axis before '
         'any sweep runs.'),
     'settle_probe': (
         'Exp0 step 4: settle time is forced to 0 and each visit records '
-        'a timestamped burst (~120 samples ~ 4 s at 30 Hz). Notebook '
-        'section 1 reports the p95 settle time - set it as the settle '
-        'time on the other pages.'),
+        'a timestamped burst (~120 samples ~ 4 s at 30 Hz). '
+        'settle_probe.ipynb reports the p95 settle time - set it as the '
+        'settle time on the other pages.'),
     'workspace_coverage': (
         'Exp0 steps 5-6: generate the grid from the task rectangle '
         '(measure the joint limits first - runbook step 1), then one '
@@ -1124,7 +1124,8 @@ class CalibrationDashboardWidget(QWidget):
         self._banner_open = QPushButton('Open folder')
         self._banner_open.setToolTip(
             'Open the run directory (config.yaml + CSVs). Evaluate runs '
-            'in experiments/notebooks/exp0_report.py.')
+            "in the test's notebook under experiments/notebooks/ "
+            '(noise_gate, settle_probe, workspace_sweep, ...).')
         self._banner_keep.clicked.connect(self._on_banner_keep)
         self._banner_resume.clicked.connect(self._on_banner_resume)
         self._banner_delete.clicked.connect(self._on_banner_delete)
@@ -2062,8 +2063,8 @@ class CalibrationDashboardWidget(QWidget):
     @Slot()
     def _on_banner_open_folder(self):
         # Open the run directory in the file manager so the operator can
-        # eyeball the CSVs before evaluating in the report notebook
-        # (experiments/notebooks/exp0_report.py).
+        # eyeball the CSVs before evaluating in the test's notebook
+        # (experiments/notebooks/<test>.ipynb).
         if self._last_run_dir is None or not self._last_run_dir.exists():
             return
         try:
