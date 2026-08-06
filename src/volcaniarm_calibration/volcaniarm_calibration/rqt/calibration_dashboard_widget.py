@@ -801,10 +801,18 @@ class CalibrationDashboardWidget(QWidget):
         """Representative reachable poses for a goals list: the kept
         grid point nearest each spread target over the recommended task
         rectangle (where the tests will actually run), falling back to
-        the reachable cloud's bounding box."""
+        the reachable cloud's bounding box.
+
+        Deliberately conservative: the candidate cloud uses doubled
+        margins (limit 0.1 rad, closure 0.04 m) and the targets keep
+        ~20% inset from the rectangle edges - static capture poses gain
+        nothing from hugging the envelope, and edge poses proved to
+        creep toward the singularity on hardware."""
         from ..grid import reachable_cloud, recommended_rectangle
         q_min, q_max = self._load_joint_limit_range()
-        kept = reachable_cloud(q_max, joint_limit_min_rad=q_min)
+        kept = reachable_cloud(q_max, joint_limit_min_rad=q_min,
+                               limit_margin_rad=0.1,
+                               closure_margin_m=0.04)
         if not kept:
             return []
         rect = recommended_rectangle(q_max, joint_limit_min_rad=q_min)
@@ -815,13 +823,13 @@ class CalibrationDashboardWidget(QWidget):
             zs = [p[1] for p in kept]
             y0, y1, z0, z1 = min(ys), max(ys), min(zs), max(zs)
         fracs = {
-            # noise gate: center + 4 extremes of the region
-            5: [(0.5, 0.5), (0.06, 0.5), (0.94, 0.5),
-                (0.5, 0.06), (0.5, 0.94)],
-            # settle probe: center, both sides, deep
-            4: [(0.5, 0.5), (0.08, 0.4), (0.92, 0.4), (0.5, 0.92)],
+            # noise gate: center + 4 spread poses, inset from the edges
+            5: [(0.5, 0.5), (0.2, 0.5), (0.8, 0.5),
+                (0.5, 0.2), (0.5, 0.8)],
+            # settle probe: center, both sides, deep-ish
+            4: [(0.5, 0.5), (0.22, 0.4), (0.78, 0.4), (0.5, 0.78)],
             # backlash: lateral spread at mid height
-            3: [(0.1, 0.5), (0.5, 0.5), (0.9, 0.5)],
+            3: [(0.22, 0.5), (0.5, 0.5), (0.78, 0.5)],
         }[n]
         goals = []
         for fy, fz in fracs:
