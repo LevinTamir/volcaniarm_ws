@@ -168,6 +168,20 @@ class CalibrationDashboardWidget(QWidget):
     # slightly overshoot the tighter poses' true stops.
     _LIMIT_ASYMMETRY_WARN_RAD = 0.05
 
+    # Limits-driven auto-fill: goal-list pages and their recommended
+    # pose counts, the marker line that tags auto-written goals text
+    # (hand-typed text never starts with it and is never overwritten),
+    # and the shipped defaults the no-clobber rules compare against.
+    _RECOMMENDED_GOALS_N = {'noise_gate': 5, 'settle_probe': 4,
+                            'backlash': 3}
+    _RECO_MARKER = '# auto-recommended from joint limits'
+    _RECT_DEFAULTS = (-0.40, 0.40, 0.55, 0.85)
+    _SETTLE_DEFAULT_S = 2.0
+    _HOME_TOL_DEFAULT_MM = 80.0
+    _METRICS_DIR = Path(
+        '~/workspaces/volcaniarm_ws/experiments/figures/metrics'
+    ).expanduser()
+
     def __init__(self, node):
         super().__init__()
         self.setObjectName('CalibrationDashboardWidget')
@@ -237,6 +251,17 @@ class CalibrationDashboardWidget(QWidget):
         # just works.
         self._latest_joints: dict = {}
         self._limit_captures: list = []
+
+        # Last auto-recommended values for the no-clobber rules: an
+        # auto-filled widget is only overwritten by a newer
+        # recommendation while it still holds the shipped default or the
+        # previous auto value - operator edits always survive.
+        self._auto_rect: Optional[tuple] = None
+        self._auto_goal_center: Optional[tuple] = None
+        self._auto_settle_s: Optional[float] = None
+        self._auto_home_tol_mm: Optional[float] = None
+        self._auto_pass_id: Optional[int] = None
+        self._auto_backlash_offset: Optional[float] = None
         from sensor_msgs.msg import JointState
         self._joint_states_sub = node.create_subscription(
             JointState, '/joint_states', self._on_joint_states, 10)
@@ -718,9 +743,13 @@ class CalibrationDashboardWidget(QWidget):
         """Prefill the sweep page's joint-limit spinboxes from
         joint_limits.yaml when measured values exist. Called after UI
         build and after settings restore so the measured values always
-        win over the placeholders and stale persisted spinboxes."""
+        win over the placeholders and stale persisted spinboxes. Always
+        ends by re-deriving every limits-driven default (goals,
+        rectangle, metrics prefills) - even without a yaml, so the
+        placeholder-based recommendations still appear."""
         path = self._joint_limits_config_path()
         if not path.exists():
+            self._refresh_limit_driven_defaults()
             return
         try:
             data = yaml.safe_load(path.read_text()) or {}
@@ -730,6 +759,7 @@ class CalibrationDashboardWidget(QWidget):
         except Exception as exc:
             self._node.get_logger().warn(
                 f'ignoring {path.name}: {exc}')
+            self._refresh_limit_driven_defaults()
             return
         sweep = self._pages_fields['workspace_coverage']
         tip = (f'Measured {data.get("captured", "?")} on the Joint Limits '
@@ -744,6 +774,267 @@ class CalibrationDashboardWidget(QWidget):
                 f'saved limits on file: [{q_min:+.4f}, {q_max:+.4f}] rad '
                 f'({data.get("captured", "?")})')
             self._limits_saved_status.setStyleSheet('color: #2e9c4a;')
+        self._refresh_limit_driven_defaults()
+
+    # -- limits-driven auto-fill ----------------------------------
+    #
+    # Everything the system has already measured flows forward as an
+    # EDITABLE default: goal lists, the sweep rectangle, goal centers,
+    # settle time, home tolerance, pass id. The no-clobber rule
+    # everywhere: only overwrite a widget still holding the shipped
+    # default or the previous auto value; hand-entered values survive.
+    # Start Run executes exactly what is on the page.
+
+    def _load_joint_limit_range(self):
+        """Measured [q_min, q_max] from joint_limits.yaml, falling back
+        to the symmetric value, then the +-1.13 placeholder."""
+        try:
+            data = yaml.safe_load(
+                self._joint_limits_config_path().read_text()) or {}
+            sym = float(data['symmetric_limit_rad'])
+            return (float(data.get('q_min_rad', -sym)),
+                    float(data.get('q_max_rad', sym)))
+        except Exception:
+            return (-1.13, 1.13)
+
+    def _recommended_goals(self, n: int) -> list:
+        """Representative reachable poses for a goals list: the kept
+        grid point nearest each spread target over the recommended task
+        rectangle (where the tests will actually run), falling back to
+        the reachable cloud's bounding box."""
+        from ..grid import reachable_cloud, recommended_rectangle
+        q_min, q_max = self._load_joint_limit_range()
+        kept = reachable_cloud(q_max, joint_limit_min_rad=q_min)
+        if not kept:
+            return []
+        rect = recommended_rectangle(q_max, joint_limit_min_rad=q_min)
+        if rect is not None:
+            y0, y1, z0, z1 = rect
+        else:
+            ys = [p[0] for p in kept]
+            zs = [p[1] for p in kept]
+            y0, y1, z0, z1 = min(ys), max(ys), min(zs), max(zs)
+        fracs = {
+            # noise gate: center + 4 extremes of the region
+            5: [(0.5, 0.5), (0.06, 0.5), (0.94, 0.5),
+                (0.5, 0.06), (0.5, 0.94)],
+            # settle probe: center, both sides, deep
+            4: [(0.5, 0.5), (0.08, 0.4), (0.92, 0.4), (0.5, 0.92)],
+            # backlash: lateral spread at mid height
+            3: [(0.1, 0.5), (0.5, 0.5), (0.9, 0.5)],
+        }[n]
+        goals = []
+        for fy, fz in fracs:
+            ty, tz = y0 + fy * (y1 - y0), z0 + fz * (z1 - z0)
+            best = min(kept,
+                       key=lambda p: (p[0] - ty) ** 2 + (p[1] - tz) ** 2)
+            g = (round(best[0], 3), round(best[1], 3))
+            if g not in goals:
+                goals.append(g)
+        return goals
+
+    def _refresh_recommended_goals(self, force_test: str = None):
+        """Fill goal-list editors with limits-derived poses. Overwrites
+        only empty or marker-tagged text (force_test overwrites that
+        page unconditionally - the per-page Recommend button)."""
+        q_min, q_max = self._load_joint_limit_range()
+        for test_name, n in self._RECOMMENDED_GOALS_N.items():
+            fields = self._pages_fields.get(test_name)
+            if not fields or 'goals_edit' not in fields:
+                continue
+            edit = fields['goals_edit']
+            current = edit.toPlainText().strip()
+            if (current and not current.startswith(self._RECO_MARKER)
+                    and force_test != test_name):
+                continue
+            try:
+                goals = self._recommended_goals(n)
+            except Exception as exc:  # noqa: BLE001
+                self._node.get_logger().warn(
+                    f'goal recommendation failed: {exc}')
+                return
+            if not goals:
+                continue
+            edit.setPlainText(
+                f'{self._RECO_MARKER} [{q_min:+.3f}, {q_max:+.3f}] rad '
+                f'- edit freely; Start Run executes this list\n'
+                + ''.join(f'{y:.3f}, {z:.3f}\n' for y, z in goals))
+
+    @staticmethod
+    def _rect_close(a: tuple, b: tuple) -> bool:
+        return all(abs(x - y) < 5e-4 for x, y in zip(a, b))
+
+    def _refresh_recommended_rectangle(self, force: bool = False):
+        """Prefill the sweep rectangle with the largest rectangle inside
+        the measured reachable region, then reseed goal centers and the
+        anchor combo. Operator-tuned rectangles survive unless forced."""
+        sweep = self._pages_fields.get('workspace_coverage')
+        if not sweep or 'grid_y0' not in sweep:
+            return
+        current = (sweep['grid_y0'].value(), sweep['grid_y1'].value(),
+                   sweep['grid_z0'].value(), sweep['grid_z1'].value())
+        untouched = (self._rect_close(current, self._RECT_DEFAULTS)
+                     or (self._auto_rect is not None
+                         and self._rect_close(current, self._auto_rect)))
+        if force or untouched:
+            try:
+                from ..grid import recommended_rectangle
+                q_min, q_max = self._load_joint_limit_range()
+                rect = recommended_rectangle(
+                    q_max, joint_limit_min_rad=q_min)
+            except Exception as exc:  # noqa: BLE001
+                self._node.get_logger().warn(
+                    f'rectangle recommendation failed: {exc}')
+                rect = None
+            if rect is not None:
+                for key, val in zip(
+                        ('grid_y0', 'grid_y1', 'grid_z0', 'grid_z1'),
+                        rect):
+                    sweep[key].setValue(val)
+                    sweep[key].setToolTip(
+                        'Auto-recommended: largest rectangle inside the '
+                        'measured reachable region - edit freely.')
+                self._auto_rect = rect
+                # A fresh rectangle means fresh anchors.
+                if 'anchor_combo' in self._pages_fields.get(
+                        'repeatability', {}):
+                    self._on_load_anchors('repeatability')
+        self._seed_goal_centers()
+
+    def _seed_goal_centers(self):
+        """Default the single-goal pages' goal pose to the sweep
+        rectangle's center (home-FK / previous-auto sentinel rule)."""
+        sweep = self._pages_fields.get('workspace_coverage')
+        if not sweep or 'grid_y0' not in sweep:
+            return
+        cy = round((sweep['grid_y0'].value()
+                    + sweep['grid_y1'].value()) / 2, 3)
+        cz = round((sweep['grid_z0'].value()
+                    + sweep['grid_z1'].value()) / 2, 3)
+        prev = self._auto_goal_center
+        for tn in ('repeatability', 'static_accuracy'):
+            fields = self._pages_fields.get(tn)
+            if not fields or 'goal_y' not in fields:
+                continue
+            for key, val, idx in (('goal_y', cy, 0), ('goal_z', cz, 1)):
+                sb = fields[key]
+                sentinels = [_HOME_FALLBACK[idx],
+                             (self._home_fk_y, self._home_fk_z)[idx]]
+                if prev is not None:
+                    sentinels.append(prev[idx])
+                if any(abs(sb.value() - s) < 1e-6 for s in sentinels):
+                    sb.setValue(val)
+                    sb.setToolTip(
+                        'Auto-recommended: sweep rectangle center - '
+                        'edit freely.')
+        self._auto_goal_center = (cy, cz)
+
+    def _load_metrics_file(self, name: str) -> dict:
+        try:
+            return yaml.safe_load(
+                (self._METRICS_DIR / f'{name}.yaml').read_text()) or {}
+        except Exception:
+            return {}
+
+    def _apply_measured_results(self):
+        """Prefill defaults from notebook-saved metrics: settle-time p95
+        everywhere, home-gate tolerance from the measured mean error."""
+        settle = self._load_metrics_file('settle_probe')
+        p95 = settle.get('p95_s')
+        if p95 is not None:
+            for fields in self._pages_fields.values():
+                sb = fields.get('settle_time')
+                if sb is None or not sb.isEnabled():
+                    continue
+                cur = sb.value()
+                if (abs(cur - self._SETTLE_DEFAULT_S) < 1e-9
+                        or (self._auto_settle_s is not None
+                            and abs(cur - self._auto_settle_s) < 1e-9)):
+                    sb.setValue(float(p95))
+                    sb.setToolTip(
+                        f'Measured p95 settle time (settle probe '
+                        f'{settle.get("run", "?")}) - edit freely.')
+            self._auto_settle_s = float(p95)
+        sweep_m = self._load_metrics_file('sweep')
+        mean_mm = sweep_m.get('mean_mm')
+        if mean_mm is not None:
+            sb = self._pages_fields.get(
+                'repeatability', {}).get('home_tol_mm')
+            if sb is not None:
+                suggested = max(20.0, round(1.5 * float(mean_mm), 1))
+                cur = sb.value()
+                if (abs(cur - self._HOME_TOL_DEFAULT_MM) < 1e-9
+                        or (self._auto_home_tol_mm is not None
+                            and abs(cur - self._auto_home_tol_mm) < 1e-9)):
+                    sb.setValue(suggested)
+                    sb.setToolTip(
+                        f'Suggested 1.5 x measured mean error '
+                        f'({mean_mm} mm, sweep metrics) - edit freely.')
+                self._auto_home_tol_mm = suggested
+
+    def _refresh_pass_id(self):
+        """Propose the next unused sweep pass id from the runs on disk."""
+        sb = self._pages_fields.get(
+            'workspace_coverage', {}).get('pass_id')
+        if sb is None:
+            return
+        root = (Path(DEFAULT_OUTPUT_DIR).expanduser()
+                / 'workspace_coverage')
+        seen = []
+        for cfg in root.glob('*/*/config.yaml'):
+            try:
+                seen.append(int((yaml.safe_load(cfg.read_text())
+                                 or {}).get('pass_id', 1)))
+            except Exception:  # noqa: BLE001
+                continue
+        nxt = (max(seen) + 1) if seen else 1
+        cur = sb.value()
+        if cur == 1 or (self._auto_pass_id is not None
+                        and cur == self._auto_pass_id):
+            sb.setValue(nxt)
+            sb.setToolTip(
+                f'Next unused pass id ({len(seen)} sweep runs on disk) '
+                f'- edit freely. A resumed sweep keeps the interrupted '
+                f"run's pass id.")
+        self._auto_pass_id = nxt
+
+    def _sync_backlash_offset(self):
+        """Backlash approach offset follows the sweep grid spacing while
+        the operator has not touched it."""
+        sweep = self._pages_fields.get('workspace_coverage', {})
+        sb = self._pages_fields.get('backlash', {}).get(
+            'approach_offset_m')
+        if sb is None or 'grid_spacing' not in sweep:
+            return
+        spacing = sweep['grid_spacing'].value()
+        cur = sb.value()
+        if (abs(cur - 0.05) < 1e-9
+                or (self._auto_backlash_offset is not None
+                    and abs(cur - self._auto_backlash_offset) < 1e-9)):
+            sb.setValue(spacing)
+            sb.setToolTip(
+                'Follows the sweep grid spacing until edited.')
+        self._auto_backlash_offset = spacing
+
+    def _prefill_session_note(self):
+        edit = self._pages_fields.get(
+            'workspace_coverage', {}).get('session_note')
+        if edit is None:
+            return
+        text = edit.text().strip()
+        if not text or re.fullmatch(r'session \d{4}-\d{2}-\d{2}', text):
+            edit.setText('session ' + time.strftime('%Y-%m-%d'))
+
+    def _refresh_limit_driven_defaults(self):
+        """Single entry point: re-derive every auto-filled default.
+        Called after UI build, settings restore, and Save limits."""
+        self._refresh_recommended_goals()
+        self._refresh_recommended_rectangle()
+        self._apply_measured_results()
+        self._refresh_pass_id()
+        self._sync_backlash_offset()
+        self._prefill_session_note()
+        self._update_grid_candidates('workspace_coverage')
 
     def _build_camera_page(self) -> QWidget:
         # Camera localization: measure where the camera is relative to
@@ -982,6 +1273,28 @@ class CalibrationDashboardWidget(QWidget):
             gen_btn.clicked.connect(
                 lambda _=False, tn=test_name: self._on_generate_grid(tn))
             grid_outer.addWidget(gen_btn)
+            rect_btn = QPushButton('Recommend rectangle from joint limits')
+            rect_btn.setToolTip(
+                'Set the rectangle to the largest one that fits inside '
+                'the measured reachable region (overwrites the values '
+                'above).')
+            rect_btn.clicked.connect(
+                lambda _=False:
+                self._refresh_recommended_rectangle(force=True))
+            grid_outer.addWidget(rect_btn)
+            # Live size estimate: candidate count updates on any
+            # rectangle/spacing edit; kept count + minutes appear after
+            # Generate runs the filter.
+            grid_estimate = QLabel('')
+            grid_estimate.setStyleSheet('color: gray;')
+            grid_outer.addWidget(grid_estimate)
+            fields['grid_estimate'] = grid_estimate
+            for sb in (grid_y0, grid_y1, grid_z0, grid_z1, grid_spacing):
+                sb.valueChanged.connect(
+                    lambda _=0.0, tn=test_name:
+                    self._update_grid_candidates(tn))
+            grid_spacing.valueChanged.connect(
+                lambda _=0.0: self._sync_backlash_offset())
             fields['grid_y0'] = grid_y0
             fields['grid_y1'] = grid_y1
             fields['grid_z0'] = grid_z0
@@ -1037,6 +1350,18 @@ class CalibrationDashboardWidget(QWidget):
             goals_edit.setMaximumBlockCount(2000)
             goals_outer.addWidget(goals_edit)
             fields['goals_edit'] = goals_edit
+            if test_name in self._RECOMMENDED_GOALS_N:
+                reco_btn = QPushButton(
+                    'Recommend goals from joint limits')
+                reco_btn.setToolTip(
+                    'Replace the list with poses derived from the '
+                    'measured joint range (overwrites edits on this '
+                    'page). Start Run always executes the list as '
+                    'shown.')
+                reco_btn.clicked.connect(
+                    lambda _=False, tn=test_name:
+                    self._refresh_recommended_goals(force_test=tn))
+                goals_outer.addWidget(reco_btn)
             v.addWidget(goals_box)
 
         # Reachability guard: every pose edit re-checks IK (in-process,
@@ -1457,6 +1782,9 @@ class CalibrationDashboardWidget(QWidget):
             self._reset_ui_state(status='idle')
             self._refresh_run_counts()
             self._refresh_reachability(name)
+            if name == 'workspace_coverage':
+                # New runs may have landed since the last visit.
+                self._refresh_pass_id()
 
     # -- reachability guard / run counters -------------------------
 
@@ -1715,6 +2043,23 @@ class CalibrationDashboardWidget(QWidget):
             goals.append((y, z))
         return goals
 
+    def _update_grid_candidates(self, test_name: str):
+        """IK-free candidate count shown live while the operator edits
+        the rectangle; Generate replaces it with the filtered numbers."""
+        fields = self._pages_fields.get(test_name, {})
+        label = fields.get('grid_estimate')
+        if label is None:
+            return
+        y0, y1 = fields['grid_y0'].value(), fields['grid_y1'].value()
+        z0, z1 = fields['grid_z0'].value(), fields['grid_z1'].value()
+        sp = fields['grid_spacing'].value()
+        if y1 <= y0 or z1 <= z0 or sp <= 0:
+            label.setText('empty rectangle')
+            return
+        n = ((int(round((y1 - y0) / sp)) + 1)
+             * (int(round((z1 - z0) / sp)) + 1))
+        label.setText(f'{n} candidate points - Generate to filter')
+
     def _on_generate_grid(self, test_name: str):
         """Fill the goals editor with the filtered serpentine grid.
 
@@ -1753,6 +2098,10 @@ class CalibrationDashboardWidget(QWidget):
         est_min = stats.kept * 13 / 60
         self._log_msg(f'grid: {counts}; ~{est_min:.0f} min per pass '
                       f'at 13 s/point')
+        if 'grid_estimate' in fields:
+            fields['grid_estimate'].setText(
+                f'kept {stats.kept} / {stats.total} candidates, '
+                f'~{est_min:.0f} min per pass')
         if not kept:
             self._log_msg('grid: nothing kept - check the rectangle and '
                           'the joint limit')

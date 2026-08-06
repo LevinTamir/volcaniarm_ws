@@ -112,6 +112,68 @@ def filter_grid(points, joint_limit_rad: float,
     return kept, stats
 
 
+# Generous search box for limits-derived recommendations; the arm's
+# reachable lobe always fits inside it at this mechanism's scale.
+_SEARCH_BOX = (-0.5, 0.5, 0.4, 1.0)
+_SEARCH_SPACING = 0.025
+
+
+def reachable_cloud(joint_limit_rad: float,
+                    joint_limit_min_rad: float = None,
+                    limit_margin_rad: float = 0.05,
+                    closure_margin_m: float = 0.02,
+                    spacing: float = _SEARCH_SPACING) -> list:
+    """Kept (y, z) points of a coarse serpentine over the generous
+    search box, filtered by the given joint range - the raw material
+    for the dashboard's limits-derived recommendations."""
+    y0, y1, z0, z1 = _SEARCH_BOX
+    pts = serpentine(y0, y1, z0, z1, spacing)
+    kept, _ = filter_grid(pts, joint_limit_rad, limit_margin_rad,
+                          closure_margin_m,
+                          joint_limit_min_rad=joint_limit_min_rad)
+    return kept
+
+
+def recommended_rectangle(joint_limit_rad: float,
+                          joint_limit_min_rad: float = None,
+                          spacing: float = _SEARCH_SPACING,
+                          **filter_kwargs):
+    """Largest axis-aligned rectangle fully inside the reachable set.
+
+    Classic maximal-rectangle-of-ones (histogram method) over the
+    boolean occupancy grid of reachable_cloud. Returns (y0, y1, z0, z1)
+    snapped to the search grid, or None when nothing is reachable."""
+    kept = reachable_cloud(joint_limit_rad, joint_limit_min_rad,
+                           spacing=spacing, **filter_kwargs)
+    if not kept:
+        return None
+    key = lambda v: round(v, 6)  # noqa: E731
+    ys = sorted({key(p[0]) for p in kept})
+    zs = sorted({key(p[1]) for p in kept})
+    yi = {v: i for i, v in enumerate(ys)}
+    zi = {v: i for i, v in enumerate(zs)}
+    occ = [[0] * len(ys) for _ in zs]
+    for (y, z) in kept:
+        occ[zi[key(z)]][yi[key(y)]] = 1
+    best = None  # (area, i0, i1, j0, j1) in index space
+    heights = [0] * len(ys)
+    for j, row in enumerate(occ):
+        for i, v in enumerate(row):
+            heights[i] = heights[i] + 1 if v else 0
+        stack = []  # (leftmost column this height extends to, height)
+        for i, h in enumerate(heights + [0]):
+            start = i
+            while stack and stack[-1][1] >= h:
+                s, sh = stack.pop()
+                area = sh * (i - s)
+                if best is None or area > best[0]:
+                    best = (area, s, i - 1, j - sh + 1, j)
+                start = s
+            stack.append((start, h))
+    _, i0, i1, j0, j1 = best
+    return (ys[i0], ys[i1], zs[j0], zs[j1])
+
+
 def nine_points(y0: float, y1: float, z0: float, z1: float,
                 inset: float = 0.025) -> list:
     """The 9 accuracy/repeatability anchor points of a task rectangle:
