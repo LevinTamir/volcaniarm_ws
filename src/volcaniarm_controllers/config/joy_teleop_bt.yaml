@@ -14,11 +14,11 @@ volcaniarm_joystick_teleop:
     rate_hz: 20.0
 
     # Hold-to-activate button (axes ignored unless held).
-    # Jazzy's SDL-based joy_node maps the right shoulder to index 10
-    # over Bluetooth (verified with an Xbox Series X pad on the lab PC,
-    # 2026-07-22). An earlier measurement on the other machine gave 7 —
-    # if RB does nothing on your setup, verify with `ros2 topic echo /joy`.
-    deadman_button: 10
+    # RB measured at index 7 on the ASUS TUF F16 with the Xbox Wireless
+    # Controller over Bluetooth (2026-08-06, `ros2 topic echo /joy`).
+    # The lab PC's Series X pad gave 10 (2026-07-22) — the BT HID
+    # mapping differs per pad/kernel, so re-verify when either changes.
+    deadman_button: 7
 
     # Axis mappings: left-stick X -> EE Y (arm plane),
     #                left-stick Y -> EE Z (world up).
@@ -54,8 +54,9 @@ volcaniarm_joystick_teleop:
     # Home: deadman + this button publishes one trajectory point sending
     # both elbows to home_positions over home_duration_sec. After
     # triggering, release+repress the deadman to resume stick teleop.
-    # SDL mapping: 2 = X (Xbox) / square (PS). Verify with
-    # `ros2 topic echo /joy` on your pad if home does not trigger.
+    # SDL mapping: 2 = X (Xbox) / square (PS). NOTE: on the BT HID
+    # layout where RB=7 (this pad), X is often index 3 instead — if
+    # deadman+X does not home, verify with `ros2 topic echo /joy`.
     home_button: 2
     # Order MUST match joint_names above (right first, left second).
     home_positions: [0.0, 0.0]
