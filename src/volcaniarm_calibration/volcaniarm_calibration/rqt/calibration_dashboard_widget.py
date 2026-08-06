@@ -46,7 +46,7 @@ from python_qt_binding.QtGui import QPixmap
 from python_qt_binding.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QLineEdit,
-    QMessageBox, QScrollArea, QSizePolicy,
+    QMessageBox, QScrollArea, QSizePolicy, QSplitter,
     QSpinBox, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QPlainTextEdit, QProgressBar, QTextEdit,
 )
@@ -265,7 +265,9 @@ class CalibrationDashboardWidget(QWidget):
         self._nav = self._build_sidebar()
         root.addWidget(self._nav)
 
-        right = QVBoxLayout()
+        # Vertical splitter between the page area and the run panel: the
+        # operator drags the divider to choose the split; default ~75/25.
+        right = QSplitter(Qt.Orientation.Vertical)
         self._pages = QStackedWidget()
 
         def _scrolled(page: QWidget) -> QScrollArea:
@@ -311,17 +313,17 @@ class CalibrationDashboardWidget(QWidget):
             iterations_default=5,
             iterations_label='cycles (reps per direction)',
             with_approach_offset=True)))
-        # Pages take most of the vertical space (they scroll internally
-        # past that); the run panel below keeps a compact status/log
-        # strip that grows only with leftover room.
         self._pages.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        # Floor so the log's stretch can't squeeze the page area into a
-        # sliver; past this the page scrolls (see _scrolled above).
-        self._pages.setMinimumHeight(340)
-        right.addWidget(self._pages, stretch=3)
-        right.addWidget(self._build_run_panel(), stretch=1)
-        root.addLayout(right, stretch=1)
+        # Floors so neither side can be dragged into an unusable sliver;
+        # pages scroll internally past theirs (see _scrolled above).
+        self._pages.setMinimumHeight(220)
+        right.addWidget(self._pages)
+        right.addWidget(self._build_run_panel())
+        right.setStretchFactor(0, 3)
+        right.setStretchFactor(1, 1)
+        right.setChildrenCollapsible(False)
+        root.addWidget(right, stretch=1)
 
         # The run-control widgets (Start/Continue/Reset/Cancel, capture
         # settings, detection, progress) now live per test tab. Bind the
@@ -333,14 +335,14 @@ class CalibrationDashboardWidget(QWidget):
         self._apply_measured_joint_limit()
 
         # Open at a comfortable size instead of the cramped default rqt
-        # gives a fresh plugin. The log keeps a small floor for
-        # readability but is hard-capped so the run panel never takes
-        # more than about a quarter of the window - it scrolls
-        # internally past that.
+        # gives a fresh plugin. The splitter divider above the run panel
+        # lets the operator pick the split; only a small log floor is
+        # enforced.
         self._log.setMinimumHeight(60)
-        self._log.setMaximumHeight(150)
         self.setMinimumSize(960, 720)
         self.resize(1080, 820)
+        # Default divider position: ~75% pages / ~25% run panel.
+        right.setSizes([615, 205])
 
     def _build_sidebar(self) -> QListWidget:
         nav = QListWidget()
