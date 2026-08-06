@@ -163,9 +163,9 @@ class CalibrationDashboardWidget(QWidget):
         'Repeatability', 'Static Accuracy', 'Backlash',
     )
 
-    # Warn when the two captured sides disagree by more than this before
-    # symmetrising — averaging a real asymmetry lets the grid slightly
-    # overshoot the tighter side's true stop.
+    # Warn when the captured poses' binding angles spread more than this
+    # before symmetrising — averaging a real asymmetry lets the grid
+    # slightly overshoot the tighter poses' true stops.
     _LIMIT_ASYMMETRY_WARN_RAD = 0.05
 
     def __init__(self, node):
@@ -232,10 +232,11 @@ class CalibrationDashboardWidget(QWidget):
 
         # Joint Limits page state: latest /joint_states positions (dict
         # name -> rad, replaced atomically by the executor-thread
-        # callback and read from a Qt timer), and the two captured stop
-        # poses. rqt spins the shared node, so the subscription just works.
+        # callback and read from a Qt timer), and the list of captured
+        # extreme poses. rqt spins the shared node, so the subscription
+        # just works.
         self._latest_joints: dict = {}
-        self._limit_captures: dict = {'a': None, 'b': None}
+        self._limit_captures: list = []
         from sensor_msgs.msg import JointState
         self._joint_states_sub = node.create_subscription(
             JointState, '/joint_states', self._on_joint_states, 10)
@@ -419,9 +420,12 @@ class CalibrationDashboardWidget(QWidget):
 
     def _build_limits_page(self) -> QWidget:
         # Joystick-driven measurement of the mechanical joint limits
-        # (runbook step 1). The operator jogs the arm to each side's
-        # stop with the teleop and captures the pose; the saved
-        # symmetric limit feeds the sweep page and the notebooks.
+        # (runbook step 1). The operator jogs the arm through ~4 extreme
+        # EE poses (roughly the corners of the aimed task rectangle) and
+        # captures the joint angles at each; the symmetric limit is the
+        # mean over poses of the binding (max |angle|) joint, leaning on
+        # the arm's left/right symmetry. Feeds the sweep page and the
+        # notebooks.
         page = QWidget()
         v = QVBoxLayout(page)
 
@@ -433,11 +437,11 @@ class CalibrationDashboardWidget(QWidget):
             '<li>Terminal 3 - joystick teleop:<br>'
             '<code>ros2 launch volcaniarm_controllers '
             'joystick_teleop.launch.py</code></li>'
-            '<li>Slowly jog the EE to one side until the first sign of '
-            'mechanical contact, cable strain or link-link proximity, '
-            'then click <b>Capture side A</b>.</li>'
-            '<li>Jog to the other side\'s stop and click '
-            '<b>Capture side B</b>.</li>'
+            '<li>Slowly jog the EE to an extreme pose (as far as it '
+            'safely goes - first sign of mechanical contact, cable '
+            'strain or link-link proximity) and click <b>Capture '
+            'pose</b>. Repeat for ~4 poses spanning both sides at the '
+            'task heights, roughly the rectangle corners.</li>'
             '<li>Review the derived symmetric limit and <b>Save</b>. '
             'While jogging, also note which stepper sign raises the EE '
             '(firmware direction-comment check).</li>'
@@ -453,25 +457,27 @@ class CalibrationDashboardWidget(QWidget):
         live_l.addWidget(self._limits_live)
         v.addWidget(live_box)
 
-        cap_box = QGroupBox('Capture the two stops')
-        cap_form = QFormLayout(cap_box)
-        self._limits_cap_btn = {}
-        self._limits_cap_label = {}
-        for side, text in (('a', 'Capture side A'), ('b', 'Capture side B')):
-            btn = QPushButton(text)
-            btn.clicked.connect(
-                lambda _=False, s=side: self._on_capture_limit(s))
-            lab = QLabel('not captured')
-            lab.setStyleSheet('color: gray; font-family: monospace;')
-            row = QHBoxLayout()
-            row.addWidget(btn)
-            row.addWidget(lab, stretch=1)
-            cap_form.addRow(row)
-            self._limits_cap_btn[side] = btn
-            self._limits_cap_label[side] = lab
-        self._limits_summary = QLabel('capture both sides to derive the limit')
+        cap_box = QGroupBox('Captured extreme poses')
+        cap_l = QVBoxLayout(cap_box)
+        btn_row = QHBoxLayout()
+        cap_btn = QPushButton('Capture pose')
+        cap_btn.clicked.connect(self._on_capture_pose)
+        btn_row.addWidget(cap_btn)
+        rm_btn = QPushButton('Remove selected')
+        rm_btn.clicked.connect(self._on_remove_capture)
+        btn_row.addWidget(rm_btn)
+        clear_btn = QPushButton('Clear all')
+        clear_btn.clicked.connect(self._on_clear_captures)
+        btn_row.addWidget(clear_btn)
+        cap_l.addLayout(btn_row)
+        self._limits_list = QListWidget()
+        self._limits_list.setStyleSheet('font-family: monospace;')
+        self._limits_list.setFixedHeight(110)
+        cap_l.addWidget(self._limits_list)
+        self._limits_summary = QLabel(
+            'capture at least 2 poses (4 recommended) to derive the limit')
         self._limits_summary.setWordWrap(True)
-        cap_form.addRow(self._limits_summary)
+        cap_l.addWidget(self._limits_summary)
         v.addWidget(cap_box)
 
         save_box = QGroupBox('Save')
@@ -480,7 +486,7 @@ class CalibrationDashboardWidget(QWidget):
         self._limits_save_btn.setObjectName('primary')
         self._limits_save_btn.setEnabled(False)
         self._limits_save_btn.setToolTip(
-            'Write config/joint_limits.yaml (raw side A/B poses + the '
+            'Write config/joint_limits.yaml (all captured poses + the '
             'symmetric limit) and prefill the sweep page\'s joint-limit '
             'spinbox. The value saved is the RAW measured stop; the '
             'safety margin stays in the grid generator\'s "limit margin".')
@@ -519,7 +525,8 @@ class CalibrationDashboardWidget(QWidget):
             f'{name.replace("volcaniarm_", "")}: {val:+.4f} rad'
             for name, val in angles.items()))
 
-    def _on_capture_limit(self, side: str):
+    @Slot()
+    def _on_capture_pose(self):
         angles = self._elbow_angles()
         if angles is None:
             QMessageBox.warning(
@@ -527,34 +534,59 @@ class CalibrationDashboardWidget(QWidget):
                 'No /joint_states received yet - is the robot bringup '
                 'running?')
             return
-        self._limit_captures[side] = angles
-        self._limits_cap_label[side].setText('   '.join(
-            f'{name.replace("volcaniarm_", "")}: {val:+.4f}'
-            for name, val in angles.items()))
-        self._limits_cap_label[side].setStyleSheet(
-            'color: #2e9c4a; font-family: monospace;')
+        self._limit_captures.append(angles)
+        self._limits_list.addItem(
+            f'pose {len(self._limit_captures)}:  ' + '   '.join(
+                f'{name.replace("volcaniarm_", "")}: {val:+.4f}'
+                for name, val in angles.items()))
+        self._recompute_limit_summary()
+
+    @Slot()
+    def _on_remove_capture(self):
+        row = self._limits_list.currentRow()
+        if row < 0:
+            return
+        self._limits_list.takeItem(row)
+        self._limit_captures.pop(row)
+        # Renumber the remaining rows so labels stay pose 1..N.
+        for i in range(self._limits_list.count()):
+            text = self._limits_list.item(i).text()
+            self._limits_list.item(i).setText(
+                f'pose {i + 1}:' + text.split(':', 1)[1])
+        self._recompute_limit_summary()
+
+    @Slot()
+    def _on_clear_captures(self):
+        self._limit_captures.clear()
+        self._limits_list.clear()
         self._recompute_limit_summary()
 
     @staticmethod
-    def _side_max_abs(angles: dict) -> float:
+    def _pose_max_abs(angles: dict) -> float:
+        """The binding joint at an extreme pose: the largest |angle|."""
         return max(abs(v) for v in angles.values())
 
     def _recompute_limit_summary(self):
-        a, b = self._limit_captures['a'], self._limit_captures['b']
-        if a is None or b is None:
+        n = len(self._limit_captures)
+        if n < 2:
+            self._limits_summary.setText(
+                'capture at least 2 poses (4 recommended) to derive the '
+                'limit')
             self._limits_save_btn.setEnabled(False)
             return
-        ma, mb = self._side_max_abs(a), self._side_max_abs(b)
-        limit = (ma + mb) / 2.0
-        text = (f'side A max |angle| = {ma:.4f} rad, '
-                f'side B max |angle| = {mb:.4f} rad<br>'
-                f'<b>symmetric limit = {limit:.4f} rad</b> (mean of the two)')
-        if abs(ma - mb) > self._LIMIT_ASYMMETRY_WARN_RAD:
-            text += (f'<br><span style="color:#d04b4b;">WARNING: the two '
-                     f'sides differ by {abs(ma - mb):.3f} rad - averaging '
-                     f'will let the grid slightly overshoot the tighter '
-                     f'stop. Consider re-capturing, or verify the arm was '
-                     f'really at the stop on both sides.</span>')
+        maxes = [self._pose_max_abs(a) for a in self._limit_captures]
+        limit = sum(maxes) / n
+        spread = max(maxes) - min(maxes)
+        text = ('per-pose binding |angle|: '
+                + ', '.join(f'{m:.4f}' for m in maxes) + ' rad<br>'
+                f'<b>symmetric limit = {limit:.4f} rad</b> '
+                f'(mean over {n} poses, arm assumed symmetric)')
+        if spread > self._LIMIT_ASYMMETRY_WARN_RAD:
+            text += (f'<br><span style="color:#d04b4b;">WARNING: the '
+                     f'binding angles spread over {spread:.3f} rad - '
+                     f'averaging will let the grid overshoot the tighter '
+                     f'poses. Re-capture any pose that was not really at '
+                     f'its extreme, or remove outliers.</span>')
         self._limits_summary.setText(text)
         self._limits_save_btn.setEnabled(True)
 
@@ -565,18 +597,19 @@ class CalibrationDashboardWidget(QWidget):
 
     @Slot()
     def _on_save_limits(self):
-        a, b = self._limit_captures['a'], self._limit_captures['b']
-        if a is None or b is None:
+        if len(self._limit_captures) < 2:
             return
-        limit = (self._side_max_abs(a) + self._side_max_abs(b)) / 2.0
+        maxes = [self._pose_max_abs(a) for a in self._limit_captures]
+        limit = sum(maxes) / len(maxes)
         path = self._joint_limits_config_path()
         payload = {
             'captured': time.strftime('%Y-%m-%dT%H:%M:%S'),
-            'side_a': {k: float(v) for k, v in a.items()},
-            'side_b': {k: float(v) for k, v in b.items()},
-            # RAW measured stop (mean of the two sides' max |angle|).
-            # The grid generator's limit_margin_rad supplies the safety
-            # margin - do not pre-subtract it here.
+            'poses': [{k: float(v) for k, v in a.items()}
+                      for a in self._limit_captures],
+            # RAW measured limit (mean over poses of the binding joint's
+            # |angle|, arm assumed left/right symmetric). The grid
+            # generator's limit_margin_rad supplies the safety margin -
+            # do not pre-subtract it here.
             'symmetric_limit_rad': float(limit),
         }
         header = ('# Measured mechanical joint limits - written by the '
