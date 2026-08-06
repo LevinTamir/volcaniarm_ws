@@ -5,7 +5,7 @@ first (which also starts the AprilTag detector and RViz), then run this to
 open the calibration GUI on top of it.
 
   # terminal 1 -- robot + camera + apriltag detector + RViz + TF
-  ros2 launch volcaniarm_bringup real_bringup.launch.py mode:=tests calibration:=true
+  ros2 launch volcaniarm_bringup real_bringup.launch.py mode:=tests markers:=true
 
   # terminal 2 -- calibration GUI
   ros2 launch volcaniarm_calibration calibration_gui.launch.py

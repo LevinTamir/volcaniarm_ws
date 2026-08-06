@@ -13,7 +13,7 @@
        Each marker is gated independently:
          mount_ee_marker   - EE marker (ID 20) on right_arm_tip_link
          mount_base_marker - base marker (ID 5) on volcaniarm_base_link
-       The parent xacro derives both flags from (mode, calibration). -->
+       The parent xacro derives both flags from (mode, markers). -->
 
   <xacro:property name="tag_size" value="$(arg tag_size)" />
   <xacro:property name="tag_scale" value="${tag_size / 0.064}" />

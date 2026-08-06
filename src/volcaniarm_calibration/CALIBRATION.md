@@ -38,7 +38,7 @@ Two terminals:
 
 ```bash
 # Terminal 1: robot + camera + AprilTag detector + RViz + TF
-ros2 launch volcaniarm_bringup real_bringup.launch.py mode:=tests calibration:=true
+ros2 launch volcaniarm_bringup real_bringup.launch.py mode:=tests markers:=true
 ```
 
 ```bash
@@ -47,6 +47,14 @@ ros2 launch volcaniarm_calibration calibration_gui.launch.py
 ```
 
 NOTE: calibration is done on real-hardware only.
+
+Camera device: the stand camera can be the RealSense or a plain UVC
+webcam (e.g. Logitech) — marker detection only needs RGB. The bringup's
+`camera:=auto` (default) picks whichever is connected, preferring the
+RealSense; both publish the same `/camera/color/*` topics. A webcam
+needs a one-time intrinsics calibration first — procedure in the header
+of `config/logitech_camera_info.yaml`. After physically swapping the
+camera, re-run camera localization (the pose changed).
 
 ## 3. GUI tour
 

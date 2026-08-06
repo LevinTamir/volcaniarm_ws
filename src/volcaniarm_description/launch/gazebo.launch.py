@@ -37,10 +37,10 @@ def generate_launch_description():
                     "camera on the robot, 'tests' on a stand in front."
     )
 
-    calibration_arg = DeclareLaunchArgument(
-        name="calibration", default_value="false",
-        description="Open the calibration dashboard with only the camera-"
-                    "pose calibration UI; gates marker mounting in URDF."
+    markers_arg = DeclareLaunchArgument(
+        name="markers", default_value="false",
+        description="Mount the AprilTag marker(s) in the URDF (EE marker "
+                    "always; base marker too when mode=tests)."
     )
 
     # Both arg sets are emitted; the URDF's `mode` arg picks which is
@@ -108,7 +108,7 @@ def generate_launch_description():
             [
                 "xacro ", LaunchConfiguration("model"),
                 " mode:=", LaunchConfiguration("mode"),
-                " calibration:=", LaunchConfiguration("calibration"),
+                " markers:=", LaunchConfiguration("markers"),
                 " camera_mount_x:=", LaunchConfiguration("camera_mount_x"),
                 " camera_mount_pitch:=", LaunchConfiguration("camera_mount_pitch"),
                 " controller:=", LaunchConfiguration("controller"),
@@ -206,7 +206,7 @@ def generate_launch_description():
             model_arg,
             world_name_arg,
             mode_arg,
-            calibration_arg,
+            markers_arg,
             camera_mount_x_arg,
             camera_mount_pitch_arg,
             controller_arg,

@@ -3,17 +3,17 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="volcaniarm">
 
   <xacro:arg name="use_sim" default="true" />
-  <!-- Physical configuration of the camera. Decoupled from `calibration`
-       so the four (mode, calibration) configurations are addressable:
-         mode=work,  calibration=false  -> normal working real hardware, no markers
-         mode=work,  calibration=true   -> on-robot camera + EE marker (calibrate camera_joint)
-         mode=tests, calibration=false  -> stand camera + both markers (accuracy / repeatability tests)
-         mode=tests, calibration=true   -> stand camera + EE marker (calibrate calibration_camera_joint) -->
+  <!-- Physical configuration of the camera. Decoupled from `markers`
+       so the four (mode, markers) configurations are addressable:
+         mode=work,  markers=false  -> normal working real hardware, no markers
+         mode=work,  markers=true   -> on-robot camera + EE marker (calibrate camera_joint)
+         mode=tests, markers=true   -> stand camera + both markers (accuracy / repeatability tests)
+         mode=tests, markers=false  -> stand camera, no markers (rarely useful) -->
   <xacro:arg name="mode" default="work" />
-  <!-- Calibration overlay: when true, the calibration dashboard is up and
-       the EE marker is mounted. When false the markers + dashboard are
-       skipped (except in tests-mode where the test workflow needs both). -->
-  <xacro:arg name="calibration" default="false" />
+  <!-- AprilTag markers: when true, the marker link(s) are mounted (EE
+       always; base too when mode=tests, where the stand camera frames the
+       full workspace). When false no markers are in the model. -->
+  <xacro:arg name="markers" default="false" />
   <xacro:arg name="camera_mount_x" default="0.25" />
   <xacro:arg name="camera_mount_pitch" default="1.3" />
 
@@ -65,21 +65,19 @@
   <!-- Include RealSense camera frames for real hardware -->
   <xacro:include filename="$(find volcaniarm_description)/urdf/volcaniarm_realsense.xacro" />
 
-  <!-- Marker configuration:
-         Base marker mounted whenever mode=tests (stand camera frames the
-           full workspace, so the base tag is in view and useful as a
-           fixed-frame reference for both the test workflow and the
-           camera-pose calibration sanity check).
-         EE marker mounted whenever mode=tests OR calibration=true
-           (so it's there for the on-robot calibration too, which has
-           no base marker).
+  <!-- Marker configuration, gated purely by the `markers` arg:
+         EE marker mounted whenever markers=true.
+         Base marker mounted when markers=true AND mode=tests (the stand
+           camera frames the full workspace, so the base tag is in view
+           and useful as a fixed-frame reference; the on-robot camera
+           never sees it).
        The combined predicate `any_marker` decides whether the
        apriltag.xacro file is even included; the per-marker xacro args
        gate which links inside the file get instantiated. -->
   <xacro:property name="mount_ee_marker"
-    value="${'$(arg calibration)' == 'true' or '$(arg mode)' == 'tests'}" />
+    value="${'$(arg markers)' == 'true'}" />
   <xacro:property name="mount_base_marker"
-    value="${'$(arg mode)' == 'tests'}" />
+    value="${'$(arg markers)' == 'true' and '$(arg mode)' == 'tests'}" />
   <xacro:property name="any_marker"
     value="${mount_ee_marker or mount_base_marker}" />
   <xacro:if value="${any_marker}">

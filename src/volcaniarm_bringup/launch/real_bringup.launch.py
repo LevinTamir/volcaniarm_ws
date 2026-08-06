@@ -1,12 +1,14 @@
 import math
 import os
+import subprocess
 from pathlib import Path
 
 import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
@@ -136,6 +138,153 @@ def _camera_xacro_defaults() -> dict:
     return {**cal_cam, **on_robot_cam}
 
 
+def _scan_uvc_devices():
+    """Scan the connected cameras.
+
+    Returns (realsense_present, uvc_paths). RealSense presence comes from
+    /dev/v4l/by-id names. UVC candidates are the /dev/video* nodes that
+    offer a color capture format (MJPG/YUYV per `v4l2-ctl
+    --list-formats`) — a webcam's IR/metadata nodes don't, and the by-id
+    symlinks can point at those (verified on an ASUS built-in cam whose
+    by-id index0 is the greyscale IR sensor). Real /dev/videoN paths are
+    returned because usb_cam mishandles by-id symlinks. Logitech devices
+    sort first so the external test-stand webcam beats a laptop's
+    built-in camera.
+    """
+    byid = Path('/dev/v4l/by-id')
+    byid_entries = list(byid.glob('*')) if byid.exists() else []
+    realsense = any('RealSense' in e.name for e in byid_entries)
+
+    def card_name(dev):
+        try:
+            return (Path(f'/sys/class/video4linux/{dev.name}/name')
+                    .read_text().strip())
+        except OSError:
+            return ''
+
+    def has_color_format(dev):
+        try:
+            out = subprocess.run(
+                ['v4l2-ctl', '-d', str(dev), '--list-formats'],
+                capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            # v4l-utils not installed: accept every node and rely on the
+            # lowest-index-first ordering (index 0 is the capture node on
+            # every common webcam).
+            return True
+        return 'MJPG' in out or 'YUYV' in out
+
+    devs = sorted(Path('/dev').glob('video[0-9]*'),
+                  key=lambda d: int(d.name[5:]))
+    uvc = [(card_name(d), str(d)) for d in devs
+           if 'RealSense' not in card_name(d) and has_color_format(d)]
+    uvc.sort(key=lambda nc: 'logitech' not in nc[0].lower())  # stable
+    return realsense, [path for _, path in uvc]
+
+
+def _build_camera_stack(context):
+    """Start the RealSense driver or a plain UVC webcam (usb_cam).
+
+    camera:=auto prefers the RealSense when both are plugged in. The UVC
+    path publishes on the same topics (/camera/color/image_raw +
+    camera_info) with the same optical frame_id, so apriltag / RViz / the
+    dashboard are camera-agnostic. RGB only — the depth-derived pointcloud
+    composer is skipped on the usb branch.
+    """
+    choice = LaunchConfiguration('camera').perform(context)
+    has_realsense, uvc = _scan_uvc_devices()
+
+    if choice == 'auto':
+        if has_realsense:
+            choice = 'realsense'
+        elif uvc:
+            choice = 'usb'
+        else:
+            print('[real_bringup] ERROR: camera:=auto found neither a '
+                  'RealSense nor a UVC webcam under /dev/v4l/by-id -- '
+                  'no camera node will be started.')
+            return []
+        print(f'[real_bringup] camera:=auto resolved to {choice}')
+
+    if choice == 'realsense':
+        realsense_camera = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                os.path.join(
+                    get_package_share_directory('realsense2_camera'),
+                    'launch', 'rs_launch.py'
+                )
+            ]),
+            launch_arguments={
+                'camera_name': 'camera',
+                'camera_namespace': '',
+                'enable_depth': 'true',
+                'enable_color': 'true',
+                'enable_infra1': 'false',
+                'enable_infra2': 'false',
+                'depth_module.depth_profile': '848x480x30',
+                'rgb_camera.color_profile': '848x480x30',
+                'align_depth.enable': 'true',
+                # Driver cloud stays off — /camera/depth/color/points comes
+                # from the shared depth_image_proc composer below instead.
+                'pointcloud.enable': 'false',
+                'publish_tf': 'false',  # URDF handles all TF
+            }.items(),
+        )
+        # Shared colored-pointcloud composer — same include sim_bringup
+        # uses, so real hardware and both sims generate the cloud with the
+        # same code.
+        camera_pointcloud_launch = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(
+                    get_package_share_directory("volcaniarm_bringup"),
+                    "launch", "camera_pointcloud.launch.py")
+            ),
+            launch_arguments=[
+                ("use_sim_time", LaunchConfiguration("use_sim_time"))],
+            condition=IfCondition(LaunchConfiguration("pointcloud")),
+        )
+        return [realsense_camera, camera_pointcloud_launch]
+
+    # usb branch
+    if not uvc:
+        print('[real_bringup] ERROR: camera:=usb but no UVC webcam found '
+              'under /dev/v4l/by-id -- no camera node will be started.')
+        return []
+    device = uvc[0]
+    print(f'[real_bringup] usb camera: {device} -- RGB only, '
+          'depth/pointcloud disabled')
+    camera_info_url = 'file://' + os.path.join(
+        get_package_share_directory('volcaniarm_calibration'),
+        'config', 'logitech_camera_info.yaml')
+    usb_cam_node = Node(
+        package='usb_cam',
+        executable='usb_cam_node_exe',
+        name='usb_camera',
+        parameters=[{
+            'video_device': device,
+            'framerate': 30.0,
+            'image_width': 1280,
+            'image_height': 720,
+            'pixel_format': 'mjpeg2rgb',
+            # Reuse the URDF's RealSense optical frame so downstream TF
+            # (apriltag detections -> world) works unchanged; the camera-
+            # localization flow absorbs the physical mounting difference.
+            'frame_id': 'camera_color_optical_frame',
+            'camera_name': 'logitech',
+            'camera_info_url': camera_info_url,
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
+        }],
+        remappings=[
+            ('image_raw', '/camera/color/image_raw'),
+            ('camera_info', '/camera/color/camera_info'),
+            ('~/image_raw', '/camera/color/image_raw'),
+            ('~/camera_info', '/camera/color/camera_info'),
+        ],
+        output='screen',
+    )
+    return [usb_cam_node]
+
+
 def _build_controller_manager(context, robot_description_content):
     volcaniarm_controller_share = get_package_share_directory("volcaniarm_controllers")
     mode = LaunchConfiguration("controller").perform(context)
@@ -218,19 +367,34 @@ def generate_launch_description():
                     "accuracy/repeatability tests.",
     )
 
-    # The (mode, calibration) tuple covers four launch configurations:
-    #   mode=work, calibration=false   regular ops, no markers, no dashboard
-    #   mode=work, calibration=true    on-robot camera, EE marker, calibrate camera_joint
-    #   mode=tests, calibration=false  stand camera, both markers, full test runner
-    #   mode=tests, calibration=true   stand camera, EE marker, calibrate calibration_camera_joint
-    calibration_arg = DeclareLaunchArgument(
-        "calibration",
+    # The (mode, markers) tuple covers four launch configurations:
+    #   mode=work, markers=false   regular ops, no markers, no tag perception
+    #   mode=work, markers=true    on-robot camera, EE marker (eye-in-hand calibration)
+    #   mode=tests, markers=true   stand camera, both markers (test / calibration sessions)
+    #   mode=tests, markers=false  stand camera, no markers (warned below)
+    markers_arg = DeclareLaunchArgument(
+        "markers",
         default_value="false",
         choices=["true", "false"],
-        description="Open the calibration dashboard with only the camera-"
-                    "pose calibration UI exposed. With mode=tests this "
-                    "skips the test runner widgets; with mode=work it "
-                    "enables the on-robot eye-in-hand calibration.",
+        description="Mount the AprilTag marker(s) in the URDF and start "
+                    "the tag perception stack (apriltag detector + "
+                    "calibration RViz). EE marker always; base marker too "
+                    "when mode=tests. Required for calibration dashboard "
+                    "sessions.",
+    )
+
+    # Physical camera device. For tests mode only RGB is needed (marker
+    # detection), so a plain UVC webcam (e.g. a Logitech) on the stand is
+    # a drop-in for the RealSense: both publish the same topics + frame.
+    camera_arg = DeclareLaunchArgument(
+        "camera",
+        default_value="auto",
+        choices=["auto", "realsense", "usb"],
+        description="Which physical camera to drive. 'auto' picks the "
+                    "RealSense when one is connected, otherwise the first "
+                    "UVC webcam; 'usb' needs the one-time intrinsics "
+                    "calibration in "
+                    "volcaniarm_calibration/config/logitech_camera_info.yaml.",
     )
 
     # Pointcloud is on by default for parity with sim and so RViz / the
@@ -336,9 +500,9 @@ def generate_launch_description():
 
     # Robot description with real hardware (use_sim=false). The
     # `mode` arg picks where the camera is parented (world for tests,
-    # camera_mount_rev_link for work). `calibration` controls the marker
-    # mounting + calibration dashboard scope. `auto_home` toggles
-    # limit-switch homing in the hardware interface.
+    # camera_mount_rev_link for work). `markers` controls the marker
+    # mounting + tag perception. `auto_home` toggles limit-switch
+    # homing in the hardware interface.
     robot_description_content = ParameterValue(
         Command([
             "xacro ",
@@ -346,7 +510,7 @@ def generate_launch_description():
             " use_sim:=false",
             " auto_home:=", LaunchConfiguration("auto_home"),
             " mode:=", LaunchConfiguration("mode"),
-            " calibration:=", LaunchConfiguration("calibration"),
+            " markers:=", LaunchConfiguration("markers"),
             " tag_size:=", LaunchConfiguration("tag_size"),
             " calibration_camera_x:=", LaunchConfiguration("calibration_camera_x"),
             " calibration_camera_y:=", LaunchConfiguration("calibration_camera_y"),
@@ -410,12 +574,11 @@ def generate_launch_description():
         condition=is_all,
     )
 
-    # Display (RViz) launch. Skipped whenever calibration perception is
-    # up (calibration:=true or mode=tests) -- the calibration RViz above
-    # takes over instead so we never open two RViz windows.
+    # Display (RViz) launch. Skipped whenever tag perception is up
+    # (markers:=true) -- the calibration RViz above takes over instead
+    # so we never open two RViz windows.
     show_display = IfCondition(PythonExpression([
-        "'", LaunchConfiguration("calibration"), "' == 'false' and ",
-        "'", LaunchConfiguration("mode"), "' != 'tests' and ",
+        "'", LaunchConfiguration("markers"), "' == 'false' and ",
         "'", LaunchConfiguration("moveit"), "' == 'false'",
     ]))
     display_launch = IncludeLaunchDescription(
@@ -446,16 +609,23 @@ def generate_launch_description():
         condition=is_moveit,
     )
 
-    # AprilTag detector for calibration.
-    # Started when calibration:=true (any mode) OR when mode=tests (the
-    # markers are physically mounted for the accuracy/repeatability tests).
+    # AprilTag detector for calibration. Started when markers:=true —
+    # perception follows the physical markers, whatever the mode.
     # The calibration GUI is launched separately in a second terminal
     # (`ros2 launch volcaniarm_calibration calibration_gui.launch.py`) and
     # consumes the base->ee TF this detector publishes.
-    run_calibration_perception = IfCondition(PythonExpression([
-        "'", LaunchConfiguration("calibration"), "' == 'true' or ",
-        "'", LaunchConfiguration("mode"), "' == 'tests'",
-    ]))
+    run_calibration_perception = IfCondition(LaunchConfiguration("markers"))
+    # mode=tests without markers means the stand camera is up but nothing
+    # can be detected — almost certainly a forgotten markers:=true.
+    tests_without_markers_warning = LogInfo(
+        msg="[real_bringup] WARNING: mode:=tests with markers:=false — no "
+            "AprilTag markers are mounted and no detector is running; "
+            "calibration/test sessions need markers:=true.",
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration("mode"), "' == 'tests' and ",
+            "'", LaunchConfiguration("markers"), "' == 'false'",
+        ])),
+    )
     apriltag_config = os.path.join(
         volcaniarm_calibration_share, "config", "apriltag_params.yaml")
     # Coerce tag_size to a real float; the apriltag `size` param is numeric.
@@ -503,41 +673,9 @@ def generate_launch_description():
             PythonExpression(["'", LaunchConfiguration("mode"), "' == 'tests'"])),
     )
 
-    realsense_camera = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([
-            os.path.join(
-                get_package_share_directory('realsense2_camera'),
-                'launch', 'rs_launch.py'
-            )
-        ]),
-        launch_arguments={
-            'camera_name': 'camera',
-            'camera_namespace': '',
-            'enable_depth': 'true',
-            'enable_color': 'true',
-            'enable_infra1': 'false',
-            'enable_infra2': 'false',
-            'depth_module.depth_profile': '848x480x30',
-            'rgb_camera.color_profile': '848x480x30',
-            'align_depth.enable': 'true',
-            # Driver cloud stays off — /camera/depth/color/points comes from
-            # the shared depth_image_proc composer below instead.
-            'pointcloud.enable': 'false',
-            'publish_tf': 'false',  # URDF handles all TF
-        }.items(),
-    )
-
-    # Shared colored-pointcloud composer — same include sim_bringup uses,
-    # so real hardware and both sims generate the cloud with the same code.
-    camera_pointcloud_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory("volcaniarm_bringup"),
-                "launch", "camera_pointcloud.launch.py")
-        ),
-        launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=IfCondition(LaunchConfiguration("pointcloud")),
-    )
+    # Camera stack (RealSense or UVC webcam) — resolved at launch time by
+    # scanning the connected devices; see _build_camera_stack.
+    camera_stack = OpaqueFunction(function=_build_camera_stack)
 
     return LaunchDescription(
         [
@@ -547,7 +685,8 @@ def generate_launch_description():
             moveit_arg,
             controller_arg,
             mode_arg,
-            calibration_arg,
+            markers_arg,
+            camera_arg,
             pointcloud_arg,
             tag_size_arg,
             marker_world_rpy_arg,
@@ -572,10 +711,10 @@ def generate_launch_description():
             rl_controller_launch,
             rl_inactive_spawner,
             weed_targeting_launch,
-            realsense_camera,
+            camera_stack,
             apriltag_node,
             calibration_rviz,
-            camera_pointcloud_launch,
+            tests_without_markers_warning,
             move_group_launch,
             moveit_rviz_launch,
         ]

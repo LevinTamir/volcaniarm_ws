@@ -87,9 +87,9 @@ ros2 launch volcaniarm_bringup real_bringup.launch.py
 > **Note:** Common launch args (run with `--show-args` for the full list):
 > - **sim**: `sim:=gazebo/isaac` (isaac auto-starts the Isaac Sim GUI with the lab
 >   stage; `isaac_gui:=false` attaches to a running one), `controller:=traj/policy/vision_policy/all`,
->   `world_name:=<name>`, `calibration:=true/false`, `moveit:=true/false`, `pointcloud:=true/false`
+>   `world_name:=<name>`, `markers:=true/false`, `moveit:=true/false`, `pointcloud:=true/false`
 > - **real**: `controller:=traj/policy/all`, `auto_home:=true/false` (or home later via the
->   `/volcaniarm_hardware_interface/home` service), `calibration:=true/false`, `moveit:=true/false`
+>   `/volcaniarm_hardware_interface/home` service), `markers:=true/false`, `moveit:=true/false`
 
 Joystick EE teleop (works against sim or real — hold RB, drive the left stick;
 RB+X homes; Jazzy's SDL joy_node maps RB=10/X=2):
