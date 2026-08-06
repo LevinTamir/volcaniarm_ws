@@ -175,7 +175,13 @@ VolcaniArmHardware::on_configure(const rclcpp_lifecycle::State &)
   ::usleep(200000);  // small delay for Arduino reset
 
   if (auto_home_on_configure_) {
-    if (!home_()) {
+    // No controllers are active during on_configure, but hold the gate
+    // anyway so a concurrently-started control loop can't consume the
+    // ESP's homing replies.
+    homing_active_.store(true, std::memory_order_release);
+    const bool homed = home_();
+    homing_active_.store(false, std::memory_order_release);
+    if (!homed) {
       std::cerr << "[VolcaniArmHardware] Auto-homing failed" << std::endl;
       ::close(fd_);
       fd_ = -1;
@@ -412,10 +418,26 @@ bool VolcaniArmHardware::send_position_command_rad_(double position_rad_right, d
   return true;
 }
 
+// Scope guard for homing_active_: gates read_serial_()/write() in the
+// control loop for the duration of the homing sequence.
+struct HomingGate {
+  std::atomic<bool> & flag;
+  explicit HomingGate(std::atomic<bool> & f) : flag(f)
+  {
+    flag.store(true, std::memory_order_release);
+  }
+  ~HomingGate() { flag.store(false, std::memory_order_release); }
+};
+
 void VolcaniArmHardware::home_service_callback_(
   const std_srvs::srv::Trigger::Request::SharedPtr /*request*/,
   std_srvs::srv::Trigger::Response::SharedPtr response)
 {
+  // Gate held across seek + controller reset — releasing it between the
+  // two lets the trajectory controller replay its pre-homing command in
+  // the re-zeroed frame and yank the arm to a stale pose.
+  HomingGate gate{homing_active_};
+
   if (!home_()) {
     response->success = false;
     response->message = "Homing failed: serial write error";
@@ -490,15 +512,12 @@ bool VolcaniArmHardware::reset_controller_()
 
 bool VolcaniArmHardware::home_()
 {
-  // Take exclusive ownership of the serial fd for the duration of homing so
-  // read_serial_() / write() in the control loop don't consume the ESP's
-  // "H 0 0" reply or interleave a P-command mid-home.
-  homing_active_.store(true, std::memory_order_release);
-  struct HomingFlagGuard {
-    std::atomic<bool> & flag;
-    ~HomingFlagGuard() { flag.store(false, std::memory_order_release); }
-  } guard{homing_active_};
-
+  // Callers must hold homing_active_ (see HomingGate) for the whole
+  // homing SEQUENCE, not just this seek: after re-zeroing, the still-
+  // active trajectory controller's held command is in pre-homing
+  // coordinates, and a single ungated write() of it drives the arm off
+  // to a stale pose before the controller reset lands. The gate also
+  // keeps read_serial_() from consuming the ESP's "H 0 0" reply.
   const char cmd[] = "H\n";
   ssize_t n = ::write(fd_, cmd, sizeof(cmd) - 1);
   if (n < 0) {
