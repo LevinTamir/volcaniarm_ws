@@ -137,12 +137,23 @@ def reachable_cloud(joint_limit_rad: float,
 def recommended_rectangle(joint_limit_rad: float,
                           joint_limit_min_rad: float = None,
                           spacing: float = _SEARCH_SPACING,
+                          symmetric_y: bool = False,
+                          height_m: float = None,
                           **filter_kwargs):
-    """Largest axis-aligned rectangle fully inside the reachable set.
+    """Recommended task rectangle fully inside the reachable set.
 
-    Classic maximal-rectangle-of-ones (histogram method) over the
-    boolean occupancy grid of reachable_cloud. Returns (y0, y1, z0, z1)
-    snapped to the search grid, or None when nothing is reachable."""
+    With ``height_m`` set (the task-band mode the dashboard uses): the
+    WIDEST rectangle of that fixed z-extent, ties broken toward the
+    shallower placement — matching the P0-8a band-placement analysis
+    (max-area instead tends to pick tall, narrow, deep rectangles,
+    which is not what a weeding band wants). Without it: the classic
+    maximal-area rectangle (histogram method).
+
+    Returns (y0, y1, z0, z1) snapped to the search grid, or None when
+    nothing fits. symmetric_y=True shrinks the result to |y0| == y1 —
+    a subset, so still fully reachable; the arm is mirror-symmetric so
+    asymmetry in the raw result is just grid snapping, not real reach.
+    """
     kept = reachable_cloud(joint_limit_rad, joint_limit_min_rad,
                            spacing=spacing, **filter_kwargs)
     if not kept:
@@ -155,23 +166,59 @@ def recommended_rectangle(joint_limit_rad: float,
     occ = [[0] * len(ys) for _ in zs]
     for (y, z) in kept:
         occ[zi[key(z)]][yi[key(y)]] = 1
-    best = None  # (area, i0, i1, j0, j1) in index space
-    heights = [0] * len(ys)
-    for j, row in enumerate(occ):
-        for i, v in enumerate(row):
-            heights[i] = heights[i] + 1 if v else 0
-        stack = []  # (leftmost column this height extends to, height)
-        for i, h in enumerate(heights + [0]):
-            start = i
-            while stack and stack[-1][1] >= h:
-                s, sh = stack.pop()
-                area = sh * (i - s)
-                if best is None or area > best[0]:
-                    best = (area, s, i - 1, j - sh + 1, j)
-                start = s
-            stack.append((start, h))
-    _, i0, i1, j0, j1 = best
-    return (ys[i0], ys[i1], zs[j0], zs[j1])
+
+    best = None  # (score, i0, i1, j0, j1) in index space
+    if height_m is not None:
+        # Fixed-height band: slide a window of `rows` grid rows down the
+        # occupancy grid; in each placement the widest contiguous run of
+        # fully-occupied columns is the candidate. Score = width, then
+        # prefer the shallower placement (smaller z of the bottom edge).
+        rows = int(round(height_m / spacing)) + 1
+        if rows > len(zs):
+            rows = len(zs)
+        for j0 in range(0, len(zs) - rows + 1):
+            j1 = j0 + rows - 1
+            run = 0
+            for i in range(len(ys) + 1):
+                full = (i < len(ys)
+                        and all(occ[j][i] for j in range(j0, j1 + 1)))
+                if full:
+                    run += 1
+                    continue
+                if run > 0:
+                    cand = (run, -zs[j1], i - run, i - 1, j0, j1)
+                    if best is None or cand[:2] > best[:2]:
+                        best = cand
+                run = 0
+        if best is None:
+            return None
+        _, _, i0, i1, j0, j1 = best
+    else:
+        heights = [0] * len(ys)
+        for j, row in enumerate(occ):
+            for i, v in enumerate(row):
+                heights[i] = heights[i] + 1 if v else 0
+            stack = []  # (leftmost column this height reaches, height)
+            for i, h in enumerate(heights + [0]):
+                start = i
+                while stack and stack[-1][1] >= h:
+                    s, sh = stack.pop()
+                    area = sh * (i - s)
+                    if best is None or area > best[0]:
+                        best = (area, s, i - 1, j - sh + 1, j)
+                    start = s
+                stack.append((start, h))
+        _, i0, i1, j0, j1 = best
+
+    y0, y1, z0, z1 = ys[i0], ys[i1], zs[j0], zs[j1]
+    if symmetric_y:
+        half = min(-y0, y1)
+        if half <= 0:
+            return None
+        # Snap to the grid so the bounds stay on kept points.
+        half = round(half / spacing) * spacing
+        y0, y1 = -half, half
+    return (y0, y1, z0, z1)
 
 
 def nine_points(y0: float, y1: float, z0: float, z1: float,

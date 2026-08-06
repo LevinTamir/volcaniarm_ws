@@ -41,12 +41,13 @@ from typing import Optional
 
 from ament_index_python.packages import get_package_share_directory
 
-from python_qt_binding.QtCore import Signal, Slot, QObject, QTimer, Qt
+from python_qt_binding.QtCore import (
+    QEvent, Signal, Slot, QObject, QTimer, Qt)
 from python_qt_binding.QtGui import QPixmap
 from python_qt_binding.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QLineEdit,
-    QMessageBox, QScrollArea, QSizePolicy, QSplitter,
+    QAbstractSpinBox, QCheckBox, QComboBox, QDoubleSpinBox, QFrame,
+    QLineEdit, QMessageBox, QScrollArea, QSizePolicy, QSplitter,
     QSpinBox, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QPlainTextEdit, QProgressBar, QTextEdit,
 )
@@ -178,6 +179,9 @@ class CalibrationDashboardWidget(QWidget):
                             'backlash': 3}
     _RECO_MARKER = '# auto-recommended from joint limits'
     _RECT_DEFAULTS = (-0.40, 0.40, 0.55, 0.85)
+    # Task-band height for the recommended rectangle: widest placement
+    # of this fixed z-extent (matches the P0-8 band analysis).
+    _RECT_HEIGHT_M = 0.30
     _SETTLE_DEFAULT_S = 2.0
     _HOME_TOL_DEFAULT_MM = 80.0
     _METRICS_DIR = Path(
@@ -370,6 +374,23 @@ class CalibrationDashboardWidget(QWidget):
         self.resize(1080, 820)
         # Default divider position: ~75% pages / ~25% run panel.
         right.setSizes([615, 205])
+
+        # Wheel-scroll immunity: scrolling a page must never spin a
+        # value box the cursor happens to pass over. Wheel is blocked on
+        # value widgets unless the operator explicitly clicked into one;
+        # StrongFocus keeps the wheel itself from granting focus.
+        for vw in (self.findChildren(QAbstractSpinBox)
+                   + self.findChildren(QComboBox)):
+            vw.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            vw.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.Type.Wheel
+                and isinstance(obj, (QAbstractSpinBox, QComboBox))
+                and not obj.hasFocus()):
+            event.ignore()
+            return True
+        return super().eventFilter(obj, event)
 
     def _build_sidebar(self) -> QListWidget:
         nav = QListWidget()
@@ -890,8 +911,15 @@ class CalibrationDashboardWidget(QWidget):
             try:
                 from ..grid import recommended_rectangle
                 q_min, q_max = self._load_joint_limit_range()
+                # Honour the page's own safety margins (the operator's
+                # dial for how far inside the envelope to stay) and keep
+                # the rectangle Y-symmetric like the arm itself.
                 rect = recommended_rectangle(
-                    q_max, joint_limit_min_rad=q_min)
+                    q_max, joint_limit_min_rad=q_min,
+                    symmetric_y=True,
+                    height_m=self._RECT_HEIGHT_M,
+                    limit_margin_rad=sweep['limit_margin_rad'].value(),
+                    closure_margin_m=sweep['closure_margin_m'].value())
             except Exception as exc:  # noqa: BLE001
                 self._node.get_logger().warn(
                     f'rectangle recommendation failed: {exc}')
