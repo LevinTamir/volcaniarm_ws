@@ -70,8 +70,14 @@ def filter_grid(points, joint_limit_rad: float,
                 limit_margin_rad: float = 0.05,
                 closure_margin_m: float = 0.02,
                 params: 'vk.Params' = None,
-                seed=(0.0, 0.0)):
+                seed=(0.0, 0.0),
+                joint_limit_min_rad: float = None):
     """Return (kept_goals, GridStats).
+
+    Joint bounds: each elbow must satisfy
+        joint_limit_min_rad + margin <= theta <= joint_limit_rad - margin
+    with joint_limit_min_rad defaulting to the symmetric
+    -joint_limit_rad when not given (the pre-asymmetric behaviour).
 
     Seeds chain: each IK call is seeded with the last valid solution,
     which keeps the branch continuous along the serpentine exactly the
@@ -79,7 +85,9 @@ def filter_grid(points, joint_limit_rad: float,
     the seed.
     """
     p = params or vk.Params()
-    lim = joint_limit_rad - limit_margin_rad
+    lim_max = joint_limit_rad - limit_margin_rad
+    lim_min = (-joint_limit_rad if joint_limit_min_rad is None
+               else joint_limit_min_rad) + limit_margin_rad
     seed_l, seed_r = seed
     kept = []
     stats = GridStats()
@@ -90,7 +98,7 @@ def filter_grid(points, joint_limit_rad: float,
             stats.rejected_points.append((y, z, 'ik'))
             continue
         tl, tr = float(ik.theta_left), float(ik.theta_right)
-        if abs(tl) > lim or abs(tr) > lim:
+        if not (lim_min <= tl <= lim_max and lim_min <= tr <= lim_max):
             stats.joint_limit += 1
             stats.rejected_points.append((y, z, 'limit'))
             continue
@@ -131,7 +139,11 @@ def main(argv=None):
     ap.add_argument('--z1', type=float, required=True)
     ap.add_argument('--spacing', type=float, default=0.025)
     ap.add_argument('--joint-limit', type=float, required=True,
-                    help='measured mechanical limit [rad] (protocol 6b)')
+                    help='measured mechanical limit, positive direction '
+                         '[rad] (protocol 6b)')
+    ap.add_argument('--joint-limit-min', type=float, default=None,
+                    help='negative-direction limit [rad]; defaults to '
+                         '-joint_limit (symmetric)')
     ap.add_argument('--limit-margin', type=float, default=0.05)
     ap.add_argument('--closure-margin', type=float, default=0.02)
     ap.add_argument('--sec-per-point', type=float, default=13.0)
@@ -145,7 +157,8 @@ def main(argv=None):
 
     pts = serpentine(args.y0, args.y1, args.z0, args.z1, args.spacing)
     kept, stats = filter_grid(
-        pts, args.joint_limit, args.limit_margin, args.closure_margin)
+        pts, args.joint_limit, args.limit_margin, args.closure_margin,
+        joint_limit_min_rad=args.joint_limit_min)
     est_min = len(kept) * args.sec_per_point / 60.0
     print(f'grid {stats.total} pts -> kept {stats.kept} '
           f'(ik {stats.ik_invalid}, limit {stats.joint_limit}, '
@@ -168,7 +181,8 @@ def main(argv=None):
         # rejects reachable points.
         ok = [pt for pt in anchors
               if filter_grid([pt], args.joint_limit, args.limit_margin,
-                             args.closure_margin)[0]]
+                             args.closure_margin,
+                             joint_limit_min_rad=args.joint_limit_min)[0]]
         names = ['corner --', 'corner +-', 'corner -+', 'corner ++',
                  'mid bottom', 'mid top', 'mid left', 'mid right',
                  'center']

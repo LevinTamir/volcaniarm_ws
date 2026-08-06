@@ -1,0 +1,14 @@
+# Measured mechanical joint limits - written by the calibration dashboard
+# Joint Limits page (joystick capture flow, runbook step 1). Consumed by the
+# sweep page's joint-limit prefill and the notebooks' QLIM.
+captured: '2026-08-06T13:32:06'
+poses:
+- volcaniarm_right_elbow_joint: 0.945136696109273
+  volcaniarm_left_elbow_joint: 0.27149414637858665
+- volcaniarm_right_elbow_joint: 0.6003387211469244
+  volcaniarm_left_elbow_joint: 1.1380092138394275
+- volcaniarm_right_elbow_joint: -0.1637064296831556
+  volcaniarm_left_elbow_joint: -1.075668234619755
+- volcaniarm_right_elbow_joint: -1.0677324406770934
+  volcaniarm_left_elbow_joint: -0.60402027503785
+symmetric_limit_rad: 1.0566366463113872

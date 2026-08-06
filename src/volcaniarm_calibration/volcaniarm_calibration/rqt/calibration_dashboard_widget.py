@@ -46,7 +46,7 @@ from python_qt_binding.QtGui import QPixmap
 from python_qt_binding.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QLineEdit,
-    QMessageBox, QSizePolicy,
+    QMessageBox, QScrollArea, QSizePolicy,
     QSpinBox, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QStackedWidget, QPlainTextEdit, QProgressBar, QTextEdit,
 )
@@ -267,44 +267,58 @@ class CalibrationDashboardWidget(QWidget):
 
         right = QVBoxLayout()
         self._pages = QStackedWidget()
-        self._pages.addWidget(self._build_start_page())
-        self._pages.addWidget(self._build_limits_page())
-        self._pages.addWidget(self._build_camera_page())
-        self._pages.addWidget(self._build_test_page(
+
+        def _scrolled(page: QWidget) -> QScrollArea:
+            # Tall pages (sweep grid, repeatability gate) must scroll
+            # instead of vertically crushing their rows when the window
+            # is short - collapsed spinboxes are unusable.
+            sa = QScrollArea()
+            sa.setWidgetResizable(True)
+            sa.setFrameShape(QFrame.Shape.NoFrame)
+            sa.setWidget(page)
+            return sa
+
+        self._pages.addWidget(_scrolled(self._build_start_page()))
+        self._pages.addWidget(_scrolled(self._build_limits_page()))
+        self._pages.addWidget(_scrolled(self._build_camera_page()))
+        self._pages.addWidget(_scrolled(self._build_test_page(
             'noise_gate', with_iterations=False,
             with_home_gate=False, goal_mode='list',
-            samples_default=500))
-        self._pages.addWidget(self._build_test_page(
+            samples_default=500)))
+        self._pages.addWidget(_scrolled(self._build_test_page(
             'settle_probe', with_iterations=True,
             with_home_gate=False, goal_mode='list',
             iterations_default=3,
             iterations_label='probes per pose (cycles)',
-            samples_default=120, hide_settle=True))
-        self._pages.addWidget(self._build_test_page(
+            samples_default=120, hide_settle=True)))
+        self._pages.addWidget(_scrolled(self._build_test_page(
             'workspace_coverage', with_iterations=True,
             with_home_gate=False, goal_mode='list',
             iterations_default=1,
             iterations_label='cycles (full sweeps)',
-            with_grid=True, with_pass_meta=True))
-        self._pages.addWidget(self._build_test_page(
+            with_grid=True, with_pass_meta=True)))
+        self._pages.addWidget(_scrolled(self._build_test_page(
             'repeatability', with_iterations=True,
             with_home_gate=True, goal_mode='single',
-            iterations_default=30, with_anchors=True))
-        self._pages.addWidget(self._build_test_page(
+            iterations_default=30, with_anchors=True)))
+        self._pages.addWidget(_scrolled(self._build_test_page(
             'static_accuracy', with_iterations=True,
             with_home_gate=False, goal_mode='single',
-            iterations_default=30))
-        self._pages.addWidget(self._build_test_page(
+            iterations_default=30)))
+        self._pages.addWidget(_scrolled(self._build_test_page(
             'backlash', with_iterations=True,
             with_home_gate=False, goal_mode='list',
             iterations_default=5,
             iterations_label='cycles (reps per direction)',
-            with_approach_offset=True))
+            with_approach_offset=True)))
         # Keep the page compact (sized to its content) and let the run
         # panel's log expand to fill the rest, so there's no large blank
         # gap between a page's controls and the log at the bottom.
         self._pages.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        # Floor so the log's stretch can't squeeze the page area into a
+        # sliver; past this the page scrolls (see _scrolled above).
+        self._pages.setMinimumHeight(340)
         right.addWidget(self._pages)
         right.addWidget(self._build_run_panel(), stretch=1)
         root.addLayout(right, stretch=1)
@@ -561,32 +575,92 @@ class CalibrationDashboardWidget(QWidget):
         self._limits_list.clear()
         self._recompute_limit_summary()
 
-    @staticmethod
-    def _pose_max_abs(angles: dict) -> float:
-        """The binding joint at an extreme pose: the largest |angle|."""
-        return max(abs(v) for v in angles.values())
+    # Angles within this distance of the most extreme captured value are
+    # treated as "at the stop" and averaged into that bound; anything
+    # further inward is a non-binding interior angle and is ignored.
+    _LIMIT_CLUSTER_RAD = 0.1
+    # A measured bound smaller than this magnitude gets a warning (real
+    # stops can be small - e.g. an inward stop at -0.2 - but a tiny
+    # value usually means the arm was not really at the stop).
+    _LIMIT_SMALL_BOUND_RAD = 0.3
+
+    def _derive_limits(self):
+        """Derive the shared per-motor range [q_min, q_max] from the
+        captured poses.
+
+        Mirror symmetry: both motors share the same range (equal
+        magnitudes), but within the range min does NOT have to equal
+        -max (e.g. [-0.2, 1.06]). At each captured extreme pose one
+        motor sits at a stop while the other is interior, so the bounds
+        are taken from the CLUSTER of most-extreme angles across all
+        captured poses and both motors, averaging within
+        _LIMIT_CLUSTER_RAD of the global extreme.
+
+        Returns (q_min, q_max, n_min, n_max, notes) where a bound is
+        None when that direction was never captured (no angle with the
+        matching sign).
+        """
+        angles = [v for pose in self._limit_captures
+                  for v in pose.values()]
+        gmax, gmin = max(angles), min(angles)
+        notes = []
+        q_max = n_max = None
+        if gmax > 0.0:
+            cluster = [a for a in angles
+                       if a > gmax - self._LIMIT_CLUSTER_RAD]
+            q_max, n_max = sum(cluster) / len(cluster), len(cluster)
+            if max(cluster) - min(cluster) > self._LIMIT_ASYMMETRY_WARN_RAD:
+                notes.append(
+                    f'max-bound samples spread '
+                    f'{max(cluster) - min(cluster):.3f} rad')
+            if q_max < self._LIMIT_SMALL_BOUND_RAD:
+                notes.append(
+                    f'q_max = {q_max:+.3f} rad is unusually small - '
+                    f'confirm the arm was really at its positive stop')
+        q_min = n_min = None
+        if gmin < 0.0:
+            cluster = [a for a in angles
+                       if a < gmin + self._LIMIT_CLUSTER_RAD]
+            q_min, n_min = sum(cluster) / len(cluster), len(cluster)
+            if max(cluster) - min(cluster) > self._LIMIT_ASYMMETRY_WARN_RAD:
+                notes.append(
+                    f'min-bound samples spread '
+                    f'{max(cluster) - min(cluster):.3f} rad')
+        return q_min, q_max, n_min, n_max, notes
 
     def _recompute_limit_summary(self):
         n = len(self._limit_captures)
         if n < 2:
             self._limits_summary.setText(
                 'capture at least 2 poses (4 recommended) to derive the '
-                'limit')
+                'limits')
             self._limits_save_btn.setEnabled(False)
             return
-        maxes = [self._pose_max_abs(a) for a in self._limit_captures]
-        limit = sum(maxes) / n
-        spread = max(maxes) - min(maxes)
-        text = ('per-pose binding |angle|: '
-                + ', '.join(f'{m:.4f}' for m in maxes) + ' rad<br>'
-                f'<b>symmetric limit = {limit:.4f} rad</b> '
-                f'(mean over {n} poses, arm assumed symmetric)')
-        if spread > self._LIMIT_ASYMMETRY_WARN_RAD:
-            text += (f'<br><span style="color:#d04b4b;">WARNING: the '
-                     f'binding angles spread over {spread:.3f} rad - '
-                     f'averaging will let the grid overshoot the tighter '
-                     f'poses. Re-capture any pose that was not really at '
-                     f'its extreme, or remove outliers.</span>')
+        q_min, q_max, n_min, n_max, notes = self._derive_limits()
+        if q_max is None and q_min is None:
+            self._limits_summary.setText(
+                'no captured angle is near a stop yet - jog further out '
+                'before capturing')
+            self._limits_save_btn.setEnabled(False)
+            return
+        parts = []
+        if q_max is not None:
+            parts.append(f'<b>q_max = {q_max:+.4f} rad</b> '
+                         f'({n_max} samples)')
+        else:
+            parts.append(f'q_max = mirrored ({-q_min:+.4f} rad) - no '
+                         f'positive-side extreme captured')
+        if q_min is not None:
+            parts.append(f'<b>q_min = {q_min:+.4f} rad</b> '
+                         f'({n_min} samples)')
+        else:
+            parts.append(f'q_min = mirrored ({-q_max:+.4f} rad) - no '
+                         f'negative-side extreme captured')
+        text = ('shared per-motor range (mirror symmetry): '
+                + ', '.join(parts))
+        for note in notes:
+            text += (f'<br><span style="color:#d04b4b;">WARNING: {note} '
+                     f'- re-capture the sloppy pose or remove it.</span>')
         self._limits_summary.setText(text)
         self._limits_save_btn.setEnabled(True)
 
@@ -599,18 +673,27 @@ class CalibrationDashboardWidget(QWidget):
     def _on_save_limits(self):
         if len(self._limit_captures) < 2:
             return
-        maxes = [self._pose_max_abs(a) for a in self._limit_captures]
-        limit = sum(maxes) / len(maxes)
+        q_min, q_max, _, _, _ = self._derive_limits()
+        if q_max is None and q_min is None:
+            return
+        # An uncaptured direction mirrors the measured one.
+        if q_max is None:
+            q_max = -q_min
+        if q_min is None:
+            q_min = -q_max
         path = self._joint_limits_config_path()
         payload = {
             'captured': time.strftime('%Y-%m-%dT%H:%M:%S'),
             'poses': [{k: float(v) for k, v in a.items()}
                       for a in self._limit_captures],
-            # RAW measured limit (mean over poses of the binding joint's
-            # |angle|, arm assumed left/right symmetric). The grid
-            # generator's limit_margin_rad supplies the safety margin -
-            # do not pre-subtract it here.
-            'symmetric_limit_rad': float(limit),
+            # RAW measured stops, shared by both motors (mirror
+            # symmetry). The grid generator's limit_margin_rad supplies
+            # the safety margin - do not pre-subtract it here.
+            'q_min_rad': float(q_min),
+            'q_max_rad': float(q_max),
+            # Half-range equivalent for symmetric consumers (notebook
+            # QLIM lobe figures).
+            'symmetric_limit_rad': float((q_max - q_min) / 2.0),
         }
         header = ('# Measured mechanical joint limits - written by the '
                   'calibration dashboard\n# Joint Limits page (joystick '
@@ -618,35 +701,39 @@ class CalibrationDashboardWidget(QWidget):
                   "page's joint-limit prefill and the notebooks' QLIM.\n")
         path.write_text(header + yaml.safe_dump(payload, sort_keys=False))
         self._limits_saved_status.setText(
-            f'saved {limit:.4f} rad to {path.name} '
+            f'saved [{q_min:+.4f}, {q_max:+.4f}] rad to {path.name} '
             f'({payload["captured"]})')
         self._limits_saved_status.setStyleSheet('color: #2e9c4a;')
         self._apply_measured_joint_limit()
 
     def _apply_measured_joint_limit(self):
-        """Prefill the sweep page's joint-limit spinbox from
-        joint_limits.yaml when a measured value exists. Called after UI
-        build and after settings restore so the measured value always
-        wins over the 1.13 placeholder and stale persisted spinboxes."""
+        """Prefill the sweep page's joint-limit spinboxes from
+        joint_limits.yaml when measured values exist. Called after UI
+        build and after settings restore so the measured values always
+        win over the placeholders and stale persisted spinboxes."""
         path = self._joint_limits_config_path()
         if not path.exists():
             return
         try:
             data = yaml.safe_load(path.read_text()) or {}
-            limit = float(data['symmetric_limit_rad'])
+            sym = float(data['symmetric_limit_rad'])
+            q_max = float(data.get('q_max_rad', sym))
+            q_min = float(data.get('q_min_rad', -sym))
         except Exception as exc:
             self._node.get_logger().warn(
                 f'ignoring {path.name}: {exc}')
             return
-        spin = self._pages_fields['workspace_coverage']['joint_limit_rad']
-        spin.setValue(limit)
-        spin.setToolTip(
-            f'Measured {data.get("captured", "?")} on the Joint Limits '
-            f'page (joint_limits.yaml). The grid generator subtracts the '
-            f'"limit margin" below from this raw stop value.')
+        sweep = self._pages_fields['workspace_coverage']
+        tip = (f'Measured {data.get("captured", "?")} on the Joint Limits '
+               f'page (joint_limits.yaml). The grid generator applies the '
+               f'"limit margin" below inside this raw stop value.')
+        sweep['joint_limit_rad'].setValue(q_max)
+        sweep['joint_limit_rad'].setToolTip(tip)
+        sweep['joint_limit_min_rad'].setValue(q_min)
+        sweep['joint_limit_min_rad'].setToolTip(tip)
         if hasattr(self, '_limits_saved_status'):
             self._limits_saved_status.setText(
-                f'saved limit on file: {limit:.4f} rad '
+                f'saved limits on file: [{q_min:+.4f}, {q_max:+.4f}] rad '
                 f'({data.get("captured", "?")})')
             self._limits_saved_status.setStyleSheet('color: #2e9c4a;')
 
@@ -862,11 +949,18 @@ class CalibrationDashboardWidget(QWidget):
             joint_limit = _grid_spin(0.2, 3.14, 1.13, step=0.01,
                                      suffix=' rad')
             joint_limit.setToolTip(
-                'UNMEASURED placeholder. Capture the mechanical stops on '
-                'the Joint Limits page first (runbook step 1); the homing '
-                'switches sit at 1.064 / 1.104 rad, the only measured '
-                'values so far.')
-            grid_form.addRow('joint limit', joint_limit)
+                'Positive-direction stop. UNMEASURED placeholder: capture '
+                'the mechanical stops on the Joint Limits page first '
+                '(runbook step 1); the homing switches sit at 1.064 / '
+                '1.104 rad, the only measured values so far.')
+            grid_form.addRow('joint limit max', joint_limit)
+            joint_limit_min = _grid_spin(-3.14, -0.2, -1.13, step=0.01,
+                                         suffix=' rad')
+            joint_limit_min.setToolTip(
+                'Negative-direction stop. Defaults to the mirrored max; '
+                'the Joint Limits page fills the measured value when '
+                'poses on both sides were captured.')
+            grid_form.addRow('joint limit min', joint_limit_min)
             limit_margin = _grid_spin(0.0, 0.3, 0.05, step=0.01,
                                       suffix=' rad')
             grid_form.addRow('limit margin', limit_margin)
@@ -886,6 +980,7 @@ class CalibrationDashboardWidget(QWidget):
             fields['grid_z1'] = grid_z1
             fields['grid_spacing'] = grid_spacing
             fields['joint_limit_rad'] = joint_limit
+            fields['joint_limit_min_rad'] = joint_limit_min
             fields['limit_margin_rad'] = limit_margin
             fields['closure_margin_m'] = closure_margin
             v.addWidget(grid_box)
@@ -1626,20 +1721,23 @@ class CalibrationDashboardWidget(QWidget):
         z0, z1 = fields['grid_z0'].value(), fields['grid_z1'].value()
         spacing = fields['grid_spacing'].value()
         limit = fields['joint_limit_rad'].value()
+        limit_min = fields['joint_limit_min_rad'].value()
         margin = fields['limit_margin_rad'].value()
         closure = fields['closure_margin_m'].value()
         if y1 <= y0 or z1 <= z0:
             self._log_msg('grid: empty rectangle (need y1 > y0 and z1 > z0)')
             return
         pts = serpentine(y0, y1, z0, z1, spacing)
-        kept, stats = filter_grid(pts, limit, margin, closure)
+        kept, stats = filter_grid(pts, limit, margin, closure,
+                                  joint_limit_min_rad=limit_min)
         counts = (f'{stats.total} candidates -> {stats.kept} kept '
                   f'(ik {stats.ik_invalid}, limit {stats.joint_limit}, '
                   f'closure {stats.closure_margin} rejected)')
         header = (
             f'# grid rect y[{y0:.3f}, {y1:.3f}] z[{z0:.3f}, {z1:.3f}] '
             f'spacing {spacing:.3f}\n'
-            f'# joint limit {limit:.3f} rad (margin {margin:.3f}), '
+            f'# joint limits [{limit_min:.3f}, {limit:.3f}] rad '
+            f'(margin {margin:.3f}), '
             f'closure margin {closure:.3f} m\n'
             f'# {counts}\n')
         fields['goals_edit'].setPlainText(
@@ -1678,7 +1776,8 @@ class CalibrationDashboardWidget(QWidget):
             ok = bool(filter_grid(
                 [(y, z)], sweep['joint_limit_rad'].value(),
                 sweep['limit_margin_rad'].value(),
-                sweep['closure_margin_m'].value())[0])
+                sweep['closure_margin_m'].value(),
+                joint_limit_min_rad=sweep['joint_limit_min_rad'].value())[0])
             suffix = '' if ok else '  [unreachable]'
             combo.addItem(f'{name}  ({y:+.3f}, {z:.3f}){suffix}',
                           (y, z, ok))
