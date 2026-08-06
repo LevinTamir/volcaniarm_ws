@@ -1,15 +1,17 @@
 """Qt widget for the calibration dashboard.
 
 MoveIt-Setup-Assistant-style layout: a left sidebar picks a step (Start,
-Camera Localization, or one of the accuracy/repeatability/workspace tests)
-and the right panel swaps to that step's controls. The Start tab only
-offers robot homing; each test tab is self-contained (its params, capture
+Joint Limits, Camera Localization, or one of the accuracy/repeatability/
+workspace tests) and the right panel swaps to that step's controls. The
+Start tab only offers robot homing; the Joint Limits tab captures the
+mechanical stops from a joystick jog session; each test tab is
+self-contained (its params, capture
 settings, and Start / Continue / Reset / Cancel). A shared strip beneath
 the pages holds the status line, log, and post-run result banner.
 
 Workflow (real hardware only):
   1. Terminal 1: bring up the robot with the AprilTag detector
-     (`real_bringup.launch.py mode:=tests calibration:=true`).
+     (`real_bringup.launch.py mode:=tests markers:=true`).
   2. Terminal 2: open this GUI
      (`calibration_gui.launch.py`).
   3. Pick a step in the sidebar, fill in the poses / iteration count, and
@@ -139,13 +141,14 @@ class CalibrationDashboardWidget(QWidget):
     # runs them (noise gate -> settle probe -> sweep -> anchors). Test
     # pages map to a TEST_REGISTRY key; Start and Camera have no test.
     _PAGE_START = 0
-    _PAGE_CAMERA = 1
-    _PAGE_NOISE = 2
-    _PAGE_SETTLE = 3
-    _PAGE_SWEEP = 4
-    _PAGE_REPEAT = 5
-    _PAGE_STATIC = 6
-    _PAGE_BACKLASH = 7
+    _PAGE_LIMITS = 1
+    _PAGE_CAMERA = 2
+    _PAGE_NOISE = 3
+    _PAGE_SETTLE = 4
+    _PAGE_SWEEP = 5
+    _PAGE_REPEAT = 6
+    _PAGE_STATIC = 7
+    _PAGE_BACKLASH = 8
     _PAGE_TEST_NAME = {
         _PAGE_NOISE: 'noise_gate',
         _PAGE_SETTLE: 'settle_probe',
@@ -155,10 +158,15 @@ class CalibrationDashboardWidget(QWidget):
         _PAGE_BACKLASH: 'backlash',
     }
     _NAV_LABELS = (
-        'Start', 'Camera Localization',
+        'Start', 'Joint Limits', 'Camera Localization',
         'Noise Gate', 'Settle Probe', 'Workspace Sweep',
         'Repeatability', 'Static Accuracy', 'Backlash',
     )
+
+    # Warn when the two captured sides disagree by more than this before
+    # symmetrising — averaging a real asymmetry lets the grid slightly
+    # overshoot the tighter side's true stop.
+    _LIMIT_ASYMMETRY_WARN_RAD = 0.05
 
     def __init__(self, node):
         super().__init__()
@@ -222,6 +230,16 @@ class CalibrationDashboardWidget(QWidget):
         # (settle/fresh/auto) live once in the run panel instead.
         self._pages_fields: dict = {}
 
+        # Joint Limits page state: latest /joint_states positions (dict
+        # name -> rad, replaced atomically by the executor-thread
+        # callback and read from a Qt timer), and the two captured stop
+        # poses. rqt spins the shared node, so the subscription just works.
+        self._latest_joints: dict = {}
+        self._limit_captures: dict = {'a': None, 'b': None}
+        from sensor_msgs.msg import JointState
+        self._joint_states_sub = node.create_subscription(
+            JointState, '/joint_states', self._on_joint_states, 10)
+
         # Camera-localization runner: derives camera-in-base from one
         # AprilTag detection and writes a YAML record. Composes with
         # the test runner -- shares its TF buffer and _stop_event so a
@@ -249,6 +267,7 @@ class CalibrationDashboardWidget(QWidget):
         right = QVBoxLayout()
         self._pages = QStackedWidget()
         self._pages.addWidget(self._build_start_page())
+        self._pages.addWidget(self._build_limits_page())
         self._pages.addWidget(self._build_camera_page())
         self._pages.addWidget(self._build_test_page(
             'noise_gate', with_iterations=False,
@@ -296,6 +315,7 @@ class CalibrationDashboardWidget(QWidget):
         # _on_page_changed rebinds them to whichever test tab is active.
         self._bind_run_widgets(self._pages_fields['static_accuracy'])
         self._apply_styles()
+        self._apply_measured_joint_limit()
 
         # Open at a comfortable size instead of the cramped default rqt
         # gives a fresh plugin; keep a sensible floor and a log that always
@@ -340,7 +360,7 @@ class CalibrationDashboardWidget(QWidget):
             '<ol>'
             '<li>Terminal 1 - robot + camera + AprilTag detector + RViz:<br>'
             '<code>ros2 launch volcaniarm_bringup real_bringup.launch.py '
-            'mode:=tests calibration:=true</code></li>'
+            'mode:=tests markers:=true</code></li>'
             '<li>Terminal 2 - this GUI:<br>'
             '<code>ros2 launch volcaniarm_calibration calibration_gui.launch.py</code>'
             '</li>'
@@ -348,6 +368,9 @@ class CalibrationDashboardWidget(QWidget):
             '<p><b>Steps (left sidebar, in Exp0 protocol order - see '
             'experiments/RUNBOOK.md)</b></p>'
             '<ul>'
+            '<li><b>Joint Limits</b> - jog to the mechanical stops with '
+            'the joystick and capture the measured symmetric limit '
+            '(once).</li>'
             '<li><b>Camera Localization</b> - measure where the camera '
             'sits relative to the arm base before running tests.</li>'
             '<li><b>Noise Gate</b> - static bursts at a few poses; the '
@@ -388,6 +411,211 @@ class CalibrationDashboardWidget(QWidget):
         home_outer.addWidget(self._home_status)
         v.addWidget(home_box)
         return page
+
+    # -- Joint Limits page ----------------------------------------
+
+    _ELBOW_JOINTS = ('volcaniarm_right_elbow_joint',
+                     'volcaniarm_left_elbow_joint')
+
+    def _build_limits_page(self) -> QWidget:
+        # Joystick-driven measurement of the mechanical joint limits
+        # (runbook step 1). The operator jogs the arm to each side's
+        # stop with the teleop and captures the pose; the saved
+        # symmetric limit feeds the sweep page and the notebooks.
+        page = QWidget()
+        v = QVBoxLayout(page)
+
+        instructions = QLabel(
+            '<p><b>Measure the mechanical joint limits</b> (once; runbook '
+            'step 1).</p>'
+            '<ol>'
+            '<li>Home the robot (Start page).</li>'
+            '<li>Terminal 3 - joystick teleop:<br>'
+            '<code>ros2 launch volcaniarm_controllers '
+            'joystick_teleop.launch.py</code></li>'
+            '<li>Slowly jog the EE to one side until the first sign of '
+            'mechanical contact, cable strain or link-link proximity, '
+            'then click <b>Capture side A</b>.</li>'
+            '<li>Jog to the other side\'s stop and click '
+            '<b>Capture side B</b>.</li>'
+            '<li>Review the derived symmetric limit and <b>Save</b>. '
+            'While jogging, also note which stepper sign raises the EE '
+            '(firmware direction-comment check).</li>'
+            '</ol>')
+        instructions.setWordWrap(True)
+        instructions.setTextFormat(Qt.TextFormat.RichText)
+        v.addWidget(instructions)
+
+        live_box = QGroupBox('Live joint angles')
+        live_l = QVBoxLayout(live_box)
+        self._limits_live = QLabel('waiting for /joint_states...')
+        self._limits_live.setStyleSheet('font-family: monospace;')
+        live_l.addWidget(self._limits_live)
+        v.addWidget(live_box)
+
+        cap_box = QGroupBox('Capture the two stops')
+        cap_form = QFormLayout(cap_box)
+        self._limits_cap_btn = {}
+        self._limits_cap_label = {}
+        for side, text in (('a', 'Capture side A'), ('b', 'Capture side B')):
+            btn = QPushButton(text)
+            btn.clicked.connect(
+                lambda _=False, s=side: self._on_capture_limit(s))
+            lab = QLabel('not captured')
+            lab.setStyleSheet('color: gray; font-family: monospace;')
+            row = QHBoxLayout()
+            row.addWidget(btn)
+            row.addWidget(lab, stretch=1)
+            cap_form.addRow(row)
+            self._limits_cap_btn[side] = btn
+            self._limits_cap_label[side] = lab
+        self._limits_summary = QLabel('capture both sides to derive the limit')
+        self._limits_summary.setWordWrap(True)
+        cap_form.addRow(self._limits_summary)
+        v.addWidget(cap_box)
+
+        save_box = QGroupBox('Save')
+        save_l = QVBoxLayout(save_box)
+        self._limits_save_btn = QPushButton('Save limits')
+        self._limits_save_btn.setObjectName('primary')
+        self._limits_save_btn.setEnabled(False)
+        self._limits_save_btn.setToolTip(
+            'Write config/joint_limits.yaml (raw side A/B poses + the '
+            'symmetric limit) and prefill the sweep page\'s joint-limit '
+            'spinbox. The value saved is the RAW measured stop; the '
+            'safety margin stays in the grid generator\'s "limit margin".')
+        self._limits_save_btn.clicked.connect(self._on_save_limits)
+        save_l.addWidget(self._limits_save_btn)
+        self._limits_saved_status = QLabel('')
+        self._limits_saved_status.setStyleSheet('color: gray;')
+        save_l.addWidget(self._limits_saved_status)
+        v.addWidget(save_box)
+
+        # rqt's executor delivers /joint_states off the Qt thread; a
+        # plain repaint timer keeps the readout live without cross-thread
+        # widget access.
+        self._limits_timer = QTimer(self)
+        self._limits_timer.timeout.connect(self._update_limits_readout)
+        self._limits_timer.start(250)
+        return page
+
+    def _on_joint_states(self, msg):
+        # Executor thread: atomic dict replace only, no Qt calls.
+        self._latest_joints = dict(zip(msg.name, msg.position))
+
+    def _elbow_angles(self) -> Optional[dict]:
+        joints = self._latest_joints
+        if not all(j in joints for j in self._ELBOW_JOINTS):
+            return None
+        return {j: joints[j] for j in self._ELBOW_JOINTS}
+
+    @Slot()
+    def _update_limits_readout(self):
+        angles = self._elbow_angles()
+        if angles is None:
+            self._limits_live.setText('waiting for /joint_states...')
+            return
+        self._limits_live.setText('   '.join(
+            f'{name.replace("volcaniarm_", "")}: {val:+.4f} rad'
+            for name, val in angles.items()))
+
+    def _on_capture_limit(self, side: str):
+        angles = self._elbow_angles()
+        if angles is None:
+            QMessageBox.warning(
+                self, 'No joint states',
+                'No /joint_states received yet - is the robot bringup '
+                'running?')
+            return
+        self._limit_captures[side] = angles
+        self._limits_cap_label[side].setText('   '.join(
+            f'{name.replace("volcaniarm_", "")}: {val:+.4f}'
+            for name, val in angles.items()))
+        self._limits_cap_label[side].setStyleSheet(
+            'color: #2e9c4a; font-family: monospace;')
+        self._recompute_limit_summary()
+
+    @staticmethod
+    def _side_max_abs(angles: dict) -> float:
+        return max(abs(v) for v in angles.values())
+
+    def _recompute_limit_summary(self):
+        a, b = self._limit_captures['a'], self._limit_captures['b']
+        if a is None or b is None:
+            self._limits_save_btn.setEnabled(False)
+            return
+        ma, mb = self._side_max_abs(a), self._side_max_abs(b)
+        limit = (ma + mb) / 2.0
+        text = (f'side A max |angle| = {ma:.4f} rad, '
+                f'side B max |angle| = {mb:.4f} rad<br>'
+                f'<b>symmetric limit = {limit:.4f} rad</b> (mean of the two)')
+        if abs(ma - mb) > self._LIMIT_ASYMMETRY_WARN_RAD:
+            text += (f'<br><span style="color:#d04b4b;">WARNING: the two '
+                     f'sides differ by {abs(ma - mb):.3f} rad - averaging '
+                     f'will let the grid slightly overshoot the tighter '
+                     f'stop. Consider re-capturing, or verify the arm was '
+                     f'really at the stop on both sides.</span>')
+        self._limits_summary.setText(text)
+        self._limits_save_btn.setEnabled(True)
+
+    def _joint_limits_config_path(self) -> Path:
+        return Path(
+            '~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'
+            'config/joint_limits.yaml').expanduser()
+
+    @Slot()
+    def _on_save_limits(self):
+        a, b = self._limit_captures['a'], self._limit_captures['b']
+        if a is None or b is None:
+            return
+        limit = (self._side_max_abs(a) + self._side_max_abs(b)) / 2.0
+        path = self._joint_limits_config_path()
+        payload = {
+            'captured': time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'side_a': {k: float(v) for k, v in a.items()},
+            'side_b': {k: float(v) for k, v in b.items()},
+            # RAW measured stop (mean of the two sides' max |angle|).
+            # The grid generator's limit_margin_rad supplies the safety
+            # margin - do not pre-subtract it here.
+            'symmetric_limit_rad': float(limit),
+        }
+        header = ('# Measured mechanical joint limits - written by the '
+                  'calibration dashboard\n# Joint Limits page (joystick '
+                  'capture flow, runbook step 1). Consumed by the\n# sweep '
+                  "page's joint-limit prefill and the notebooks' QLIM.\n")
+        path.write_text(header + yaml.safe_dump(payload, sort_keys=False))
+        self._limits_saved_status.setText(
+            f'saved {limit:.4f} rad to {path.name} '
+            f'({payload["captured"]})')
+        self._limits_saved_status.setStyleSheet('color: #2e9c4a;')
+        self._apply_measured_joint_limit()
+
+    def _apply_measured_joint_limit(self):
+        """Prefill the sweep page's joint-limit spinbox from
+        joint_limits.yaml when a measured value exists. Called after UI
+        build and after settings restore so the measured value always
+        wins over the 1.13 placeholder and stale persisted spinboxes."""
+        path = self._joint_limits_config_path()
+        if not path.exists():
+            return
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+            limit = float(data['symmetric_limit_rad'])
+        except Exception as exc:
+            self._node.get_logger().warn(
+                f'ignoring {path.name}: {exc}')
+            return
+        spin = self._pages_fields['workspace_coverage']['joint_limit_rad']
+        spin.setValue(limit)
+        spin.setToolTip(
+            f'Measured {data.get("captured", "?")} on the Joint Limits '
+            f'page (joint_limits.yaml). The grid generator subtracts the '
+            f'"limit margin" below from this raw stop value.')
+        if hasattr(self, '_limits_saved_status'):
+            self._limits_saved_status.setText(
+                f'saved limit on file: {limit:.4f} rad '
+                f'({data.get("captured", "?")})')
+            self._limits_saved_status.setStyleSheet('color: #2e9c4a;')
 
     def _build_camera_page(self) -> QWidget:
         # Camera localization: measure where the camera is relative to
@@ -601,9 +829,10 @@ class CalibrationDashboardWidget(QWidget):
             joint_limit = _grid_spin(0.2, 3.14, 1.13, step=0.01,
                                      suffix=' rad')
             joint_limit.setToolTip(
-                'UNMEASURED placeholder. Measure the mechanical stops '
-                'first (runbook step 1); the homing switches sit at '
-                '1.064 / 1.104 rad, the only measured values so far.')
+                'UNMEASURED placeholder. Capture the mechanical stops on '
+                'the Joint Limits page first (runbook step 1); the homing '
+                'switches sit at 1.064 / 1.104 rad, the only measured '
+                'values so far.')
             grid_form.addRow('joint limit', joint_limit)
             limit_margin = _grid_spin(0.0, 0.3, 0.05, step=0.01,
                                       suffix=' rad')
@@ -1895,6 +2124,9 @@ class CalibrationDashboardWidget(QWidget):
                         widget.setValue(type(widget.value())(v))
                     except (TypeError, ValueError):
                         pass
+        # A measured joint limit always wins over whatever spinbox value
+        # the last session persisted.
+        self._apply_measured_joint_limit()
         # Always open on the Start tab, regardless of the last session's
         # page. The sidebar is already built at _PAGE_START; we just make
         # the intent explicit and don't restore any saved active page.
