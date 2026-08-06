@@ -136,7 +136,10 @@ AwaitingContinueCb = Callable[[int, int], None]
 # uses this to enable/disable the Continue button and update the
 # freshness label. ``age_s`` is meaningful only when ``is_fresh`` is
 # True; otherwise pass 0.0.
-DetectionStateCb = Callable[[bool, float], None]
+# (pair_is_fresh, pair_age_s, base_age_s, ee_age_s) - per-tag ages are
+# monotonic seconds since that marker's TF last advanced while the
+# runner was polling, or -1.0 when the marker was never seen.
+DetectionStateCb = Callable[[bool, float, float, float], None]
 
 
 def _visit_bookkeeping(visits) -> Tuple[list, list, int]:
@@ -207,6 +210,10 @@ class CalibrationRunner:
         self._home_client = self.node.create_client(
             Trigger, '/volcaniarm_hardware_interface/home',
             callback_group=self._cb_group)
+
+        # Per-marker stamp-progression tracker for _tag_age:
+        # frame -> (last_stamp_ns, monotonic_time_of_last_change).
+        self._tag_seen: dict = {}
 
         self._run_thread: Optional[threading.Thread] = None
         self._goto_thread: Optional[threading.Thread] = None
@@ -368,9 +375,48 @@ class CalibrationRunner:
         if self.awaiting_continue_cb:
             self.awaiting_continue_cb(iteration, total)
 
-    def _emit_detection_state(self, is_fresh: bool, age_s: float):
+    def _emit_detection_state(self, is_fresh: bool, age_s: float,
+                              base_age_s: float = -1.0,
+                              ee_age_s: float = -1.0):
         if self.detection_state_cb:
-            self.detection_state_cb(is_fresh, age_s)
+            self.detection_state_cb(is_fresh, age_s, base_age_s, ee_age_s)
+
+    # -- per-tag freshness tracking -------------------------------
+
+    def _tag_age(self, request: RunRequest, frame: str) -> float:
+        """Monotonic seconds since `frame`'s TF stamp last advanced
+        while we were polling, or -1.0 when the marker has never been
+        resolved. Stamp-progression based (sim-time safe): looked up
+        against the world frame so the static URDF part of the chain
+        never limits the stamp."""
+        try:
+            tf = self._tf_buffer.lookup_transform(
+                request.world_frame, frame, RclpyTime(),
+                timeout=RclpyDuration(seconds=0.0))
+        except Exception:
+            return -1.0
+        stamp_ns = (tf.header.stamp.sec * 1_000_000_000
+                    + tf.header.stamp.nanosec)
+        now = time.monotonic()
+        prev = self._tag_seen.get(frame)
+        if prev is None or prev[0] != stamp_ns:
+            self._tag_seen[frame] = (stamp_ns, now)
+            return 0.0
+        return now - prev[1]
+
+    def _tag_ages(self, request: RunRequest):
+        """(base_age_s, ee_age_s) via _tag_age."""
+        return (self._tag_age(request, request.base_tag_frame),
+                self._tag_age(request, request.ee_tag_frame))
+
+    @staticmethod
+    def _age_text(age_s: float) -> str:
+        return 'never seen' if age_s < 0 else f'seen {age_s:.1f}s ago'
+
+    def _tag_ages_text(self, request: RunRequest) -> str:
+        base_age, ee_age = self._tag_ages(request)
+        return (f'base tag {self._age_text(base_age)}, '
+                f'ee tag {self._age_text(ee_age)}')
 
     # -- main run loop --------------------------------------------
 
@@ -824,10 +870,11 @@ class CalibrationRunner:
         while not self._continue_event.wait(0.1):
             if self._stop_event.is_set():
                 return False
+            base_age, ee_age = self._tag_ages(request)
             tf, _ = self._lookup_base_to_ee(request, 0.0)
             now_mono = time.monotonic()
             if tf is None:
-                self._emit_detection_state(False, 0.0)
+                self._emit_detection_state(False, 0.0, base_age, ee_age)
                 continue
             stamp_ns = (tf.header.stamp.sec * 1_000_000_000
                         + tf.header.stamp.nanosec)
@@ -836,7 +883,8 @@ class CalibrationRunner:
                 last_change_mono = now_mono
             age_since_new_stamp = now_mono - (last_change_mono or now_mono)
             self._emit_detection_state(
-                age_since_new_stamp < fresh_window_s, age_since_new_stamp)
+                age_since_new_stamp < fresh_window_s, age_since_new_stamp,
+                base_age, ee_age)
         # Either the operator clicked Continue (proceed) or Cancel
         # (also signals the event but sets _stop_event). Re-check stop
         # so we don't capture/save during a cancelled run.
@@ -975,6 +1023,9 @@ class CalibrationRunner:
         while time.monotonic() < deadline:
             if self._stop_event.is_set():
                 return None
+            # Keep the per-tag trackers warm so a timeout can report
+            # which marker went stale.
+            self._tag_ages(request)
             tf, _ = self._lookup_base_to_ee(request, 0.0)
             if tf is not None:
                 stamp_ns = (tf.header.stamp.sec * 1_000_000_000
@@ -1176,8 +1227,12 @@ class CalibrationRunner:
         det = self._wait_for_fresh_detection(
             request, request.detection_timeout_s)
         if det is None:
+            # Name which marker went stale: one tag old + one fresh is a
+            # visibility problem at this pose; both old together is a
+            # stream (USB / DDS buffer) problem.
             reason = (f'no fresh detection '
-                      f'(timeout={request.detection_timeout_s:.1f} s)')
+                      f'(timeout={request.detection_timeout_s:.1f} s; '
+                      f'{self._tag_ages_text(request)})')
             self._emit_status(
                 f'{phase} capture: {reason} (cycle={cycle}, '
                 f'target_idx={target_idx}, sample={sample_idx})')

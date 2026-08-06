@@ -15,8 +15,11 @@ workspace-coverage test through its left sidebar. RViz is not started here;
 it comes up with the robot bringup.
 """
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -47,7 +50,16 @@ def generate_launch_description():
         }],
     )
 
+    # Same big-image DDS profile as real_bringup so the dashboard's TF /
+    # image subscriptions ride the sized buffers too.
+    dds_env = SetEnvironmentVariable(
+        'CYCLONEDDS_URI',
+        'file://' + os.path.join(
+            get_package_share_directory('volcaniarm_calibration'),
+            'config', 'cyclonedds.xml'))
+
     return LaunchDescription([
+        dds_env,
         marker_world_rpy_arg,
         rqt,
     ])

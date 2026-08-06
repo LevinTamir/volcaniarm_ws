@@ -127,7 +127,9 @@ class _RunnerBridge(QObject):
     progress = Signal(int, int)
     finished = Signal(str, str)
     awaiting_continue = Signal(int, int)
-    detection_state = Signal(bool, float)
+    # (pair_fresh, pair_age_s, base_age_s, ee_age_s); per-tag ages are
+    # -1.0 when that marker has never been seen.
+    detection_state = Signal(bool, float, float, float)
     home_fk_resolved = Signal(float, float)
     # Limit-switch homing completion. (ok, message)
     home_finished = Signal(bool, str)
@@ -2336,14 +2338,25 @@ class CalibrationDashboardWidget(QWidget):
                 f'position camera, then click Continue')
 
     @Slot(bool, float)
-    def _on_detection_state(self, is_fresh: bool, age_s: float):
+    def _on_detection_state(self, is_fresh: bool, age_s: float,
+                            base_age_s: float = -1.0,
+                            ee_age_s: float = -1.0):
         self._continue_btn.setEnabled(is_fresh)
+
+        def tag_text(name, age):
+            return f'{name} never' if age < 0 else f'{name} {age:.1f}s'
+        per_tag = (f'{tag_text("base", base_age_s)} | '
+                   f'{tag_text("ee", ee_age_s)}')
         if is_fresh:
             self._detection_label.setText(
-                f'detection: fresh ({age_s * 1000:.0f} ms old)')
+                f'detection: fresh ({age_s * 1000:.0f} ms old) '
+                f'[{per_tag}]')
             self._detection_label.setStyleSheet('color: green;')
         else:
-            self._detection_label.setText('detection: not visible')
+            # Name the stale side: one old + one fresh = visibility at
+            # this pose; both old = stream problem (USB / DDS buffers).
+            self._detection_label.setText(
+                f'detection: not visible [{per_tag}]')
             self._detection_label.setStyleSheet('color: red;')
         self._maybe_auto_continue(is_fresh)
 

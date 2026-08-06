@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CycloneDDS profile for the volcaniarm launches.
+
+  Why: 848x480 rgb8 images are ~1.2 MB per message; at 30 Hz with
+  several subscribers the default ~256 kB kernel UDP buffers drop
+  datagrams silently, and subscribers see 5-12 Hz with second-long gaps
+  (measured 2026-08-06: camera metadata at 29.4 Hz while image
+  subscribers got 5.5 Hz). 10 MB socket buffers ride out the bursts.
+
+  The kernel must allow buffers this large, ONE-TIME setup:
+      sudo sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216
+  and to persist across reboots:
+      echo -e 'net.core.rmem_max=16777216\nnet.core.wmem_max=16777216' | \
+          sudo tee /etc/sysctl.d/60-ros-dds.conf
+  Cyclone logs a warning at startup if the kernel cap still binds.
+
+  Loaded via CYCLONEDDS_URI, set by real_bringup.launch.py and
+  calibration_gui.launch.py (SetEnvironmentVariable).
+-->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <Internal>
+      <SocketReceiveBufferSize min="10MB"/>
+      <SocketSendBufferSize min="10MB"/>
+    </Internal>
+  </Domain>
+</CycloneDDS>

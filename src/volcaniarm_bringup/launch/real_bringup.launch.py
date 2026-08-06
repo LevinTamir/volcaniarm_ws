@@ -7,7 +7,8 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
-    DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction)
+    DeclareLaunchArgument, IncludeLaunchDescription, LogInfo,
+    OpaqueFunction, SetEnvironmentVariable)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
@@ -235,19 +236,20 @@ def generate_launch_description():
                     "sessions.",
     )
 
-    # Pointcloud is on by default for parity with sim and so RViz / the
-    # weed detector see depth without needing an extra arg. Disable on
-    # bandwidth-constrained setups with pointcloud:=false.
-    # The cloud is NOT the RealSense driver's own — it is composed from the
-    # color + aligned-depth images by the shared depth_image_proc pipeline
-    # (camera_pointcloud.launch.py), the same code path Gazebo and Isaac use.
+    # Pointcloud composition from color + aligned depth (shared
+    # depth_image_proc pipeline, camera_pointcloud.launch.py - the same
+    # code path Gazebo and Isaac use). Default 'auto': ON in work mode
+    # (RViz / weed detector want depth), OFF in tests mode - the marker
+    # tests only need RGB, and the composer + its RViz display were the
+    # biggest consumers in the DDS image-drop episode (camera at 30 Hz,
+    # subscribers seeing 5 Hz).
     pointcloud_arg = DeclareLaunchArgument(
         "pointcloud",
-        default_value="true",
-        choices=["true", "false"],
+        default_value="auto",
+        choices=["auto", "true", "false"],
         description="Compose /camera/depth/color/points (XYZRGB) from the "
-                    "color + aligned-depth images via the shared "
-                    "depth_image_proc pipeline",
+                    "color + aligned-depth images. 'auto' = on in work "
+                    "mode, off in tests mode (tests only need RGB).",
     )
 
     # Drives both the URDF mesh scale (via the apriltag xacro) and the
@@ -544,11 +546,26 @@ def generate_launch_description():
                 "launch", "camera_pointcloud.launch.py")
         ),
         launch_arguments=[("use_sim_time", LaunchConfiguration("use_sim_time"))],
-        condition=IfCondition(LaunchConfiguration("pointcloud")),
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration("pointcloud"), "' == 'true' or ("
+            "'", LaunchConfiguration("pointcloud"), "' == 'auto' and ",
+            "'", LaunchConfiguration("mode"), "' != 'tests')",
+        ])),
     )
+
+    # Big-image DDS profile (10 MB socket buffers): 30 Hz color frames
+    # to several subscribers overflow the default kernel UDP buffers and
+    # drop frames. Lives in volcaniarm_calibration/config (this package
+    # already depends on it; the GUI launch uses the same file). See the
+    # xml header for the one-time sysctl.
+    dds_env = SetEnvironmentVariable(
+        'CYCLONEDDS_URI',
+        'file://' + os.path.join(
+            volcaniarm_calibration_share, 'config', 'cyclonedds.xml'))
 
     return LaunchDescription(
         [
+            dds_env,
             use_sim_time_arg,
             serial_port_arg,
             auto_home_arg,
