@@ -144,10 +144,11 @@ def recommended_rectangle(joint_limit_rad: float,
 
     With ``height_m`` set (the task-band mode the dashboard uses): the
     WIDEST rectangle of that fixed z-extent, ties broken toward the
-    shallower placement — matching the P0-8a band-placement analysis
-    (max-area instead tends to pick tall, narrow, deep rectangles,
-    which is not what a weeding band wants). Without it: the classic
-    maximal-area rectangle (histogram method).
+    shallower placement — matching the band-placement analysis in
+    ``experiments/notebooks/01_arm_design.ipynb`` (p1_5; max-area
+    instead tends to pick tall, narrow, deep rectangles, which is not
+    what a weeding band wants). Without it: the classic maximal-area
+    rectangle (histogram method).
 
     Returns (y0, y1, z0, z1) snapped to the search grid, or None when
     nothing fits. symmetric_y=True shrinks the result to |y0| == y1 —

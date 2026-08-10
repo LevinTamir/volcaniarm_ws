@@ -180,7 +180,9 @@ class CalibrationDashboardWidget(QWidget):
     _RECO_MARKER = '# auto-recommended from joint limits'
     _RECT_DEFAULTS = (-0.40, 0.40, 0.55, 0.85)
     # Task-band height for the recommended rectangle: widest placement
-    # of this fixed z-extent (matches the P0-8 band analysis).
+    # of this fixed z-extent (matches the band analysis in
+    # experiments/notebooks/01_arm_design.ipynb; the task-spec source
+    # of truth is five_bar.SPEC_BAND_HEIGHT_M there).
     _RECT_HEIGHT_M = 0.30
     _SETTLE_DEFAULT_S = 2.0
     _HOME_TOL_DEFAULT_MM = 80.0

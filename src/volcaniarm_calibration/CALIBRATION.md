@@ -229,22 +229,26 @@ verdict/metrics, writes its figures, and saves its headline numbers
 for `summary.ipynb`:
 
 - `noise_gate.ipynb` - noise-gate PASS/FAIL
-- `settle_probe.ipynb` - p95 settle time
-- `workspace_sweep.ipynb` - sweep accuracy maps + metrics (P0-2/3/4),
-  systematic vs random, measured-vs-analytical overlay (P0-7)
-- `anchor_repeatability.ipynb` - anchor AP+RP (P0-5/6)
-- `weed_positions.ipynb` - frozen weed positions
+- `settle_probe.ipynb` - p95 settle time (`aux_settle_probe.png`)
+- `01_arm_design.ipynb` - act 1, analytic: task spec rectangle +
+  link-length / joint-range optimization against it (p1_1..p1_6)
+- `02_measured_performance.ipynb` - act 2, hardware: sweep accuracy +
+  error distribution, error-field rigid fit, pass consistency, anchor
+  AP+RP, static accuracy (p2_1..p2_5)
+- `03_measured_vs_analytic.ipynb` - act 3: pipeline overview
+  (p0_pipeline), measured vs analytic workspace + width evidence
+  ladder, mount-offset consistency, dexterity vs error (p3_1..p3_3)
+- `weed_positions.ipynb` - frozen weed positions (p3_4)
 - `summary.ipynb` - merges everything into `figures/summary.md`
-- `workspace_design.ipynb` - analytic task-region set (P0-1, P0-8a/b/c)
 
 Shared loading/aggregation is in `report_lib.py`; the numpy FK port in
 `five_bar.py`.
 
 Run selection defaults to auto-discovery (interrupted runs included:
-their captured rows are valid data and resumed sweeps reassemble by
-pass id); pin the `RUN`/`RUNS` selector at the top of a notebook to an
-explicit run list for the final thesis figures so they are
-reproducible.
+their captured rows are valid data and resumed sweeps reassemble into
+their pass by save date/time); pin the `RUN`/`RUNS` selector at the
+top of a notebook to an explicit run list for the final thesis figures
+so they are reproducible.
 
 What "validated" looks like:
 
