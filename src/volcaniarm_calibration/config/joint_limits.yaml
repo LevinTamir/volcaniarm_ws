@@ -11,6 +11,13 @@ poses:
   volcaniarm_left_elbow_joint: -1.129091672192519
 - volcaniarm_right_elbow_joint: -1.1230784675040073
   volcaniarm_left_elbow_joint: -0.6009114073077351
+# Operating range symmetrized 2026-08-10 to the tighter measured stop
+# (|q_min| = 1.1261 < measured q_max = 1.2076) so the workspace lobe is
+# Y-symmetric like the arm; the raw captured stops are kept below in
+# q_*_measured_rad. Re-apply this clamp after any re-capture on the
+# Joint Limits page (Save limits rewrites this file with raw values).
 q_min_rad: -1.1260850698482632
-q_max_rad: 1.2076314885322639
-symmetric_limit_rad: 1.1668582791902635
+q_max_rad: 1.1260850698482632
+q_min_measured_rad: -1.1260850698482632
+q_max_measured_rad: 1.2076314885322639
+symmetric_limit_rad: 1.1260850698482632
