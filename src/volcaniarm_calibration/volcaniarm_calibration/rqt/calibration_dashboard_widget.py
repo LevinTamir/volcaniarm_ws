@@ -266,7 +266,6 @@ class CalibrationDashboardWidget(QWidget):
         self._auto_goal_center: Optional[tuple] = None
         self._auto_settle_s: Optional[float] = None
         self._auto_home_tol_mm: Optional[float] = None
-        self._auto_pass_id: Optional[int] = None
         self._auto_backlash_offset: Optional[float] = None
         from sensor_msgs.msg import JointState
         self._joint_states_sub = node.create_subscription(
@@ -1010,32 +1009,6 @@ class CalibrationDashboardWidget(QWidget):
                         f'({mean_mm} mm, sweep metrics) - edit freely.')
                 self._auto_home_tol_mm = suggested
 
-    def _refresh_pass_id(self):
-        """Propose the next unused sweep pass id from the runs on disk."""
-        sb = self._pages_fields.get(
-            'workspace_coverage', {}).get('pass_id')
-        if sb is None:
-            return
-        root = (Path(DEFAULT_OUTPUT_DIR).expanduser()
-                / 'workspace_coverage')
-        seen = []
-        for cfg in root.glob('*/*/config.yaml'):
-            try:
-                seen.append(int((yaml.safe_load(cfg.read_text())
-                                 or {}).get('pass_id', 1)))
-            except Exception:  # noqa: BLE001
-                continue
-        nxt = (max(seen) + 1) if seen else 1
-        cur = sb.value()
-        if cur == 1 or (self._auto_pass_id is not None
-                        and cur == self._auto_pass_id):
-            sb.setValue(nxt)
-            sb.setToolTip(
-                f'Next unused pass id ({len(seen)} sweep runs on disk) '
-                f'- edit freely. A resumed sweep keeps the interrupted '
-                f"run's pass id.")
-        self._auto_pass_id = nxt
-
     def _sync_backlash_offset(self):
         """Backlash approach offset follows the sweep grid spacing while
         the operator has not touched it."""
@@ -1069,7 +1042,6 @@ class CalibrationDashboardWidget(QWidget):
         self._refresh_recommended_goals()
         self._refresh_recommended_rectangle()
         self._apply_measured_results()
-        self._refresh_pass_id()
         self._sync_backlash_offset()
         self._prefill_session_note()
         self._update_grid_candidates('workspace_coverage')
@@ -1132,8 +1104,8 @@ class CalibrationDashboardWidget(QWidget):
         Optional extras (Exp0): ``samples_default`` adds the per-visit
         burst controls; ``hide_settle`` greys the settle spinbox (the
         settle-probe test forces 0); ``with_approach_offset`` adds the
-        backlash pre-point offset; ``with_pass_meta`` adds pass id +
-        session note; ``with_grid`` adds the task-rectangle grid
+        backlash pre-point offset; ``with_pass_meta`` adds the
+        session-note field; ``with_grid`` adds the task-rectangle grid
         generator feeding the goals list; ``with_anchors`` adds the
         9-anchor-point picker (rectangle taken from the sweep page).
         """
@@ -1507,24 +1479,15 @@ class CalibrationDashboardWidget(QWidget):
         v.addWidget(cap_box)
 
         if with_pass_meta:
-            # Sweep pass metadata, recorded in the run's config.yaml.
-            # Pass 2 of the Exp0 serpentine runs on a different day /
-            # after a power cycle; the analysis pools passes by pass id.
-            pass_box = QGroupBox('Sweep pass')
+            # Free-form provenance, recorded in the run's config.yaml.
+            # Passes need no manual id: the analysis identifies them by
+            # the run's save date/time and merges resumed runs itself.
+            pass_box = QGroupBox('Session')
             pass_form = QFormLayout(pass_box)
-            pass_id = QSpinBox()
-            pass_id.setRange(1, 20)
-            pass_id.setValue(1)
-            pass_id.setToolTip(
-                'Bump for each independent pass over the same grid '
-                '(different day / power cycle). A resumed sweep keeps '
-                'the pass id of the interrupted run.')
-            pass_form.addRow('pass id', pass_id)
             session_note = QLineEdit()
             session_note.setPlaceholderText(
                 'free-form session note (lighting, temperature, ...)')
             pass_form.addRow('session note', session_note)
-            fields['pass_id'] = pass_id
             fields['session_note'] = session_note
             v.addWidget(pass_box)
 
@@ -1820,9 +1783,6 @@ class CalibrationDashboardWidget(QWidget):
             self._reset_ui_state(status='idle')
             self._refresh_run_counts()
             self._refresh_reachability(name)
-            if name == 'workspace_coverage':
-                # New runs may have landed since the last visit.
-                self._refresh_pass_id()
 
     # -- reachability guard / run counters -------------------------
 
@@ -2031,9 +1991,8 @@ class CalibrationDashboardWidget(QWidget):
                 samples_per_capture=fields['samples_per_capture'].value(),
                 sample_min_period_s=fields['sample_min_period_s'].value(),
             )
-        if 'pass_id' in fields:
+        if 'session_note' in fields:
             req_kwargs.update(
-                pass_id=fields['pass_id'].value(),
                 session_note=fields['session_note'].text(),
             )
         request = RunRequest(
