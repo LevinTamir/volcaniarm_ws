@@ -231,7 +231,7 @@ for `summary.ipynb`:
 - `noise_gate.ipynb` - noise-gate PASS/FAIL
 - `settle_probe.ipynb` - p95 settle time (`aux_settle_probe.png`)
 - `01_arm_design.ipynb` - act 1, analytic: task spec rectangle +
-  link-length / joint-range optimization against it (p1_1..p1_6)
+  link-length / joint-range optimization against it (p1_1..p1_5)
 - `02_measured_performance.ipynb` - act 2, hardware: sweep accuracy +
   error distribution, error-field rigid fit, pass consistency, anchor
   AP+RP, static accuracy (p2_1..p2_5)
