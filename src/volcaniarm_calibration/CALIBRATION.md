@@ -236,9 +236,9 @@ for `summary.ipynb`:
   error distribution, error-field rigid fit, pass consistency, anchor
   AP+RP, static accuracy (p2_1..p2_5)
 - `03_measured_vs_analytic.ipynb` - act 3: pipeline overview
-  (p3_0_pipeline), measured vs analytic workspace + width evidence
-  ladder, mount-offset consistency, dexterity vs error (p3_0..p3_3)
-- `weed_positions.ipynb` - frozen weed positions (p3_4)
+  (p3_0_pipeline), measured points on the analytic workspace, and the
+  to-scale model-vs-measurement overlay (p3_0..p3_2)
+- `weed_positions.ipynb` - frozen weed positions (p3_3)
 - `summary.ipynb` - merges everything into `figures/summary.md`
 
 Shared loading/aggregation is in `report_lib.py`; the numpy FK port in
