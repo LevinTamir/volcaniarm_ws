@@ -236,8 +236,8 @@ for `summary.ipynb`:
   error distribution, error-field rigid fit, pass consistency, anchor
   AP+RP, static accuracy (p2_1..p2_5)
 - `03_measured_vs_analytic.ipynb` - act 3: pipeline overview
-  (p0_pipeline), measured vs analytic workspace + width evidence
-  ladder, mount-offset consistency, dexterity vs error (p3_1..p3_3)
+  (p3_0_pipeline), measured vs analytic workspace + width evidence
+  ladder, mount-offset consistency, dexterity vs error (p3_0..p3_3)
 - `weed_positions.ipynb` - frozen weed positions (p3_4)
 - `summary.ipynb` - merges everything into `figures/summary.md`
 
