@@ -246,6 +246,15 @@ class CalibrationDashboardWidget(QWidget):
         # Reset on every new gate so each goal is timed independently.
         self._awaiting_continue: bool = False
         self._auto_continue_fresh_since: Optional[float] = None
+
+        # "Run all anchors" batch: remaining (name, y, z) anchors, the
+        # page that owns them, and the batch size for k/N progress
+        # logging. Non-empty queue = a batch is in flight; _on_finished
+        # chains the next run only on a completed status, and every
+        # cancel/reset/page-change path empties the queue.
+        self._anchor_queue: list = []
+        self._anchor_batch_test: Optional[str] = None
+        self._anchor_batch_total: int = 0
         # Path of the most recent run dir, populated on finished. Used
         # by the post-run banner's Delete and Open notebook actions.
         self._last_run_dir: Optional[Path] = None
@@ -1361,8 +1370,18 @@ class CalibrationDashboardWidget(QWidget):
                     lambda _=False, tn=test_name: self._on_load_anchors(tn))
                 anchor_combo.activated.connect(
                     lambda _idx, tn=test_name: self._on_anchor_selected(tn))
+                run_all_btn = QPushButton('Run all anchors')
+                run_all_btn.setToolTip(
+                    'Run every reachable anchor in turn as its own run '
+                    '(current cycles / gate settings apply to each). '
+                    'The chain advances only on a completed run; Cancel '
+                    'stops the whole batch.')
+                run_all_btn.clicked.connect(
+                    lambda _=False, tn=test_name:
+                        self._on_run_all_anchors(tn))
                 anchor_row.addWidget(anchor_combo, stretch=1)
                 anchor_row.addWidget(load_btn)
+                anchor_row.addWidget(run_all_btn)
                 goal_form.addRow('anchors', anchor_row)
                 fields['anchor_combo'] = anchor_combo
             v.addWidget(goal_box)
@@ -1797,6 +1816,7 @@ class CalibrationDashboardWidget(QWidget):
         name = self._PAGE_TEST_NAME.get(row)
         if name is not None:
             self._bind_run_widgets(self._pages_fields[name])
+            self._clear_anchor_queue('page changed')
             self._runner.cancel()
             self._reset_ui_state(status='idle')
             self._refresh_run_counts()
@@ -1949,6 +1969,18 @@ class CalibrationDashboardWidget(QWidget):
             self._log_msg('select a test in the sidebar first')
             self._status_label.setText('select a test page to start a run')
             return
+        if self._anchor_queue:
+            self._clear_anchor_queue('superseded by a manual start')
+        request = self._build_request(test_name)
+        if request is not None:
+            self._launch_request(request)
+
+    def _build_request(self, test_name: str,
+                       session_note: Optional[str] = None
+                       ) -> Optional['RunRequest']:
+        """Read the page's widgets into a RunRequest, or None (with the
+        reason logged) when the goals don't parse, a pose is
+        unreachable, or the test class refuses the arguments."""
         fields = self._pages_fields[test_name]
         cls = TEST_REGISTRY[test_name]
         if 'goals_edit' in fields:
@@ -2013,7 +2045,9 @@ class CalibrationDashboardWidget(QWidget):
             req_kwargs.update(
                 session_note=fields['session_note'].text(),
             )
-        request = RunRequest(
+        if session_note is not None:  # caller override (anchor batch)
+            req_kwargs['session_note'] = session_note
+        return RunRequest(
             test=test,
             output_root=Path(DEFAULT_OUTPUT_DIR).expanduser(),
             initial_pose=(fields['initial_y'].value(), fields['initial_z'].value()),
@@ -2022,16 +2056,21 @@ class CalibrationDashboardWidget(QWidget):
             detection_timeout_s=fields['det_timeout'].value(),
             **req_kwargs,
         )
-        if self._runner.request_run(request):
-            self._start_btn.setEnabled(False)
-            self._continue_btn.setEnabled(False)
-            self._progress.setRange(0, test.total_visits())
-            self._progress.setValue(0)
-            self._detection_label.setText('detection: idle')
-            self._banner.setVisible(False)
-            self._log_msg(
-                f'requested run: {test.name} '
-                f'({test.num_cycles} cycles x {len(goals)} goals)')
+
+    def _launch_request(self, request: 'RunRequest') -> bool:
+        test = request.test
+        if not self._runner.request_run(request):
+            return False
+        self._start_btn.setEnabled(False)
+        self._continue_btn.setEnabled(False)
+        self._progress.setRange(0, test.total_visits())
+        self._progress.setValue(0)
+        self._detection_label.setText('detection: idle')
+        self._banner.setVisible(False)
+        self._log_msg(
+            f'requested run: {test.name} '
+            f'({test.num_cycles} cycles x {len(request.goals)} goals)')
+        return True
 
     @staticmethod
     def _parse_goals_text(text: str) -> list:
@@ -2171,6 +2210,72 @@ class CalibrationDashboardWidget(QWidget):
         fields['goal_y'].setValue(y)
         fields['goal_z'].setValue(z)
 
+    # -- anchor batch ("Run all anchors") ---------------------------
+
+    def _on_run_all_anchors(self, test_name: str):
+        if not self._start_btn.isEnabled():
+            self._log_msg('anchor batch: a run is already active')
+            return
+        fields = self._pages_fields[test_name]
+        combo = fields['anchor_combo']
+        if combo.count() == 0:
+            self._on_load_anchors(test_name)
+        queue = []
+        skipped = 0
+        for i in range(combo.count()):
+            data = combo.itemData(i)
+            if not data:
+                continue
+            y, z, ok = data
+            name = combo.itemText(i).split('  (')[0]
+            if not ok:
+                self._log_msg(f'anchor batch: skipping unreachable '
+                              f'{name} ({y:+.3f}, {z:.3f})')
+                skipped += 1
+                continue
+            queue.append((name, y, z))
+        if not queue:
+            self._log_msg('anchor batch: no reachable anchors; check the '
+                          'sweep rectangle and Load anchors')
+            return
+        self._anchor_queue = queue
+        self._anchor_batch_test = test_name
+        self._anchor_batch_total = len(queue)
+        cycles = fields['iterations'].value() if 'iterations' in fields else 1
+        self._log_msg(
+            f'anchor batch: {len(queue)} runs x {cycles} cycles'
+            + (f' ({skipped} unreachable skipped)' if skipped else ''))
+        self._start_next_anchor()
+
+    def _start_next_anchor(self):
+        if not self._anchor_queue:
+            return
+        test_name = self._anchor_batch_test
+        fields = self._pages_fields[test_name]
+        name, y, z = self._anchor_queue[0]
+        k = self._anchor_batch_total - len(self._anchor_queue) + 1
+        # Route the anchor through the goal spinboxes so the page shows
+        # what is running and _build_request stays widget-driven.
+        fields['goal_y'].setValue(y)
+        fields['goal_z'].setValue(z)
+        request = self._build_request(test_name,
+                                      session_note=f'anchor {name}')
+        if request is None or not self._launch_request(request):
+            self._clear_anchor_queue('could not start the next run')
+            return
+        self._anchor_queue.pop(0)
+        self._log_msg(f'anchor batch {k}/{self._anchor_batch_total}: '
+                      f'{name} ({y:+.3f}, {z:.3f})')
+
+    def _clear_anchor_queue(self, reason: str):
+        if self._anchor_queue:
+            self._log_msg(
+                f'anchor batch stopped with {len(self._anchor_queue)} '
+                f'anchor(s) left: {reason}')
+        self._anchor_queue = []
+        self._anchor_batch_test = None
+        self._anchor_batch_total = 0
+
     @Slot()
     def _on_continue_clicked(self):
         self._awaiting_continue = False
@@ -2188,6 +2293,7 @@ class CalibrationDashboardWidget(QWidget):
         # one is a no-op).
         self._awaiting_continue = False
         self._auto_continue_fresh_since = None
+        self._clear_anchor_queue('canceled')
         self._runner.cancel()
         self._cam_runner.cancel()
         self._reset_ui_state(status='cancelled')
@@ -2198,6 +2304,7 @@ class CalibrationDashboardWidget(QWidget):
         if fields is None:
             self._log_msg('select a test page to reset the arm to its initial')
             return
+        self._clear_anchor_queue('reset')
         self._runner.reset_to(fields['initial_y'].value(),
                               fields['initial_z'].value())
         self._reset_ui_state(status='resetting: returning arm to initial')
@@ -2429,6 +2536,21 @@ class CalibrationDashboardWidget(QWidget):
         self._reset_ui_state(status=f'run {status}')
         self._refresh_run_counts()
         self._show_banner(run_dir, status)
+        if self._anchor_queue:
+            if status == 'completed':
+                # Defer past request_run's join of the finishing worker
+                # thread (finished is emitted from inside _run, before
+                # the thread exits).
+                QTimer.singleShot(500, self._start_next_anchor)
+            else:
+                self._clear_anchor_queue(f'run {status}')
+        elif self._anchor_batch_test is not None:
+            # The queue drained when the final run launched; this is it
+            # finishing.
+            self._log_msg(f'anchor batch finished: '
+                          f'{self._anchor_batch_total} runs, last {status}')
+            self._anchor_batch_test = None
+            self._anchor_batch_total = 0
 
     # Multi-goal tests resume at visit granularity (a NEW run dir with
     # skip_visits; the analysis pools the pass pieces by pass_id).
