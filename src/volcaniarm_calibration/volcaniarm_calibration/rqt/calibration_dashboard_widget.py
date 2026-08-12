@@ -1375,7 +1375,9 @@ class CalibrationDashboardWidget(QWidget):
                     'Run every reachable anchor in turn as its own run '
                     '(current cycles / gate settings apply to each). '
                     'The chain advances only on a completed run; Cancel '
-                    'stops the whole batch.')
+                    'stops the whole batch. Select an anchor first to '
+                    'start the chain from it (earlier anchors are '
+                    'skipped).')
                 run_all_btn.clicked.connect(
                     lambda _=False, tn=test_name:
                         self._on_run_all_anchors(tn))
@@ -2222,7 +2224,14 @@ class CalibrationDashboardWidget(QWidget):
             self._on_load_anchors(test_name)
         queue = []
         skipped = 0
-        for i in range(combo.count()):
+        # Chain from the selected anchor onward (index 0 / no selection
+        # = the whole set), so an interrupted batch can be continued
+        # without redoing the anchors that already completed.
+        start = max(combo.currentIndex(), 0)
+        if start > 0:
+            self._log_msg(f'anchor batch: starting from anchor '
+                          f'{start + 1} ({combo.itemText(start)})')
+        for i in range(start, combo.count()):
             data = combo.itemData(i)
             if not data:
                 continue
