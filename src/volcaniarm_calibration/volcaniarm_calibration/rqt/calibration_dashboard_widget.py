@@ -1,8 +1,8 @@
 """Qt widget for the calibration dashboard.
 
 MoveIt-Setup-Assistant-style layout: a left sidebar picks a step (Start,
-Joint Limits, Camera Localization, or one of the accuracy/repeatability/
-workspace tests) and the right panel swaps to that step's controls. The
+Joint Limits, Camera Localization, or one of the pose/workspace tests)
+and the right panel swaps to that step's controls. The
 Start tab only offers robot homing; the Joint Limits tab captures the
 mechanical stops from a joystick jog session; each test tab is
 self-contained (its params, capture
@@ -21,7 +21,7 @@ Workflow (real hardware only):
      a freshly progressed apriltag TF stamp before capturing. Auto-continue
      advances on the next fresh detection; unchecking it falls back to a
      manual Continue click. Cancel aborts the whole run.
-  4. Repeatability additionally gates each return-to-home on the detected
+  4. The pose test optionally gates each return-to-home on the detected
      vs URDF Y-Z segment length agreeing within tolerance for the
      configured number of consecutive fresh frames.
 
@@ -104,15 +104,13 @@ _PROTOCOL_NOTES = {
         'run per pass. Pass 2 runs on a different day / after a power '
         'cycle with pass id 2. Interrupted sweeps resume from the '
         'post-run banner.'),
-    'repeatability': (
-        'Exp0 step 7: one 30-cycle run per anchor point (ISO 9283 - the '
-        'same cluster yields accuracy AP and repeatability RP). Use the '
-        'anchor picker below; enable the home gate once the tag mounts '
-        'are calibrated.'),
-    'static_accuracy': (
-        'Protocol: 30 cycles per run (ISO 9283), 3 or more independent '
-        'runs with re-homing between them. The notebook averages across '
-        'runs.'),
+    'pose_test': (
+        'Exp0 step 6: one 30-cycle run per pose (ISO 9283 - the same '
+        'cluster yields accuracy AP and repeatability RP). Use the '
+        'anchor picker for the 9-point protocol or type any single '
+        'goal; enable the home gate once the tag mounts are '
+        'calibrated. Repeat sessions at the same pose pool in the '
+        'analysis.'),
     'backlash': (
         'Optional: each cycle approaches every goal from -Y and +Y via '
         'capture-free pre-points; rows are tagged with the approach '
@@ -154,21 +152,19 @@ class CalibrationDashboardWidget(QWidget):
     _PAGE_NOISE = 3
     _PAGE_SETTLE = 4
     _PAGE_SWEEP = 5
-    _PAGE_REPEAT = 6
-    _PAGE_STATIC = 7
-    _PAGE_BACKLASH = 8
+    _PAGE_POSE = 6
+    _PAGE_BACKLASH = 7
     _PAGE_TEST_NAME = {
         _PAGE_NOISE: 'noise_gate',
         _PAGE_SETTLE: 'settle_probe',
         _PAGE_SWEEP: 'workspace_coverage',
-        _PAGE_REPEAT: 'repeatability',
-        _PAGE_STATIC: 'static_accuracy',
+        _PAGE_POSE: 'pose_test',
         _PAGE_BACKLASH: 'backlash',
     }
     _NAV_LABELS = (
         'Start', 'Joint Limits', 'Camera Localization',
         'Noise Gate', 'Settle Probe', 'Workspace Sweep',
-        'Repeatability', 'Static Accuracy', 'Backlash',
+        'Pose Test', 'Backlash',
     )
 
     # Warn when the captured poses' binding angles spread more than this
@@ -317,7 +313,7 @@ class CalibrationDashboardWidget(QWidget):
         self._pages = QStackedWidget()
 
         def _scrolled(page: QWidget) -> QScrollArea:
-            # Tall pages (sweep grid, repeatability gate) must scroll
+            # Tall pages (sweep grid, pose-test gate) must scroll
             # instead of vertically crushing their rows when the window
             # is short - collapsed spinboxes are unusable.
             sa = QScrollArea()
@@ -346,13 +342,9 @@ class CalibrationDashboardWidget(QWidget):
             iterations_label='cycles (full sweeps)',
             with_grid=True, with_pass_meta=True)))
         self._pages.addWidget(_scrolled(self._build_test_page(
-            'repeatability', with_iterations=True,
+            'pose_test', with_iterations=True,
             with_home_gate=True, goal_mode='single',
             iterations_default=30, with_anchors=True)))
-        self._pages.addWidget(_scrolled(self._build_test_page(
-            'static_accuracy', with_iterations=True,
-            with_home_gate=False, goal_mode='single',
-            iterations_default=30)))
         self._pages.addWidget(_scrolled(self._build_test_page(
             'backlash', with_iterations=True,
             with_home_gate=False, goal_mode='list',
@@ -376,7 +368,7 @@ class CalibrationDashboardWidget(QWidget):
         # self._* names used by the runner-callback slots to a default tab
         # so a stray callback before the first tab switch is harmless;
         # _on_page_changed rebinds them to whichever test tab is active.
-        self._bind_run_widgets(self._pages_fields['static_accuracy'])
+        self._bind_run_widgets(self._pages_fields['pose_test'])
         self._apply_styles()
         self._apply_measured_joint_limit()
 
@@ -456,10 +448,10 @@ class CalibrationDashboardWidget(QWidget):
             'measures the true settle time (report section 1).</li>'
             '<li><b>Workspace Sweep</b> - serpentine grid over the task '
             'rectangle, one run per pass.</li>'
-            '<li><b>Repeatability</b> - 30-cycle cluster per anchor '
-            'point (ISO 9283 AP + RP), tag-confirmed home gate.</li>'
-            '<li><b>Static Accuracy</b> - one goal, N cycles, returning '
-            'to the initial pose each visit.</li>'
+            '<li><b>Pose Test</b> - 30-cycle cluster at a single pose; '
+            'the same cluster yields accuracy AP and repeatability RP '
+            '(ISO 9283). Anchor picker for the 9-point protocol, '
+            'optional tag-confirmed home gate.</li>'
             '<li><b>Backlash</b> - approach-direction hysteresis '
             '(optional).</li>'
             '</ul>')
@@ -950,8 +942,8 @@ class CalibrationDashboardWidget(QWidget):
                 self._auto_rect = rect
                 # A fresh rectangle means fresh anchors.
                 if 'anchor_combo' in self._pages_fields.get(
-                        'repeatability', {}):
-                    self._on_load_anchors('repeatability')
+                        'pose_test', {}):
+                    self._on_load_anchors('pose_test')
         self._seed_goal_centers()
 
     def _seed_goal_centers(self):
@@ -965,7 +957,7 @@ class CalibrationDashboardWidget(QWidget):
         cz = round((sweep['grid_z0'].value()
                     + sweep['grid_z1'].value()) / 2, 3)
         prev = self._auto_goal_center
-        for tn in ('repeatability', 'static_accuracy'):
+        for tn in ('pose_test',):
             fields = self._pages_fields.get(tn)
             if not fields or 'goal_y' not in fields:
                 continue
@@ -1012,7 +1004,7 @@ class CalibrationDashboardWidget(QWidget):
         mean_mm = sweep_m.get('mean_mm')
         if mean_mm is not None:
             sb = self._pages_fields.get(
-                'repeatability', {}).get('home_tol_mm')
+                'pose_test', {}).get('home_tol_mm')
             if sb is not None:
                 suggested = max(20.0, round(1.5 * float(mean_mm), 1))
                 cur = sb.value()
@@ -1618,6 +1610,12 @@ class CalibrationDashboardWidget(QWidget):
         self._banner_path.setWordWrap(True)
         self._banner_path.setStyleSheet('color: gray;')
         outer.addWidget(self._banner_path)
+        # Headline metrics of the run that just finished (pose test
+        # only): AP + RP at the bench, before the notebooks.
+        self._banner_metrics = QLabel()
+        self._banner_metrics.setWordWrap(True)
+        outer.addWidget(self._banner_metrics)
+        self._banner_metrics.setVisible(False)
         btn_row = QHBoxLayout()
         self._banner_keep = QPushButton('Keep')
         self._banner_resume = QPushButton('Resume run')
@@ -2013,7 +2011,7 @@ class CalibrationDashboardWidget(QWidget):
         # `targets` is authoritative; request.goals is retained only
         # for the config.yaml record.
         extra = {}
-        if 'verify_home' in fields:  # repeatability page: opt-in home gate
+        if 'verify_home' in fields:  # pose-test page: opt-in home gate
             extra['verify_home_with_tag'] = fields['verify_home'].isChecked()
         if 'approach_offset_m' in fields:  # backlash page
             extra['approach_offset_m'] = fields['approach_offset_m'].value()
@@ -2692,6 +2690,29 @@ class CalibrationDashboardWidget(QWidget):
             self._banner_path.setText(str(self._last_run_dir))
         else:
             self._banner_path.setText('(no run directory)')
+        # Pose-test headline: the finished cluster's AP + RP right at
+        # the bench (per-cycle medians; same math as the notebooks).
+        # A canceled run with enough cycles still gets numbers.
+        metrics = None
+        if (self._last_test_name == 'pose_test'
+                and self._last_run_dir is not None):
+            try:
+                metrics = _analysis_loader.pose_run_metrics(
+                    self._last_run_dir)
+            except Exception:  # noqa: BLE001 - display-only
+                metrics = None
+        if metrics is not None and metrics['n_cycles'] >= 2:
+            self._banner_metrics.setText(
+                f"AP ({metrics['AP_y_mm']:+.1f}, "
+                f"{metrics['AP_z_mm']:+.1f}) mm, "
+                f"|AP| {metrics['AP_mm']:.1f} mm   |   "
+                f"RP sigma ({metrics['RP_sigma_y_mm']:.2f}, "
+                f"{metrics['RP_sigma_z_mm']:.2f}) mm, "
+                f"r95 {metrics['RP_r95_mm']:.2f} mm   "
+                f"({metrics['n_cycles']} cycles)")
+            self._banner_metrics.setVisible(True)
+        else:
+            self._banner_metrics.setVisible(False)
         self._banner_delete.setEnabled(self._last_run_dir is not None
                                        and self._last_run_dir.exists())
         # Resume covers both interruption flavours: 'failed' (detection

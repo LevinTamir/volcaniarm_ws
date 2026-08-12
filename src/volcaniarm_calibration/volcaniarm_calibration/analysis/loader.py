@@ -160,6 +160,50 @@ def load_runs(test_name: str,
     return [load_run(d) for d in dirs]
 
 
+def pose_run_metrics(run_dir) -> Optional[dict]:
+    """Headline ISO 9283 numbers of one pose-test run, in mm.
+
+    The same cluster yields both statistics:
+      AP_y/AP_z/AP  mean world-frame Y-Z segment error (detected minus
+                    URDF) - the systematic offset at the pose;
+      RP_sigma_y/z  per-axis std of the detected segment around its own
+                    mean, and RP_r95 the radius holding 95% of cycles.
+
+    Rows are reduced to one per cycle (median) first so a run recorded
+    with samples_per_capture > 1 weighs each cycle equally. Returns
+    None when the CSV is missing, has no target rows, or predates the
+    world-frame column schema.
+    """
+    run_dir = Path(run_dir)
+    try:
+        tag = pd.read_csv(run_dir / 'tag_observations.csv')
+    except (OSError, pd.errors.EmptyDataError):
+        return None
+    need = ('phase', 'cycle', 'det_ee_y', 'det_ee_z', 'det_base_y',
+            'det_base_z', 'urdf_ee_y', 'urdf_ee_z', 'urdf_base_y',
+            'urdf_base_z')
+    if any(c not in tag.columns for c in need):
+        return None
+    t = tag[tag['phase'] == 'target']
+    if t.empty:
+        return None
+    cyc = t.groupby('cycle')[list(need[2:])].median()
+    seg_y = cyc['det_ee_y'] - cyc['det_base_y']
+    seg_z = cyc['det_ee_z'] - cyc['det_base_z']
+    err_y = seg_y - (cyc['urdf_ee_y'] - cyc['urdf_base_y'])
+    err_z = seg_z - (cyc['urdf_ee_z'] - cyc['urdf_base_z'])
+    rad_mm = np.hypot(seg_y - seg_y.mean(), seg_z - seg_z.mean()) * 1e3
+    return {
+        'n_cycles': int(len(cyc)),
+        'AP_y_mm': float(err_y.mean() * 1e3),
+        'AP_z_mm': float(err_z.mean() * 1e3),
+        'AP_mm': float(math.hypot(err_y.mean(), err_z.mean()) * 1e3),
+        'RP_sigma_y_mm': float(seg_y.std() * 1e3),
+        'RP_sigma_z_mm': float(seg_z.std() * 1e3),
+        'RP_r95_mm': float(np.percentile(rad_mm, 95)),
+    }
+
+
 def goal_key(y: float, z: float, tol_m: float = 0.001) -> tuple:
     """Rounded matching key for a commanded goal, default 1 mm bins.
 

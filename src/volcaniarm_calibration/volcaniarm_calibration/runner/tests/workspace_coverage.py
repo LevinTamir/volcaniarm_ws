@@ -9,8 +9,8 @@ goal list; running several cycles gives a small cluster per grid point
 so the notebooks can map both accuracy and repeatability over the
 Y-Z plane.
 
-Use ``static_accuracy`` or ``repeatability`` when you want a deep
-sample at a single pose with returns to a known starting state.
+Use ``pose_test`` when you want a deep sample at a single pose with
+returns to a known starting state.
 """
 
 from .base import BaseTest, Target
@@ -21,7 +21,7 @@ class WorkspaceCoverageTest(BaseTest):
 
     def __init__(self, *args, **kwargs):
         # No doubling back within a sweep; this is what distinguishes
-        # the test from accuracy / repeatability regardless of what the
+        # the test from the pose test regardless of what the
         # dashboard passes. Keeping it here keeps the runner generic.
         kwargs['return_to_initial_between_visits'] = False
         super().__init__(*args, **kwargs)

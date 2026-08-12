@@ -6,7 +6,7 @@ from .ee_sweep_calibration import (
 from .data_writer import RunWriter
 from .tests import (
     BaseTest, Target,
-    StaticAccuracyTest, RepeatabilityTest, WorkspaceCoverageTest,
+    PoseTest, WorkspaceCoverageTest,
     NoiseGateTest, SettleProbeTest, BacklashTest,
     TEST_REGISTRY,
 )
@@ -16,7 +16,7 @@ __all__ = [
     'CameraCalibrationRunner',
     'MODE_STAND', 'MODE_ON_ROBOT',
     'BaseTest', 'Target',
-    'StaticAccuracyTest', 'RepeatabilityTest', 'WorkspaceCoverageTest',
+    'PoseTest', 'WorkspaceCoverageTest',
     'NoiseGateTest', 'SettleProbeTest', 'BacklashTest',
     'TEST_REGISTRY',
 ]

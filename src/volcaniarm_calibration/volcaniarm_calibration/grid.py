@@ -24,9 +24,8 @@ CLI preview (no ROS needed beyond the kinematics module):
         --spacing 0.025 --joint-limit 1.13 --out goals.yaml
 
 Prints kept/rejected counts by reason and a time estimate; --out
-writes the flat [y0, z0, y1, z1, ...] list the accuracy_test node's
-``goals`` parameter takes. --nine adds the 9 accuracy/repeatability
-anchor points with ready-made per-point run commands.
+writes the flat [y0, z0, y1, z1, ...] goals list as YAML. --nine adds
+the 9 anchor points for the dashboard's pose-test page.
 """
 
 from __future__ import annotations
@@ -224,13 +223,13 @@ def recommended_rectangle(joint_limit_rad: float,
 
 def nine_points(y0: float, y1: float, z0: float, z1: float,
                 inset: float = 0.025) -> list:
-    """The 9 accuracy/repeatability anchor points of a task rectangle:
-    4 corners + 4 edge midpoints + center, inset from the edges so the
-    corner points sit near but not on the workspace boundary.
+    """The 9 anchor points of a task rectangle: 4 corners + 4 edge
+    midpoints + center, inset from the edges so the corner points sit
+    near but not on the workspace boundary.
 
     Order: corners (--, +-, -+, ++), edge mids (bottom-Y, top-Y,
-    left-Z, right-Z), center -- but each is a separate repeatability
-    run anyway, so the order only names the runs.
+    left-Z, right-Z), center -- but each is a separate pose-test run
+    anyway, so the order only names the runs.
     """
     ya, yb = y0 + inset, y1 - inset
     za, zb = z0 + inset, z1 - inset
@@ -258,11 +257,11 @@ def main(argv=None):
     ap.add_argument('--closure-margin', type=float, default=0.02)
     ap.add_argument('--sec-per-point', type=float, default=13.0)
     ap.add_argument('--out', type=str, default='',
-                    help='write flat goals list as YAML for the node param')
+                    help='write flat goals list as YAML')
     ap.add_argument('--nine', action='store_true',
-                    help='also print the 9 accuracy/repeatability anchor '
-                         'points (corners + edge mids + center, inset one '
-                         'spacing) with per-point run commands')
+                    help='also print the 9 anchor points (corners + edge '
+                         'mids + center, inset one spacing) for the '
+                         'pose-test page')
     args = ap.parse_args(argv)
 
     pts = serpentine(args.y0, args.y1, args.z0, args.z1, args.spacing)
@@ -284,7 +283,7 @@ def main(argv=None):
     if args.nine:
         anchors = nine_points(args.y0, args.y1, args.z0, args.z1,
                               inset=args.spacing)
-        # Each anchor is its own single-target repeatability run seeded
+        # Each anchor is its own single-target pose-test run seeded
         # from the home pose, so filter every point independently with
         # the default (0, 0) seed. Chaining seeds across the large
         # jumps between anchors wraps the IK branch and falsely
@@ -296,13 +295,12 @@ def main(argv=None):
         names = ['corner --', 'corner +-', 'corner -+', 'corner ++',
                  'mid bottom', 'mid top', 'mid left', 'mid right',
                  'center']
-        print('\n9 anchor points (repeatability test, 30 cycles each '
-              '-> accuracy AP + repeatability RP per ISO 9283):')
+        print('\n9 anchor points (pose test, 30 cycles each '
+              '-> accuracy AP + repeatability RP per ISO 9283; '
+              'run from the dashboard pose-test page):')
         for name, (y, z) in zip(names, anchors):
             mark = 'OK  ' if (y, z) in ok else 'FAIL'
-            print(f'  {mark} {name:10s} ({y:+.3f}, {z:.3f})  '
-                  f'-p test_type:=repeatability -p num_cycles:=30 '
-                  f'-p goals:="[{y:.3f}, {z:.3f}]"')
+            print(f'  {mark} {name:10s} ({y:+.3f}, {z:.3f})')
         if len(ok) < 9:
             print('  FAIL points are outside the filtered workspace -- '
                   'increase the inset or shrink the rectangle.')

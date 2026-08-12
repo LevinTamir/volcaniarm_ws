@@ -60,10 +60,13 @@ Sidebar steps:
 | Step                | Purpose                                            |
 |---------------------|----------------------------------------------------|
 | Start               | Home the robot (limit-switch homing).              |
+| Joint Limits        | Capture the mechanical stops from a jog session.   |
 | Camera Localization | Solve and save the camera pose relative to the arm.|
-| Static Accuracy     | Accuracy test at a single goal.                    |
-| Repeatability       | Repeatability test at a single goal.               |
-| Workspace Coverage  | Grid sweep for the Y-Z performance maps.           |
+| Noise Gate          | Static bursts: measurement noise floor.            |
+| Settle Probe        | Timestamped bursts: true settle time.              |
+| Workspace Sweep     | Grid sweep for the Y-Z performance maps.           |
+| Pose Test           | 30-cycle cluster at one goal: accuracy AP and repeatability RP from the same run. |
+| Backlash            | Approach-direction hysteresis (optional).          |
 
 Each test page contains, top to bottom:
 
@@ -74,8 +77,8 @@ Each test page contains, top to bottom:
   progress toward the 3-run protocol target.
 - **Test configuration**: the iterations spinbox. On the workspace
   page it is labelled "cycles (full sweeps)".
-- **Home-confirm gate** (repeatability page only): checkbox plus
-  tolerance / hold / timeout. See the repeatability section.
+- **Home-confirm gate** (pose-test page only): checkbox plus
+  tolerance / hold / timeout. See the pose-test section.
 - **Initial pose (y, z)**: where the arm parks before, between, and
   after visits. The small buttons snap each axis to the arm's home
   FK. **Move to initial** drives the arm there without starting a
@@ -112,8 +115,9 @@ run directory and four actions: **Keep**, **Resume run** (failed runs
 only: continues the same run from its first incomplete cycle,
 appending to the same data files under the original settings, so the
 already-captured cycles are not lost), **Delete run** (removes the
-directory, for aborted or junk runs), and **Open notebook** (opens
-the matching analysis notebook). A resumed run that finishes counts
+directory, for aborted or junk runs), and **Open folder** (opens the
+run directory). After a pose-test run the banner also prints the
+cluster's AP and RP. A resumed run that finishes counts
 as one completed run of the full cycle count; config.yaml records
 the resume timestamps. For a multi-goal sweep, an interrupted cycle
 is repeated in full on resume, so its already-captured goals gain an
@@ -148,48 +152,49 @@ long run split in three. Each run is saved on Keep; delete failed or
 interrupted runs from the banner so they never pollute the analysis
 (the notebooks only aggregate `status: completed` runs anyway).
 
-### 5.1 Static accuracy
+### 5.1 Pose test (accuracy + repeatability)
 
-*What it measures:* the residual between measured and predicted
-base-to-tool distance at one pose, split into systematic bias and
-random precision.
+*What it measures:* both ISO 9283 pose statistics from one 30-visit
+cluster at a single goal:
 
-1. Open the Static Accuracy page.
-2. Set the initial pose (home-snap buttons are fine) and the goal
-   pose. Check the reachability line is green.
-3. Iterations: **30** (default). ISO 9283:1998 uses 30 cycles per
+- **AP (accuracy)**: the mean residual between measured and predicted
+  base-to-tool Y-Z segment, i.e. the systematic offset at that pose;
+- **RP (repeatability)**: the cluster's scatter around its own mean.
+  Bias-free, so it is meaningful even with placeholder tag mounts.
+
+These were two separate pages (Static Accuracy / Repeatability) until
+it became clear both ran the identical visit pattern and recorded the
+same data; one run now feeds both metrics, which is also how ISO 9283
+itself defines them.
+
+1. Open the Pose Test page; set the initial pose (home-snap buttons
+   are fine) and the single goal (the test refuses multiple goals by
+   design). Check the reachability line is green. For the Exp0
+   protocol, use the anchor picker ("Load anchors" then pick one, or
+   "Run all anchors" for the whole batch).
+2. Iterations: **30** (default). ISO 9283:1998 uses 30 cycles per
    pose, which keeps the numbers comparable to the literature.
-4. Leave capture settings at their defaults unless detections are
+3. Leave capture settings at their defaults unless detections are
    slow (then raise the fresh window slightly).
-5. Start Run. The arm visits the goal, returns to initial, and
-   repeats; with auto-continue on it is fully hands-off
-   (a 30-cycle run takes roughly 5 to 10 minutes).
-6. Repeat for **3 runs minimum, 5 preferred**, re-homing between
-   runs. At 3 runs the t factor on the across-run CI is 4.30; at 5
-   runs it is 2.78, so extra runs tighten the headline quickly.
-
-### 5.2 Repeatability
-
-*What it measures:* the scatter of attained positions at one goal
-(ISO 9283 RP). Bias-free, so it is meaningful even with placeholder
-tag mounts.
-
-1. Open the Repeatability page; set initial pose and the single goal
-   (the test refuses multiple goals by design).
-2. Iterations: **30** (default). Runs: **3 or more**, re-homed
-   between.
-3. **Home-confirm gate** (optional): when enabled, after every
+4. **Home-confirm gate** (optional): when enabled, after every
    return-to-initial the runner waits until the detected tool
    position agrees with the URDF prediction within the tolerance for
    the configured number of consecutive fresh frames, so every cycle
    provably starts from the same physical state. While the tag
    mounts carry the placeholder bias, the gate only passes with the
-   tolerance above that bias (whatever mean `d_error` static accuracy
-   reports is the floor; the default 80 mm covers it). After the
-   mount bias is removed, drop the tolerance toward 10 mm.
-4. Start Run; hands-off as above.
+   tolerance above that bias (whatever mean segment error the sweep
+   or a previous pose run reports is the floor; the default 80 mm
+   covers it). After the mount bias is removed, drop the tolerance
+   toward 10 mm.
+5. Start Run. The arm visits the goal, returns to initial, and
+   repeats; with auto-continue on it is fully hands-off (a 30-cycle
+   run takes roughly 5 to 10 minutes). The post-run banner prints the
+   run's AP and RP immediately.
+6. A repeat session at the same pose (re-homed, ideally another day)
+   pools with the first in the analysis and unlocks the
+   within/between-session decomposition.
 
-### 5.3 Workspace coverage
+### 5.2 Workspace coverage
 
 *What it measures:* how accuracy and repeatability vary over the Y-Z
 working plane; feeds the per-point maps.
@@ -234,11 +239,11 @@ for `summary.ipynb`:
   link-length / joint-range optimization against it (p1_1..p1_5)
 - `02_measured_performance.ipynb` - act 2, hardware: sweep accuracy +
   error distribution, error-field rigid fit, pass consistency, anchor
-  AP+RP, static accuracy (p2_1..p2_5)
-- `03_measured_vs_analytic.ipynb` - act 3: pipeline overview
-  (p3_0_pipeline), measured points on the analytic workspace, and the
-  to-scale model-vs-measurement overlay (p3_0..p3_2)
-- `weed_positions.ipynb` - frozen weed positions (p3_3)
+  AP+RP, center-pose depth (p2_1..p2_5)
+- `03_measured_vs_analytic.ipynb` - act 3: measured points on the
+  analytic workspace, the to-scale model-vs-measurement overlay, and
+  the closing pipeline overview triptych (p3_1..p3_3)
+- `weed_positions.ipynb` - frozen weed positions (aux_weed_positions)
 - `summary.ipynb` - merges everything into `figures/summary.md`
 
 Shared loading/aggregation is in `report_lib.py`; the numpy FK port in
@@ -276,14 +281,14 @@ with the arm. To remove it:
 1. Measure the physical tag-center offsets relative to their parent
    links (base tag on `volcaniarm_base_link`, EE tag on
    `right_arm_tip_link`) and update the mount `xyz` values in the
-   xacro. Whatever mean `d_error` a static accuracy run reports is
-   the current size of the bias.
+   xacro. Whatever AP a pose-test run reports (the post-run banner
+   prints it) is the current size of the bias.
 2. Rebuild
    (`colcon build --symlink-install --packages-select volcaniarm_description`)
    and relaunch, then **re-run camera localization** (the previous
    solution absorbed the old mount values and is stale).
-3. Verify with one 30-cycle static accuracy run; the mean residual
-   should drop to the few-millimetre level.
+3. Verify with one 30-cycle pose-test run; the AP should drop to the
+   few-millimetre level.
 4. Update the mirrored mount constants at the top of
    `volcaniarm_calibration/analysis/loader.py` (marked as a manual
    sync) so legacy tooling matches the URDF.
@@ -350,10 +355,10 @@ id.
   Raise the detection timeout spinbox for a gappy detector; if double
   digits are needed, fix lighting / exposure / tag angle instead of
   hiding it behind a longer timeout.
-- **Home-confirm keeps timing out** (repeatability): the tolerance is
+- **Home-confirm keeps timing out** (pose test): the tolerance is
   below the current mount bias. Raise the "Y-Z segment tol" spinbox
-  above the mean `d_error` a static accuracy run reports, or remove
-  the mount bias first (section 7).
+  above the AP a previous pose-test run reports, or remove the mount
+  bias first (section 7).
 - **Start refuses with "unreachable pose"**: the pose has no IK
   solution (outside the linkage envelope). The red reachability line
   names the offending pose or goals-list line.

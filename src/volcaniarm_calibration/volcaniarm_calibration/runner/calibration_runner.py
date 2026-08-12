@@ -91,7 +91,7 @@ class RunRequest:
     # tag was last seen seconds ago.
     detection_max_age_s: float = 0.5
     # Home-confirm gate (used by tests with verify_home_with_tag=True,
-    # currently the repeatability test). After every return-to-home
+    # currently the pose test). After every return-to-home
     # trajectory the runner waits for the detected vs URDF Y-Z segment
     # length to agree within home_tol_m, held over home_hold_frames
     # consecutive *fresh* detections, bounded by home_timeout_s.

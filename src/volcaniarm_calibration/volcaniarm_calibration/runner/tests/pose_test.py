@@ -1,22 +1,30 @@
-"""Repeatability test: visit a single target N times, returning home
-between iterations and verifying the EE marker has reached home before
-the next iteration starts.
+"""Pose test: visit a single target N times, returning home between
+iterations. One run yields BOTH ISO 9283 pose statistics from the same
+30-visit cluster:
 
-Single-target by design: ISO 9283 RP is computed over a cluster at one
-pose. Multi-target repeatability is workspace-coverage territory.
+  AP (pose accuracy):      distance from the cluster mean to the
+                           commanded point (systematic offset);
+  RP (pose repeatability): the cluster's spread around its own mean.
+
+Single-target by design: both statistics are defined over a cluster at
+one pose. Multi-target sweeps are workspace-coverage territory.
+
+Optionally each return-to-home is gated on the EE marker being
+confirmed near its URDF-predicted home (``verify_home_with_tag``), so
+every iteration provably starts from the same physical state.
 """
 
 from .base import BaseTest, Target
 
 
-class RepeatabilityTest(BaseTest):
-    name = 'repeatability'
+class PoseTest(BaseTest):
+    name = 'pose_test'
 
     def __init__(self, targets, verify_home_with_tag=False, **kwargs):
         targets_list = list(targets)
         if len(targets_list) != 1:
             raise ValueError(
-                f'repeatability test takes exactly one target; got '
+                f'pose test takes exactly one target; got '
                 f'{len(targets_list)}: {targets_list}')
         kwargs['return_home_between_targets'] = True
         # Home-confirm gates each iteration on the detected EE marker

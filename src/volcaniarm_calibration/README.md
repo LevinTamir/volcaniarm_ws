@@ -19,14 +19,15 @@ calibrated, so the sim calibration flow was removed.
 | Step                 | What it does                                              | Protocol default        |
 |----------------------|-----------------------------------------------------------|-------------------------|
 | Camera Localization  | Measure the camera pose relative to the arm base.         | before every session    |
-| `static_accuracy`    | Single goal × N iterations, returns to initial each time. | 30 cycles, 3+ runs      |
-| `repeatability`      | Same goal, gated on a tag-confirmed home between visits.  | 30 cycles, 3+ runs      |
-| `workspace_coverage` | Sweeps a goal grid N times across the envelope.           | 9 goals × 3 sweeps, 3+ runs |
+| `pose_test`          | Single goal × N iterations, returns to initial each time; the same cluster yields ISO 9283 accuracy AP and repeatability RP. Optional tag-confirmed home gate. | 30 cycles per pose      |
+| `workspace_coverage` | Sweeps a goal grid N times across the envelope.           | 1 sweep per pass, 2+ passes |
 
-Experiment 0 adds three test types, each with its own dashboard page
-and also runnable headless (`ros2 run volcaniarm_calibration
-accuracy_test`, modes documented in
-[config/exp0_params.yaml](config/exp0_params.yaml)):
+(`pose_test` replaces the earlier separate `static_accuracy` and
+`repeatability` pages: the two ran the identical visit pattern and
+recorded the same data, so one run now feeds both metrics.)
+
+Experiment 0 adds three more test types, each with its own dashboard
+page:
 
 | Test            | What it does                                                              |
 |-----------------|---------------------------------------------------------------------------|
@@ -46,8 +47,8 @@ mount bias, aggregation rules) is in
 `<ws>/experiments/RUNBOOK.md`. Analysis lives in the separate
 experiments repo (nested at `<ws>/experiments/`, its own private git
 repo): run the tests here, then evaluate with the per-test notebooks
-under `experiments/notebooks/` (noise_gate, settle_probe,
-workspace_sweep, anchor_repeatability, weed_positions, summary).
+under `experiments/notebooks/` (noise_gate, settle_probe, the act
+notebooks 01..03, weed_positions, summary).
 
 ## Run it
 
