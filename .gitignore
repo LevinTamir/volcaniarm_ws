@@ -38,6 +38,7 @@ __pycache__/
 # Calibrate camera button. Read by real_bringup at launch to override
 # base_link -> camera_link with the calibrated pose. Don't commit.
 /src/volcaniarm_calibration/config/camera_pose.yaml
+/src/volcaniarm_calibration/config/camera_pose_history.yaml
 
 # experiments/ is its own private repo (volcaniarm-experiments):
 # run data, analysis notebooks, and figures live there, versioned

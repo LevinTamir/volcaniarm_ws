@@ -442,12 +442,14 @@ def solve_level_camera(
 ) -> dict:
     """Camera-pose recovery for a level stand camera of known heading.
 
-    For the fixed stand the camera is level (roll = pitch = 0) and faces a
-    known world direction (default -X, i.e. yaw = pi). That pins the camera
-    orientation entirely, so we don't touch the AprilTag *orientation* at
-    all -- which is exactly the noisy/ambiguous quantity that breaks the
-    marker-prior solve. We solve only the camera *position* from where the
-    tag is seen vs where FK says it is:
+    For the fixed stand the camera is level (roll = pitch = 0) and faces
+    the arm plane along a world axis given by `heading_yaw_rad` (0 for
+    +X, pi for -X; the caller solves both and keeps the lower-residual
+    one). That pins the camera orientation entirely, so we don't touch
+    the AprilTag *orientation* at all -- which is exactly the
+    noisy/ambiguous quantity that breaks the marker-prior solve. We
+    solve only the camera *position* from where the tag is seen vs
+    where FK says it is:
 
         p_world_camera_optical_i = p_world_tag_truth_i
                                    - R_world_optical @ t_optical_marker_i
@@ -699,11 +701,12 @@ class EESweepCameraCalibrationRunner:
                 tf_parent_world.transform)
             R_parent_world = _quat_to_matrix(parent_world_quat)
 
-            # The stand camera is level and faces a known world direction
-            # (-X), so its orientation is fixed and we solve only position
-            # from the tag *positions* (see solve_level_camera). We don't
-            # need the noisy tag orientation, so skip the marker prior.
-            # On-robot mode still uses the orientation-prior solve.
+            # The stand camera is level and faces the arm's Y-Z plane
+            # along +X or -X, so we solve only position from the tag
+            # *positions* (see solve_level_camera), trying both headings
+            # and keeping the consistent one. We don't need the noisy
+            # tag orientation, so skip the marker prior. On-robot mode
+            # still uses the orientation-prior solve.
             R_world_marker_image = None
             if mode != MODE_STAND:
                 if self._marker_world_rpy is not None:
@@ -746,19 +749,47 @@ class EESweepCameraCalibrationRunner:
                 return
 
             # Solve for the camera pose.
-            #  - Stand mode: level camera of known heading; solve position
-            #    from the tag positions (tag orientation not used).
+            #  - Stand mode: level camera; solve position from the tag
+            #    positions (tag orientation not used) for both +-X
+            #    headings and keep the lower-residual one. The mirrored
+            #    heading scatters the per-pose estimates across the
+            #    sweep, so its rms gives it away by orders of magnitude.
             #  - On-robot mode: recover orientation from the marker prior.
+            heading_selection = None
             try:
                 if mode == MODE_STAND:
-                    solved = solve_level_camera(
-                        [s.R_optical_marker for s in samples],
-                        [s.t_optical_marker for s in samples],
-                        [s.p_parent_truth for s in samples],
-                        R_camera_link_optical=R_camera_link_optical,
-                        p_camera_link_optical=link_to_optical_xyz,
-                        heading_yaw_rad=math.pi,  # camera faces world -X
-                    )
+                    candidates = {}
+                    for yaw in (0.0, math.pi):
+                        candidates[yaw] = solve_level_camera(
+                            [s.R_optical_marker for s in samples],
+                            [s.t_optical_marker for s in samples],
+                            [s.p_parent_truth for s in samples],
+                            R_camera_link_optical=R_camera_link_optical,
+                            p_camera_link_optical=link_to_optical_xyz,
+                            heading_yaw_rad=yaw,
+                        )
+                    heading_yaw = min(
+                        candidates,
+                        key=lambda y: candidates[y]['rms_residual_m'])
+                    solved = candidates[heading_yaw]
+                    heading_selection = {
+                        'chosen_yaw_deg': round(math.degrees(heading_yaw), 1),
+                        'rms_by_candidate_mm': {
+                            f'{math.degrees(y):.0f}':
+                                round(c['rms_residual_m'] * 1000, 2)
+                            for y, c in candidates.items()},
+                    }
+                    self._emit_status(
+                        f'heading: camera faces world '
+                        f'{"+X" if heading_yaw == 0.0 else "-X"} '
+                        f'(rms per candidate, mm: '
+                        f'{heading_selection["rms_by_candidate_mm"]})')
+                    if solved['rms_residual_m'] > 0.03:
+                        self._emit_status(
+                            f'WARNING: best heading still has rms '
+                            f'{solved["rms_residual_m"] * 1000:.1f} mm -- '
+                            f'the camera is probably not level or not '
+                            f'axis-aligned; check the stand before applying')
                 else:
                     solved = solve_with_marker_orientation_prior(
                         [s.R_optical_marker for s in samples],
@@ -824,6 +855,8 @@ class EESweepCameraCalibrationRunner:
                 result = self._build_result(
                     mode, samples, solved_xyz, solved_quat, residual_stats,
                     drift, urdf_parent)
+                if heading_selection:
+                    result['heading_selection'] = heading_selection
                 result['solver_status'] = 'failed_non_finite'
                 try:
                     result_path = self._save_yaml(result)
@@ -839,6 +872,8 @@ class EESweepCameraCalibrationRunner:
             result = self._build_result(
                 mode, samples, solved_xyz, solved_quat, residual_stats,
                 drift, urdf_parent)
+            if heading_selection:
+                result['heading_selection'] = heading_selection
             if mode == MODE_ON_ROBOT:
                 rail = self._decompose_rail(solved_xyz)
                 if rail:

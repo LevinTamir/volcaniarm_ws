@@ -75,6 +75,11 @@ from ..runner import (
     MODE_STAND, MODE_ON_ROBOT,
 )
 from ..runner.data_writer import load_resume_state, load_sweep_resume_state
+# Where camera-localization audit runs live (the same workspace-level
+# tree every run type saves under); the alignment-status line reads it.
+from ..runner.ee_sweep_calibration import (
+    DEFAULT_DATA_ROOT as _CAM_CALIB_DATA_ROOT,
+)
 # Run discovery only (list_runs + status). Analysis has no rclpy/Qt
 # dependencies, so importing it here is safe and keeps the completed-run
 # counters consistent with what the notebooks will aggregate.
@@ -1075,6 +1080,17 @@ class CalibrationDashboardWidget(QWidget):
             'the URDF: parent of camera_link is world (stand) or '
             'camera_mount_rev_link (on-robot).')
         align_outer.addWidget(self._calibrate_btn)
+        # The solve is save-gated: Calibrate only writes the per-run
+        # audit; nothing touches camera_pose.yaml until the operator
+        # applies it here after reviewing the residuals.
+        self._apply_pose_btn = QPushButton('Save && apply pose')
+        self._apply_pose_btn.setToolTip(
+            'Persist the most recent solved camera pose to '
+            'config/camera_pose.yaml (loads the latest result.yaml if '
+            'the GUI was restarted since the solve). The robot launch '
+            'must be restarted afterwards for TF to pick it up.')
+        self._apply_pose_btn.clicked.connect(self._on_apply_camera_pose)
+        align_outer.addWidget(self._apply_pose_btn)
         # Cancel aborts an in-flight EE-sweep (the run controls no longer
         # live in a shared bar, so the camera tab needs its own Cancel).
         self._camera_cancel_btn = QPushButton('Cancel')
@@ -2259,8 +2275,7 @@ class CalibrationDashboardWidget(QWidget):
         self._calibrate_btn.setEnabled(mode_ok)
 
     def _latest_result_yaml(self) -> Optional[Path]:
-        root = (Path('~/workspaces/volcaniarm_ws/src/volcaniarm_calibration/'
-                     'data/camera_localization').expanduser())
+        root = _CAM_CALIB_DATA_ROOT / 'camera_localization'
         if not root.exists():
             return None
         candidates = sorted(root.glob('*/*/result.yaml'))
@@ -2289,8 +2304,12 @@ class CalibrationDashboardWidget(QWidget):
         truth).
         """
         if status == 'completed':
-            self._log_msg(f'camera localization saved: {result_path}')
-            self._status_label.setText('camera localization completed')
+            self._log_msg(f'camera localization solved (audit: '
+                          f'{result_path}); NOT applied yet -- review '
+                          f'the residuals, then click "Save & apply '
+                          f'pose" and restart the robot launch')
+            self._status_label.setText(
+                'camera localization solved; review, then Save & apply')
         elif status == 'canceled':
             self._log_msg('camera localization canceled')
             self._status_label.setText('camera localization canceled')
@@ -2299,6 +2318,36 @@ class CalibrationDashboardWidget(QWidget):
                     else 'camera localization failed')
             self._log_msg(text)
             self._status_label.setText(text)
+        self._refresh_alignment_state()
+
+    @Slot()
+    def _on_apply_camera_pose(self):
+        r = self._cam_runner.last_result
+        if r is None:
+            # GUI restarted since the solve: fall back to the newest
+            # on-disk audit so the operator doesn't have to re-sweep.
+            latest = self._latest_result_yaml()
+            if latest is None:
+                self._log_msg('no camera localization result to apply; '
+                              'run Calibrate camera first')
+                return
+            with latest.open() as f:
+                r = yaml.safe_load(f)
+            if r.get('solver_status') == 'failed_non_finite':
+                self._log_msg(f'latest result ({latest}) is a failed '
+                              f'solve; re-run Calibrate camera')
+                return
+            self._cam_runner.last_result = r
+            self._log_msg(f'loaded solved pose from {latest}')
+        path = self._cam_runner.apply_last_result()
+        if path is None:
+            self._log_msg('apply failed: no solved result available')
+            return
+        xyz = [round(v, 4) for v in r['solved']['xyz']]
+        self._log_msg(f'camera pose applied: {path} (xyz {xyz}); '
+                      f'restart the robot launch so TF picks it up')
+        self._status_label.setText(
+            'camera pose applied; restart the robot launch')
         self._refresh_alignment_state()
 
     # -- runner-side slots ---------------------------------------
