@@ -242,7 +242,7 @@ for `summary.ipynb`:
   AP+RP, per-anchor landed clusters (p2_1..p2_5)
 - `03_measured_vs_analytic.ipynb` - act 3: measured points on the
   analytic workspace, the to-scale model-vs-measurement overlay, and
-  the closing pipeline overview triptych (p3_1..p3_3)
+  the closing pipeline overview (p3_1..p3_3)
 - `weed_positions.ipynb` - frozen weed positions (aux_weed_positions)
 - `summary.ipynb` - merges everything into `figures/summary.md`
 
