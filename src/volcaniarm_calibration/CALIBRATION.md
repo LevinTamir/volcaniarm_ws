@@ -239,7 +239,7 @@ for `summary.ipynb`:
   link-length / joint-range optimization against it (p1_1..p1_5)
 - `02_measured_performance.ipynb` - act 2, hardware: sweep accuracy +
   error distribution, error-field rigid fit, pass consistency, anchor
-  AP+RP, center-pose depth (p2_1..p2_5)
+  AP+RP, per-anchor landed clusters (p2_1..p2_5)
 - `03_measured_vs_analytic.ipynb` - act 3: measured points on the
   analytic workspace, the to-scale model-vs-measurement overlay, and
   the closing pipeline overview triptych (p3_1..p3_3)
