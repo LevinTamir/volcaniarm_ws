@@ -9,7 +9,7 @@ only this file.
 
 **Experiment 0.** The end-to-end characterization campaign (joint
 limit measurement, noise gate, settle probe, grid sweeps, anchor
-points, weed-position freeze) has its own step-by-step pipeline in
+points) has its own step-by-step pipeline in
 the experiments repo: `<ws>/experiments/RUNBOOK.md`. This file stays
 the reference for what each test does and how to judge the numbers.
 
@@ -243,11 +243,11 @@ for `summary.ipynb`:
 - `03_measured_vs_analytic.ipynb` - act 3: measured points on the
   analytic workspace, the to-scale model-vs-measurement overlay, and
   the closing pipeline overview (p3_1..p3_3)
-- `weed_positions.ipynb` - frozen weed positions (aux_weed_positions)
 - `summary.ipynb` - merges everything into `figures/summary.md`
 
-Shared loading/aggregation is in `report_lib.py`; the numpy FK port in
-`five_bar.py`.
+The act notebooks sit in `notebooks/`; the gate notebooks, summary, and
+the shared modules (`report_lib.py` for loading/aggregation,
+`five_bar.py` for the numpy FK port) in `notebooks/utils/`.
 
 Run selection defaults to auto-discovery (interrupted runs included:
 their captured rows are valid data and resumed sweeps reassemble into
